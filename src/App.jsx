@@ -141,14 +141,14 @@ const calc = (p) => {
 };
 
 // -- Helpers -------------------------------------------------------------------
-const F   = "'Inter', -apple-system, sans-serif";
+const F   = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 const $   = n  => "$" + Math.round(n||0).toLocaleString();
 const $mo = n  => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString() + "/mo"; };
 const pct = n  => (isNaN(n)?0:(n||0)).toFixed(2) + "%";
-const cfC = v  => v>0 ? "#10b981" : v<0 ? "#ef4444" : "#6b7280";
+const cfC = v  => v>0 ? "#059669" : v<0 ? "#dc2626" : "#71717a";
 const dU  = d  => { if(!d) return null; return Math.ceil((new Date(d)-new Date())/86400000); };
-const obBadge = p => p.occupied ? {label:"Occupied",bg:"#d1fae5",c:"#065f46"} : {label:"Vacant",bg:"#f3f4f6",c:"#6b7280"};
-const stStyle = s => s==="Current"?{bg:"#d1fae5",c:"#065f46"}:s==="Late"?{bg:"#fee2e2",c:"#dc2626"}:s==="Partial"?{bg:"#fff7ed",c:"#ea580c"}:{bg:"#f3f4f6",c:"#6b7280"};
+const obBadge = p => p.occupied ? {label:"Occupied",bg:"#dcfce7",c:"#166534"} : {label:"Vacant",bg:"#f4f4f5",c:"#71717a"};
+const stStyle = s => s==="Current"?{bg:"#dcfce7",c:"#166534"}:s==="Late"?{bg:"#fee2e2",c:"#991b1b"}:s==="Partial"?{bg:"#ffedd5",c:"#9a3412"}:{bg:"#f4f4f5",c:"#71717a"};
 const svUrl   = (lat,lng,w=800,h=400) => "https://maps.googleapis.com/maps/api/streetview?size="+w+"x"+h+"&location="+lat+","+lng+"&fov=90&pitch=0&key="+GOOGLE_API_KEY;
 
 const newProp = (base={}) => ({
@@ -194,40 +194,86 @@ function useIsMobile() {
 }
 
 // -- Design System -------------------------------------------------------------
+// Polished SaaS palette: zinc neutrals + restrained accents (Linear/Stripe-style).
 const C = {
-  green:"#10b981", greenDark:"#065f46", greenLight:"#d1fae5", greenMid:"#059669",
-  sidebar:"#111827", sidebarHover:"#1f2937",
-  bg:"#f9fafb", card:"#ffffff", border:"#e5e7eb",
-  text:"#111827", textSub:"#6b7280", textMuted:"#9ca3af",
-  blue:"#3b82f6", amber:"#f59e0b", red:"#ef4444", purple:"#7c3aed",
+  // Brand / accent
+  green:        "#10b981",
+  greenHover:   "#059669",
+  greenDark:    "#047857",
+  greenLight:   "#dcfce7",
+  greenSubtle:  "#ecfdf5",
+  greenBorder:  "#bbf7d0",
+  greenMid:     "#059669",
+
+  // Sidebar (deep neutral)
+  sidebar:      "#09090b",
+  sidebarHover: "#27272a",
+  sidebarText:  "#a1a1aa",
+
+  // Surfaces & borders (zinc)
+  bg:           "#fafafa",
+  bgSubtle:     "#f4f4f5",
+  card:         "#ffffff",
+  border:       "#e4e4e7",
+  borderHover:  "#d4d4d8",
+
+  // Text
+  text:         "#09090b",
+  textSub:      "#52525b",
+  textMuted:    "#a1a1aa",
+
+  // Semantic
+  blue:         "#2563eb", blueLight:"#dbeafe", blueDark:"#1e40af", blueSubtle:"#eff6ff", blueBorder:"#bfdbfe",
+  amber:        "#d97706", amberLight:"#fef3c7", amberDark:"#92400e", amberSubtle:"#fffbeb", amberBorder:"#fde68a",
+  red:          "#dc2626", redLight:"#fee2e2", redDark:"#991b1b", redSubtle:"#fef2f2", redBorder:"#fecaca",
+  purple:       "#7c3aed", purpleLight:"#ede9fe", purpleDark:"#5b21b6", purpleSubtle:"#f5f3ff", purpleBorder:"#ddd6fe",
+
+  // Radii
+  r1: 6, r2: 8, r3: 10, r4: 12, r5: 16, rFull: 9999,
+
+  // Shadows
+  sh1: "0 1px 2px 0 rgba(15,23,42,.04)",
+  sh2: "0 1px 3px 0 rgba(15,23,42,.06), 0 1px 2px -1px rgba(15,23,42,.04)",
+  sh3: "0 4px 6px -1px rgba(15,23,42,.07), 0 2px 4px -2px rgba(15,23,42,.04)",
+  sh4: "0 12px 20px -4px rgba(15,23,42,.10), 0 4px 8px -4px rgba(15,23,42,.05)",
+  ring: "0 0 0 3px rgba(16,185,129,.15)",
 };
 
 const iS = (mobile=false) => ({
-  width:"100%", border:"1px solid "+C.border, borderRadius:8,
+  width:"100%", border:"1px solid "+C.border, borderRadius:C.r2,
   padding: mobile ? "12px 14px" : "9px 12px",
   fontSize: mobile ? 16 : 14,
-  outline:"none", background:"white", boxSizing:"border-box",
+  outline:"none", background:C.card, boxSizing:"border-box",
   fontFamily:F, color:C.text, WebkitTextFillColor:C.text,
+  transition: "border-color .15s, box-shadow .15s",
 });
 
 const btnStyle = (variant="primary", size="md", extra={}) => {
   const v = {
-    primary:  {background:C.green,    color:"white",   border:"none"},
-    secondary:{background:"white",    color:C.text,    border:"1px solid "+C.border},
-    danger:   {background:"#fee2e2",  color:C.red,     border:"1px solid #fca5a5"},
-    ghost:    {background:"transparent", color:C.textSub, border:"none"},
-    blue:     {background:C.blue,     color:"white",   border:"none"},
-    dark:     {background:C.sidebar,  color:"white",   border:"none"},
+    primary:  {background:C.green,        color:"#ffffff",  border:"1px solid "+C.green,       boxShadow:C.sh1},
+    secondary:{background:C.card,         color:C.text,     border:"1px solid "+C.border,      boxShadow:C.sh1},
+    danger:   {background:C.card,         color:C.redDark,  border:"1px solid "+C.redBorder,   boxShadow:C.sh1},
+    ghost:    {background:"transparent",  color:C.textSub,  border:"1px solid transparent"},
+    blue:     {background:C.blue,         color:"#ffffff",  border:"1px solid "+C.blue,        boxShadow:C.sh1},
+    dark:     {background:C.sidebar,      color:"#ffffff",  border:"1px solid "+C.sidebar,     boxShadow:C.sh1},
   };
   const s = {
-    sm:  {padding:"5px 12px",  fontSize:12, borderRadius:6},
-    md:  {padding:"8px 16px",  fontSize:14, borderRadius:8},
-    lg:  {padding:"11px 22px", fontSize:15, borderRadius:10},
-    xl:  {padding:"13px 28px", fontSize:15, borderRadius:10},
+    sm:  {padding:"5px 11px",  fontSize:12, borderRadius:C.r1, height:28},
+    md:  {padding:"8px 14px",  fontSize:13, borderRadius:C.r2, height:36},
+    lg:  {padding:"10px 18px", fontSize:14, borderRadius:C.r2, height:42},
+    xl:  {padding:"13px 22px", fontSize:15, borderRadius:C.r2, height:48},
   };
-  return { ...v[variant], ...s[size], cursor:"pointer", fontWeight:600, fontFamily:F,
-    display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6,
-    transition:"all .15s", WebkitTapHighlightColor:"transparent", ...extra };
+  return {
+    className: "dh-btn-" + variant,
+    style: {
+      ...v[variant], ...s[size], cursor:"pointer", fontWeight:600, fontFamily:F,
+      display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6,
+      letterSpacing:"-0.005em", textDecoration:"none",
+      transition:"background-color .15s, border-color .15s, box-shadow .15s, transform .05s",
+      WebkitTapHighlightColor:"transparent",
+      ...extra,
+    },
+  };
 };
 
 // -- Google Maps ---------------------------------------------------------------
@@ -329,12 +375,53 @@ const applyAttom = (prev, data, rates) => {
   };
 };
 
+// -- Icons (inline SVG, lucide-style) ------------------------------------------
+const IconSvg = ({d, size=16, stroke=2, fill="none"}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
+    strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0, display:"block"}}>
+    {typeof d === "string" ? <path d={d} /> : d}
+  </svg>
+);
+const I = {
+  home:        p => <IconSvg {...p} d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1V9.5z"/>,
+  building:    p => <IconSvg {...p} d={<g><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01"/><path d="M9 12v.01"/><path d="M9 15v.01"/><path d="M9 18v.01"/></g>}/>,
+  search:      p => <IconSvg {...p} d={<g><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></g>}/>,
+  chart:       p => <IconSvg {...p} d={<g><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></g>}/>,
+  settings:    p => <IconSvg {...p} d={<g><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h.01a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v.01a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></g>}/>,
+  plus:        p => <IconSvg {...p} d={<g><path d="M12 5v14"/><path d="M5 12h14"/></g>}/>,
+  arrowLeft:   p => <IconSvg {...p} d={<g><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></g>}/>,
+  arrowRight:  p => <IconSvg {...p} d={<g><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></g>}/>,
+  chevronRight:p => <IconSvg {...p} d="M9 18l6-6-6-6"/>,
+  chevronDown: p => <IconSvg {...p} d="M6 9l6 6 6-6"/>,
+  trash:       p => <IconSvg {...p} d={<g><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></g>}/>,
+  edit:        p => <IconSvg {...p} d={<g><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>,
+  alert:       p => <IconSvg {...p} d={<g><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></g>}/>,
+  check:       p => <IconSvg {...p} d="M20 6L9 17l-5-5"/>,
+  x:           p => <IconSvg {...p} d={<g><path d="M18 6L6 18"/><path d="M6 6l12 12"/></g>}/>,
+  externalLink:p => <IconSvg {...p} d={<g><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></g>}/>,
+  phone:       p => <IconSvg {...p} d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/>,
+  message:     p => <IconSvg {...p} d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>,
+  pin:         p => <IconSvg {...p} d={<g><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></g>}/>,
+  bee:         p => <IconSvg {...p} stroke={1.8} d={<g><ellipse cx="12" cy="13" rx="5" ry="6"/><path d="M7 11h10M7 14h10"/><circle cx="9" cy="9" r="2.2" fill="rgba(255,255,255,.3)"/><circle cx="15" cy="9" r="2.2" fill="rgba(255,255,255,.3)"/><path d="M10 6.5L8 4M14 6.5L16 4"/></g>}/>,
+};
+
 // -- UI Primitives -------------------------------------------------------------
-function Card({children, style={}, onClick, onMouseEnter, onMouseLeave}) {
+function Card({children, style={}, hover=false, onClick, onMouseEnter, onMouseLeave, padding}) {
+  const [h, setH] = useState(false);
   return (
-    <div onClick={onClick} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}
-      style={{background:C.card, borderRadius:12, border:"1px solid "+C.border,
-        boxShadow:"0 1px 4px rgba(0,0,0,.05)", overflow:"hidden", ...style}}>
+    <div onClick={onClick}
+      onMouseEnter={e => { if (hover) setH(true); onMouseEnter && onMouseEnter(e); }}
+      onMouseLeave={e => { if (hover) setH(false); onMouseLeave && onMouseLeave(e); }}
+      style={{
+        background:C.card, borderRadius:C.r4,
+        border:"1px solid "+(hover && h ? C.borderHover : C.border),
+        boxShadow: hover && h ? C.sh3 : C.sh1,
+        overflow:"hidden",
+        transition:"border-color .15s, box-shadow .15s, transform .15s",
+        transform: hover && h ? "translateY(-1px)" : "none",
+        ...(padding!==undefined ? {padding} : {}),
+        ...style,
+      }}>
       {children}
     </div>
   );
@@ -342,9 +429,9 @@ function Card({children, style={}, onClick, onMouseEnter, onMouseLeave}) {
 
 function PageHeader({title, subtitle, action}) {
   return (
-    <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24}}>
+    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28, gap:16, flexWrap:"wrap"}}>
       <div>
-        <h1 style={{margin:0, fontSize:22, fontWeight:800, color:C.text, fontFamily:F}}>{title}</h1>
+        <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>{title}</h1>
         {subtitle && <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>{subtitle}</p>}
       </div>
       {action}
@@ -355,13 +442,18 @@ function PageHeader({title, subtitle, action}) {
 function StatCard({label, value, sub, color, icon}) {
   return (
     <Card style={{padding:18}}>
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
-        <div>
-          <div style={{fontSize:11, color:C.textMuted, fontWeight:600, textTransform:"uppercase", letterSpacing:".06em", fontFamily:F, marginBottom:6}}>{label}</div>
-          <div style={{fontSize:22, fontWeight:800, color:color||C.text, fontFamily:F, lineHeight:1}}>{value}</div>
-          {sub && <div style={{fontSize:12, color:C.textSub, marginTop:4, fontFamily:F}}>{sub}</div>}
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8}}>
+        <div style={{minWidth:0, flex:1}}>
+          <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F, marginBottom:8}}>{label}</div>
+          <div style={{fontSize:24, fontWeight:700, color:color||C.text, fontFamily:F, lineHeight:1.1, letterSpacing:"-0.02em"}}>{value}</div>
+          {sub && <div style={{fontSize:12, color:C.textMuted, marginTop:6, fontFamily:F}}>{sub}</div>}
         </div>
-        {icon && <div style={{fontSize:26, opacity:.8}}>{icon}</div>}
+        {icon && (
+          <div style={{width:32, height:32, borderRadius:C.r2, background:C.bgSubtle,
+            display:"flex", alignItems:"center", justifyContent:"center", color:C.textSub, flexShrink:0}}>
+            {icon}
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -370,26 +462,35 @@ function StatCard({label, value, sub, color, icon}) {
 function SectionBlock({title, color=C.green, children, right, collapsible=false, defaultOpen=true}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{border:"1px solid "+color+"25", borderRadius:12, overflow:"hidden", marginBottom:14}}>
-      <div style={{background:color, padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center",
+    <Card style={{marginBottom:14, padding:0}}>
+      <div style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center",
+        borderBottom: open ? "1px solid "+C.border : "none",
         cursor: collapsible ? "pointer" : "default"}}
         onClick={collapsible ? ()=>setOpen(o=>!o) : undefined}>
-        <span style={{color:"white", fontWeight:700, fontSize:12, textTransform:"uppercase", letterSpacing:".06em", fontFamily:F}}>{title}</span>
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <div style={{width:3, height:14, background:color, borderRadius:2}} />
+          <span style={{color:C.text, fontWeight:600, fontSize:14, fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
+        </div>
         <div style={{display:"flex", gap:8, alignItems:"center"}}>
           {right}
-          {collapsible && <span style={{color:"white", fontSize:16, lineHeight:1, transition:"transform .2s", display:"block", transform:open?"rotate(180deg)":"none"}}>v</span>}
+          {collapsible && (
+            <span style={{color:C.textMuted, transition:"transform .2s",
+              transform:open?"rotate(180deg)":"none", display:"inline-flex"}}>
+              <I.chevronDown size={16}/>
+            </span>
+          )}
         </div>
       </div>
-      {open && <div style={{background:"white", padding:16}}>{children}</div>}
-    </div>
+      {open && <div style={{padding:"16px"}}>{children}</div>}
+    </Card>
   );
 }
 
 function DataRow({label, value, color}) {
   return (
-    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0", borderBottom:"1px solid "+C.bg}}>
+    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid "+C.bg}}>
       <span style={{fontSize:13, color:C.textSub, fontFamily:F}}>{label}</span>
-      <span style={{fontSize:13, fontWeight:600, color:color||C.text, fontFamily:F}}>{value}</span>
+      <span style={{fontSize:13, fontWeight:600, color:color||C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{value}</span>
     </div>
   );
 }
@@ -402,40 +503,93 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
     }
   };
   return (
-    <div style={{marginBottom:12}}>
-      <div style={{display:"flex", justifyContent:"space-between", marginBottom:5}}>
-        <label style={{fontSize:13, color:C.textSub, fontWeight:500, fontFamily:F}}>{label}</label>
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
+        <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>{label}</label>
         {note && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>{note}</span>}
       </div>
-      <div style={{display:"flex", alignItems:"center", gap:6}}>
-        {pre && <span style={{fontSize:14, color:C.textMuted, fontFamily:F, flexShrink:0}}>{pre}</span>}
+      <div style={{position:"relative", display:"flex", alignItems:"stretch"}}>
+        {pre && (
+          <span style={{
+            position:"absolute", left:1, top:1, bottom:1,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            paddingLeft:12, paddingRight:0,
+            fontSize:14, color:C.textMuted, fontFamily:F,
+            pointerEvents:"none",
+          }}>{pre}</span>
+        )}
         <input type={type} value={val}
           inputMode={type==="number" ? "decimal" : undefined}
           onFocus={handleFocus}
           onChange={e => set(type==="number" ? parseFloat(e.target.value)||0 : e.target.value)}
-          style={{...iS(mobile), flex:1}} />
-        {suf && <span style={{fontSize:14, color:C.textMuted, fontFamily:F, flexShrink:0}}>{suf}</span>}
+          className="dh-input"
+          style={{
+            ...iS(mobile), flex:1,
+            paddingLeft: pre ? (mobile?32:28) : (mobile?14:12),
+            paddingRight: suf ? (mobile?38:32) : (mobile?14:12),
+            fontVariantNumeric: type==="number" ? "tabular-nums" : "normal",
+          }} />
+        {suf && (
+          <span style={{
+            position:"absolute", right:1, top:1, bottom:1,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            paddingRight:12, paddingLeft:0,
+            fontSize:14, color:C.textMuted, fontFamily:F,
+            pointerEvents:"none",
+          }}>{suf}</span>
+        )}
       </div>
     </div>
   );
 }
 
-function Badge({label, bg, c}) {
-  return <span style={{background:bg, color:c, padding:"3px 10px", borderRadius:20, fontSize:12, fontWeight:600, fontFamily:F, whiteSpace:"nowrap"}}>{label}</span>;
+function Badge({label, bg, c, dot=false}) {
+  return (
+    <span style={{
+      display:"inline-flex", alignItems:"center", gap:6,
+      background:bg, color:c, padding:"3px 9px", borderRadius:C.rFull,
+      fontSize:11, fontWeight:600, fontFamily:F, whiteSpace:"nowrap",
+      letterSpacing:"-0.005em",
+    }}>
+      {dot && <span style={{width:6, height:6, borderRadius:"50%", background:c}} />}
+      {label}
+    </span>
+  );
+}
+
+function EmptyState({icon, title, body, action}) {
+  return (
+    <Card style={{padding:48, textAlign:"center"}}>
+      {icon && (
+        <div style={{
+          width:48, height:48, borderRadius:C.r3, background:C.bgSubtle,
+          display:"inline-flex", alignItems:"center", justifyContent:"center",
+          color:C.textMuted, marginBottom:14,
+        }}>{icon}</div>
+      )}
+      <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>{title}</div>
+      {body && <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:6, maxWidth:360, marginLeft:"auto", marginRight:"auto"}}>{body}</div>}
+      {action && <div style={{marginTop:18}}>{action}</div>}
+    </Card>
+  );
 }
 
 function StreetViewImg({lat, lng, address, height=200}) {
   if (!lat || !lng) return null;
   return (
-    <div style={{position:"relative", borderRadius:12, overflow:"hidden", marginBottom:16}}>
+    <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden", marginBottom:16,
+      border:"1px solid "+C.border, boxShadow:C.sh1}}>
       <img src={svUrl(lat,lng,900,height*2)} alt="Street View"
         style={{width:"100%", height, objectFit:"cover", display:"block"}} />
-      <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 50%,rgba(0,0,0,.7))"}} />
-      <div style={{position:"absolute", bottom:12, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end"}}>
-        <div style={{color:"white", fontWeight:700, fontSize:14, fontFamily:F}}>{address}</div>
+      <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 50%,rgba(9,9,11,.65))"}} />
+      <div style={{position:"absolute", bottom:12, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10}}>
+        <div style={{color:"white", fontWeight:600, fontSize:14, fontFamily:F, letterSpacing:"-0.01em",
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{address}</div>
         <a href={"https://maps.google.com/?q="+lat+","+lng} target="_blank" rel="noreferrer"
-          style={{background:"rgba(255,255,255,.9)", color:C.text, padding:"4px 10px", borderRadius:8, fontSize:12, fontWeight:600, textDecoration:"none", fontFamily:F}}>
-          Maps →
+          style={{background:"rgba(255,255,255,.95)", color:C.text, padding:"5px 11px",
+            borderRadius:C.r1, fontSize:12, fontWeight:600, textDecoration:"none", fontFamily:F,
+            display:"inline-flex", alignItems:"center", gap:5, flexShrink:0}}>
+          Maps <I.externalLink size={11} stroke={2.5}/>
         </a>
       </div>
     </div>
@@ -446,12 +600,21 @@ function TrialBanner({daysLeft}) {
   if (daysLeft === null || daysLeft > TRIAL_DAYS) return null;
   const expired = daysLeft <= 0;
   return (
-    <div style={{background:expired?"#fee2e2":"#fef3c7", borderBottom:"1px solid "+(expired?"#fca5a5":"#fde68a"),
-      padding:"10px 20px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-      <div style={{fontSize:13, fontFamily:F, color:expired?"#dc2626":"#92400e", fontWeight:600}}>
-        {expired ? "Your free trial has expired" : "🐝 Free trial: "+daysLeft+" day"+(daysLeft===1?"":"s")+" remaining"}
+    <div style={{
+      background: expired ? C.redSubtle : C.amberSubtle,
+      borderBottom: "1px solid " + (expired ? C.redBorder : C.amberBorder),
+      padding:"10px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
+    }}>
+      <div style={{display:"flex", alignItems:"center", gap:10, fontSize:13, fontFamily:F,
+        color: expired ? C.redDark : C.amberDark, fontWeight:500}}>
+        <I.alert size={15}/>
+        <span>
+          {expired
+            ? "Your free trial has expired"
+            : <>Free trial: <b style={{fontWeight:700}}>{daysLeft} day{daysLeft===1?"":"s"} remaining</b></>}
+        </span>
       </div>
-      <button style={btnStyle("primary","sm")}>{expired ? "Renew Now" : "Upgrade to Pro"}</button>
+      <button {...btnStyle("primary","sm")}>{expired ? "Renew now" : "Upgrade to Pro"}</button>
     </div>
   );
 }
@@ -492,81 +655,102 @@ function AuthPage({onAuth}) {
     setL(false);
   };
 
+  const linkBtn = {
+    background:"none", border:"none", padding:0, color:C.green, fontWeight:600,
+    cursor:"pointer", fontFamily:F, fontSize:13, letterSpacing:"-0.005em",
+  };
   return (
-    <div style={{minHeight:"100vh", background:"linear-gradient(135deg,"+C.sidebar+" 0%,#1f2937 100%)",
-      display:"flex", alignItems:"center", justifyContent:"center", padding:20}}>
-      <div style={{width:"100%", maxWidth:420}}>
-        <div style={{textAlign:"center", marginBottom:32}}>
-          <div style={{display:"inline-flex", alignItems:"center", gap:10, marginBottom:8}}>
-            <div style={{width:44, height:44, background:C.green, borderRadius:12,
-              display:"flex", alignItems:"center", justifyContent:"center", fontSize:24}}>🐝</div>
-            <div style={{fontSize:32, fontWeight:900, color:"white", fontFamily:F, letterSpacing:"-.02em"}}>
-              Deal<span style={{color:C.amber}}>Hive</span>
+    <div style={{
+      minHeight:"100vh", background:C.bg, padding:20,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      backgroundImage:`radial-gradient(circle at 100% 0%, ${C.greenSubtle} 0%, transparent 45%), radial-gradient(circle at 0% 100%, ${C.bgSubtle} 0%, transparent 50%)`,
+    }}>
+      <div style={{width:"100%", maxWidth:400}}>
+        <div style={{textAlign:"center", marginBottom:28}}>
+          <div style={{display:"inline-flex", alignItems:"center", gap:10, marginBottom:6}}>
+            <div style={{
+              width:36, height:36, background:C.green, borderRadius:C.r3,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              color:"white", boxShadow:C.sh2,
+            }}><I.bee size={20}/></div>
+            <div style={{fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+              DealHive
             </div>
           </div>
-          <div style={{fontSize:14, color:"rgba(255,255,255,.6)", fontFamily:F}}>Real Estate Investment Platform</div>
+          <div style={{fontSize:13, color:C.textSub, fontFamily:F}}>Real estate investing, organized.</div>
         </div>
-        <Card style={{padding:32, borderRadius:16}}>
-          <h2 style={{margin:"0 0 4px", fontSize:20, fontWeight:800, color:C.text, fontFamily:F}}>
+        <Card style={{padding:30}}>
+          <h2 style={{margin:"0 0 6px", fontSize:20, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
             {mode==="signin" ? "Welcome back" : mode==="signup" ? "Start your free trial" : "Reset password"}
           </h2>
-          <p style={{margin:"0 0 24px", fontSize:14, color:C.textSub, fontFamily:F}}>
+          <p style={{margin:"0 0 22px", fontSize:13, color:C.textSub, fontFamily:F}}>
             {mode==="signin"  ? "Sign in to your DealHive account" :
-             mode==="signup"  ? TRIAL_DAYS+" days free - no credit card needed" :
-             "We'll send you a reset link"}
+             mode==="signup"  ? TRIAL_DAYS+" days free. No credit card required." :
+             "Enter your email to get a reset link"}
           </p>
-          {err && <div style={{background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:C.red, fontFamily:F}}>{err}</div>}
-          {msg && <div style={{background:C.greenLight, border:"1px solid #6ee7b7", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:13, color:C.greenDark, fontFamily:F}}>{msg}</div>}
+          {err && (
+            <div style={{display:"flex", gap:8, alignItems:"flex-start",
+              background:C.redSubtle, border:"1px solid "+C.redBorder, borderRadius:C.r2,
+              padding:"10px 12px", marginBottom:14, fontSize:13, color:C.redDark, fontFamily:F}}>
+              <I.alert size={14} stroke={2.2}/><span>{err}</span>
+            </div>
+          )}
+          {msg && (
+            <div style={{display:"flex", gap:8, alignItems:"flex-start",
+              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
+              padding:"10px 12px", marginBottom:14, fontSize:13, color:C.greenDark, fontFamily:F}}>
+              <I.check size={14} stroke={2.2}/><span>{msg}</span>
+            </div>
+          )}
           <form onSubmit={submit}>
             <div style={{marginBottom:14}}>
-              <label style={{fontSize:13, color:C.textSub, fontWeight:500, display:"block", marginBottom:5, fontFamily:F}}>Email address</label>
+              <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Email</label>
               <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required
-                placeholder="you@example.com" style={{...iS(), width:"100%", boxSizing:"border-box"}} />
+                placeholder="you@example.com" style={iS()} />
             </div>
             {mode !== "reset" && (
               <div style={{marginBottom:14}}>
-                <label style={{fontSize:13, color:C.textSub, fontWeight:500, display:"block", marginBottom:5, fontFamily:F}}>Password</label>
+                <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
+                  <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Password</label>
+                  {mode === "signin" && (
+                    <button type="button" onClick={()=>{setMode("reset");setErr("");}} style={{...linkBtn, fontSize:12}}>
+                      Forgot?
+                    </button>
+                  )}
+                </div>
                 <input type="password" value={password} onChange={e=>setPass(e.target.value)} required
-                  placeholder="********" style={{...iS(), width:"100%", boxSizing:"border-box"}} />
+                  placeholder="At least 6 characters" style={iS()} />
               </div>
             )}
             {mode === "signup" && (
               <div style={{marginBottom:14}}>
-                <label style={{fontSize:13, color:C.textSub, fontWeight:500, display:"block", marginBottom:5, fontFamily:F}}>Confirm Password</label>
+                <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Confirm password</label>
                 <input type="password" value={confirm} onChange={e=>setConf(e.target.value)} required
-                  placeholder="********" style={{...iS(), width:"100%", boxSizing:"border-box"}} />
-              </div>
-            )}
-            {mode === "signin" && (
-              <div style={{textAlign:"right", marginBottom:16}}>
-                <button type="button" onClick={()=>{setMode("reset");setErr("");}}
-                  style={{background:"none", border:"none", color:C.green, fontSize:13, cursor:"pointer", fontFamily:F}}>
-                  Forgot password?
-                </button>
+                  placeholder="Repeat your password" style={iS()} />
               </div>
             )}
             <button type="submit" disabled={loading}
-              style={{...btnStyle("primary","lg"), width:"100%", marginBottom:12, opacity:loading?.7:1}}>
+              {...btnStyle("primary","lg", {width:"100%", marginTop:6, marginBottom:14})}>
               {loading ? "Please wait..." :
-               mode==="signin"  ? "Sign In" :
-               mode==="signup"  ? "Start Free Trial ->" : "Send Reset Email"}
+               mode==="signin"  ? "Sign in" :
+               mode==="signup"  ? <>Start free trial <I.arrowRight size={14}/></> :
+               "Send reset email"}
             </button>
           </form>
           <div style={{textAlign:"center", fontSize:13, color:C.textSub, fontFamily:F}}>
             {mode==="signin" ? (
-              <>No account? <button onClick={()=>{setMode("signup");setErr("");}}
-                style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}>Sign up free</button></>
+              <>Don't have an account? <button onClick={()=>{setMode("signup");setErr("");}} style={linkBtn}>Sign up free</button></>
             ) : mode==="signup" ? (
-              <>Already have an account? <button onClick={()=>{setMode("signin");setErr("");}}
-                style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}>Sign in</button></>
+              <>Already have an account? <button onClick={()=>{setMode("signin");setErr("");}} style={linkBtn}>Sign in</button></>
             ) : (
-              <button onClick={()=>{setMode("signin");setErr("");}}
-                style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}>← Back to sign in</button>
+              <button onClick={()=>{setMode("signin");setErr("");}} style={{...linkBtn, display:"inline-flex", alignItems:"center", gap:4}}>
+                <I.arrowLeft size={13}/> Back to sign in
+              </button>
             )}
           </div>
         </Card>
-        <div style={{textAlign:"center", marginTop:20, fontSize:12, color:"rgba(255,255,255,.4)", fontFamily:F}}>
-          (c) 2025 DealHive - dealhive.io
+        <div style={{textAlign:"center", marginTop:18, fontSize:12, color:C.textMuted, fontFamily:F}}>
+          © 2025 DealHive · dealhive.io
         </div>
       </div>
     </div>
@@ -590,16 +774,18 @@ function MapView({properties, onSelect}) {
     window.__dhOpen = id => onSelect(id);
     properties.forEach(p => {
       if (!p.lat || !p.lng) return;
-      const ob = obBadge(p);
-      const icon = L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15],
-        html:'<div style="width:30px;height:30px;background:'+ob.c+';border:3px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center">'+
-          '<svg width="12" height="12" fill="white" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></div>'});
+      const isOcc = p.occupied;
+      const dotColor = isOcc ? "#10b981" : "#71717a";
+      const icon = L.divIcon({className:"", iconSize:[28,28], iconAnchor:[14,14],
+        html:'<div style="width:28px;height:28px;background:'+dotColor+';border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(9,9,11,.25),0 0 0 1px rgba(9,9,11,.1)"></div>'});
       const cf = calc(p).chosenCF;
       const cfStr = (cf<0?"-$":"$")+Math.abs(Math.round(cf)).toLocaleString()+"/mo";
-      const popup = '<div style="font-family:Inter,sans-serif;min-width:150px;font-size:13px;padding:4px">'+
-        '<b>'+p.address+'</b><br>'+
-        '<span style="color:'+cfC(cf)+';font-weight:700">'+cfStr+'</span><br><br>'+
-        '<button onclick="window.__dhOpen(\''+p.id+'\')" style="background:#10b981;color:white;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;width:100%">Open -></button>'+
+      const cfClr = cf>0 ? "#059669" : cf<0 ? "#dc2626" : "#71717a";
+      const popup = '<div style="font-family:Inter,system-ui,sans-serif;min-width:180px;font-size:13px;padding:4px">'+
+        '<div style="font-weight:600;color:#09090b;letter-spacing:-.01em;margin-bottom:2px">'+p.address+'</div>'+
+        '<div style="font-size:12px;color:#52525b;margin-bottom:8px">'+(p.city||"")+', '+(p.state||"")+'</div>'+
+        '<div style="font-size:18px;font-weight:700;color:'+cfClr+';letter-spacing:-.01em;margin-bottom:10px;font-variant-numeric:tabular-nums">'+cfStr+'</div>'+
+        '<button onclick="window.__dhOpen(\''+p.id+'\')" style="background:#10b981;color:#fff;border:none;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;width:100%;font-family:inherit;letter-spacing:-.005em">Open property</button>'+
         '</div>';
       markers.current.push(L.marker([p.lat,p.lng],{icon}).addTo(map).bindPopup(popup));
     });
@@ -614,33 +800,35 @@ function AppreciationProjector({homeValue, purchasePrice, mobile}) {
   const base = homeValue || purchasePrice;
   const years = [1,3,5,10,20];
   return (
-    <SectionBlock title="📈 Value Appreciation Projector" color="#0891b2" collapsible defaultOpen={false}>
-      <div style={{marginBottom:14}}>
-        <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:6,fontFamily:F}}>
-          Annual appreciation rate: <b>{rate}%</b>
-        </label>
+    <SectionBlock title="Appreciation projector" color={C.green} collapsible defaultOpen={false}>
+      <div style={{marginBottom:16}}>
+        <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Annual appreciation</label>
+          <span style={{fontSize:13, fontWeight:600, color:C.green, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{rate}%</span>
+        </div>
         <input type="range" min={0} max={10} step={0.5} value={rate}
           onChange={e=>setRate(parseFloat(e.target.value))}
           style={{width:"100%", accentColor:C.green}} />
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.textMuted,fontFamily:F}}>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, fontVariantNumeric:"tabular-nums"}}>
           <span>0%</span><span>5%</span><span>10%</span>
         </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:mobile?"1fr 1fr":"repeat(5,1fr)",gap:10}}>
+      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(5,1fr)", gap:1,
+        background:C.border, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border}}>
         {years.map(yr => {
           const val = base * Math.pow(1 + rate/100, yr);
           const gain = val - base;
           return (
-            <div key={yr} style={{background:C.bg,borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
-              <div style={{fontSize:11,color:C.textMuted,fontFamily:F,marginBottom:4}}>{yr} yr{yr>1?"s":""}</div>
-              <div style={{fontSize:14,fontWeight:700,color:C.text,fontFamily:F}}>{$(val)}</div>
-              <div style={{fontSize:11,color:C.green,fontFamily:F,marginTop:2}}>+{$(gain)}</div>
+            <div key={yr} style={{background:C.card, padding:"12px 10px", textAlign:"center"}}>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{yr} yr{yr>1?"s":""}</div>
+              <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{$(val)}</div>
+              <div style={{fontSize:11, color:C.greenDark, fontFamily:F, marginTop:2, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>+{$(gain)}</div>
             </div>
           );
         })}
       </div>
-      <div style={{marginTop:10,fontSize:12,color:C.textMuted,fontFamily:F}}>
-        Based on current value of {$(base)}. Appreciation is not guaranteed.
+      <div style={{marginTop:12, fontSize:12, color:C.textMuted, fontFamily:F, lineHeight:1.5}}>
+        Based on a current value of {$(base)}. Appreciation is not guaranteed.
       </div>
     </SectionBlock>
   );
@@ -655,142 +843,159 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
   return (
     <div>
       {/* Strategy toggle */}
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16}}>
-        {[["cash","All Cash","#b45309"],["finance","Financed",C.green]].map(([id,label,color]) => (
-          <button key={id} onClick={()=>u("chosenStrategy",id)}
-            style={{padding:12, borderRadius:10, border:"2px solid "+(s===id?color:C.border),
-              background:s===id?color:"white", color:s===id?"white":C.textSub,
-              fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:F, transition:"all .15s"}}>
-            {s===id?"":""}{label}
-          </button>
-        ))}
+      <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
+        background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
+        {[["cash","All cash"],["finance","Financed"]].map(([id,label]) => {
+          const active = s===id;
+          return (
+            <button key={id} onClick={()=>u("chosenStrategy",id)}
+              style={{
+                flex:1, padding:"7px 14px", borderRadius:C.r1, border:"none",
+                background: active ? C.card : "transparent",
+                color: active ? C.text : C.textSub,
+                fontWeight: active?600:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                letterSpacing:"-0.005em",
+                boxShadow: active ? C.sh1 : "none",
+                transition:"background .15s, color .15s, box-shadow .15s",
+              }}>
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Rent estimate banner */}
       {p.rentEstimate > 0 && (
-        <div style={{background:"linear-gradient(135deg,#0891b2,#0e7490)", borderRadius:12, padding:16, marginBottom:16, color:"white"}}>
-          <div style={{fontSize:11, fontWeight:700, textTransform:"uppercase", opacity:.8, fontFamily:F}}>📊 Market Rent Estimate</div>
-          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6, flexWrap:"wrap", gap:10}}>
+        <Card style={{padding:16, marginBottom:16, borderColor:C.greenBorder, background:C.greenSubtle}}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
             <div>
-              <div style={{fontSize:26, fontWeight:900, fontFamily:F}}>{$(p.rentEstimate)}/mo</div>
-              <div style={{fontSize:12, opacity:.8, fontFamily:F}}>{$(p.rentEstLow)} - {$(p.rentEstHigh)} range</div>
+              <div style={{fontSize:11, fontWeight:600, color:C.greenDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+                Market rent estimate
+              </div>
+              <div style={{fontSize:24, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>
+                {$(p.rentEstimate)}<span style={{fontSize:14, color:C.textSub, fontWeight:500}}>/mo</span>
+              </div>
+              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums"}}>
+                Range {$(p.rentEstLow)} – {$(p.rentEstHigh)}
+              </div>
             </div>
-            <button onClick={()=>u("rentAmount", p.rentEstimate)}
-              style={{background:"rgba(255,255,255,.2)", border:"1px solid rgba(255,255,255,.4)",
-                borderRadius:8, padding:"7px 14px", color:"white", fontWeight:600, fontSize:13, fontFamily:F, cursor:"pointer"}}>
-              Use This Estimate →
+            <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>
+              Use estimate
             </button>
           </div>
           {p.rentAmount > 0 && (
-            <div style={{fontSize:12, marginTop:6, color:p.rentAmount>=p.rentEstimate?"#86efac":"#fca5a5", fontFamily:F}}>
-              Your rent {$(p.rentAmount)}/mo -- {p.rentAmount>=p.rentEstimate?"at or above market":"below market estimate"}
+            <div style={{fontSize:12, marginTop:10, color:p.rentAmount>=p.rentEstimate?C.greenDark:C.amberDark, fontFamily:F, lineHeight:1.5}}>
+              Your rent <b style={{fontWeight:600}}>{$(p.rentAmount)}/mo</b> · {p.rentAmount>=p.rentEstimate?"at or above market":"below market"}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
         {/* All Cash */}
-        <SectionBlock title="All Cash Purchase" color={s==="cash"?"#b45309":"#9a7e5a"}>
-          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Repair Costs" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile} />
-          <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
-          <InputField label="Vacancy Rate" val={p.vacancyRate||5} set={v=>u("vacancyRate",v)} suf="%" note="5% = ~18 vacant days/yr" mobile={mobile} />
-          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent /mo" value={$(m.effectiveRent)} color={C.textSub} />}
-          <DataRow label="Cash Flow /mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
-          <DataRow label="Total Out of Pocket" value={$(m.cashOOP)} />
-          <DataRow label="Cash-on-Cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
-          <DataRow label="Cap Rate" value={pct(m.cashCap)} />
+        <SectionBlock title="All cash" color={s==="cash"?C.amber:C.borderHover}>
+          <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+          <InputField label="Repair costs" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile} />
+          <InputField label="Monthly rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
+          <InputField label="Vacancy rate" val={p.vacancyRate||5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
+          {(p.vacancyRate||0) > 0 && <DataRow label="Effective rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
+          <DataRow label="Cash flow / mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
+          <DataRow label="Out of pocket" value={$(m.cashOOP)} />
+          <DataRow label="Cash-on-cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
+          <DataRow label="Cap rate" value={pct(m.cashCap)} />
         </SectionBlock>
 
         {/* Finance */}
-        <SectionBlock title="Finance Purchase" color={s==="finance"?C.green:"#4a8a6a"}>
-          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
-          <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
-          <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:DEFAULT_CLOSING}
-            set={v=>u("closingCosts",v)} pre="$" note={"Def. $"+DEFAULT_CLOSING.toLocaleString()} mobile={mobile} />
-          <DataRow label="Down Payment" value={$(m.down)} />
-          <DataRow label="Loan Amount" value={$(m.loan)} />
-          <DataRow label="Mortgage /mo" value={$mo(m.mtg)} />
-          <DataRow label="Cash Flow /mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
-          <DataRow label="Out of Pocket" value={$(m.finOOP)} />
-          <div style={{fontSize:11,color:C.textMuted,fontFamily:F,padding:"2px 0 6px"}}>^ Down + Repairs + Closing Costs</div>
-          <DataRow label="Cash-on-Cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
-          <DataRow label="Cap Rate" value={pct(m.finCap)} />
-          <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "--"} />
+        <SectionBlock title="Financed" color={s==="finance"?C.green:C.borderHover}>
+          <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+          <InputField label="Down payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
+          <InputField label="Interest rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
+          <InputField label="Closing costs" val={p.closingCosts!=null?p.closingCosts:DEFAULT_CLOSING}
+            set={v=>u("closingCosts",v)} pre="$" note={"Default $"+DEFAULT_CLOSING.toLocaleString()} mobile={mobile} />
+          <DataRow label="Down payment" value={$(m.down)} />
+          <DataRow label="Loan amount" value={$(m.loan)} />
+          <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
+          <DataRow label="Cash flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
+          <DataRow label="Out of pocket" value={$(m.finOOP)} />
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"2px 0 6px"}}>Down + repairs + closing costs</div>
+          <DataRow label="Cash-on-cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
+          <DataRow label="Cap rate" value={pct(m.finCap)} />
+          <DataRow label="Years to payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
         </SectionBlock>
 
         {/* Expenses */}
-        <SectionBlock title="💰 Monthly Expenses" color="#059669">
-          <InputField label="Property Tax /mo" val={p.expPropTax} set={v=>u("expPropTax",v)} pre="$" mobile={mobile} />
-          <InputField label="Utilities /mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
-          <InputField label="Management /mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
-          <InputField label="Insurance /mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
-          <DataRow label="Total Expenses /mo" value={$(m.exp)} />
-          <DataRow label="NOI /yr" value={$(m.noi*12)} />
-          <DataRow label="Yearly Rent" value={$((p.rentAmount||0)*12)} />
+        <SectionBlock title="Monthly expenses" color={C.green}>
+          <InputField label="Property tax / mo" val={p.expPropTax} set={v=>u("expPropTax",v)} pre="$" mobile={mobile} />
+          <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
+          <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
+          <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
+          <DataRow label="Total expenses / mo" value={$(m.exp)} />
+          <DataRow label="NOI / yr" value={$(m.noi*12)} />
+          <DataRow label="Yearly rent" value={$((p.rentAmount||0)*12)} />
         </SectionBlock>
 
-        {/* BRRR - collapsible */}
-        <SectionBlock title="BRRR Estimates" color={C.purple} collapsible defaultOpen={false}>
-          <div style={{fontSize:12,color:C.purple,background:"#f5f3ff",padding:"6px 10px",borderRadius:8,marginBottom:10,fontFamily:F}}>
-            All-cash buy → rehab → cash-out refi → keep as rental
+        {/* BRRR */}
+        <SectionBlock title="BRRRR estimate" color={C.purple} collapsible defaultOpen={false}>
+          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
+            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
+            Buy with cash → rehab → cash-out refi → keep as rental.
           </div>
-          <InputField label="Cash Out Refi Amount" val={p.brrrCashOut||Math.round((p.homeValueMedian||0)*0.8)}
-            set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% median" mobile={mobile} />
-          <DataRow label="80% of Median (suggested)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.textMuted} />
-          <DataRow label="Est. Mortgage /mo" value={$mo(m.brrrMtg)} />
-          <DataRow label="BRRR Cash Flow /mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-          <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
+          <InputField label="Cash-out refi amount" val={p.brrrCashOut||Math.round((p.homeValueMedian||0)*0.8)}
+            set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of median" mobile={mobile} />
+          <DataRow label="80% of median (suggested)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.textMuted} />
+          <DataRow label="Est. mortgage / mo" value={$mo(m.brrrMtg)} />
+          <DataRow label="BRRRR cash flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
+          <DataRow label="Cash recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
         </SectionBlock>
 
-        {/* Fix & Flip - collapsible */}
-        <SectionBlock title="Fix & Flip" color={C.red} collapsible defaultOpen={false}>
-          <div style={{fontSize:12,color:C.red,background:"#fef2f2",padding:"6px 10px",borderRadius:8,marginBottom:10,fontFamily:F}}>
-            ARV pre-filled from Home Value High
+        {/* Fix & Flip */}
+        <SectionBlock title="Fix & flip" color={C.amber} collapsible defaultOpen={false}>
+          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
+            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
+            ARV pre-filled from your high home value.
           </div>
-          <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Agent Fee %" val={p.agentFeePct||6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
-          <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
-          <DataRow label="Agent Fee" value={$(m.agentFee)} />
-          <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
+          <InputField label="Sale price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$" mobile={mobile} />
+          <InputField label="Agent fee" val={p.agentFeePct||6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
+          <DataRow label="Total into deal" value={$(m.cashOOP)} />
+          <DataRow label="Agent fee" value={$(m.agentFee)} />
+          <DataRow label="Net profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
           <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
         </SectionBlock>
 
         {/* Repair Estimator */}
-        <SectionBlock title="🔨 Repair Estimator" color={C.textSub}>
+        <SectionBlock title="Repair estimator" color={C.borderHover}>
           {p.sqft>0 && (
-            <div style={{fontSize:12,color:C.textSub,background:C.bg,padding:"6px 10px",borderRadius:8,marginBottom:10,fontFamily:F}}>
-              {(p.sqft).toLocaleString()} sqft x {`$${renoRates.light}/$${renoRates.medium}/$${renoRates.full}`} per sqft
+            <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
+              borderRadius:C.r2, marginBottom:14, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {(p.sqft).toLocaleString()} sqft × {`$${renoRates.light}/$${renoRates.medium}/$${renoRates.full}`}/sqft
             </div>
           )}
-          <InputField label="Light Reno" val={p.repairLight||0} set={v=>u("repairLight",v)} pre="$" mobile={mobile} />
-          <InputField label="Medium Reno" val={p.repairMedium||0} set={v=>u("repairMedium",v)} pre="$" mobile={mobile} />
-          <InputField label="Full Reno" val={p.repairFull||0} set={v=>u("repairFull",v)} pre="$" mobile={mobile} />
+          <InputField label="Light reno" val={p.repairLight||0} set={v=>u("repairLight",v)} pre="$" mobile={mobile} />
+          <InputField label="Medium reno" val={p.repairMedium||0} set={v=>u("repairMedium",v)} pre="$" mobile={mobile} />
+          <InputField label="Full reno" val={p.repairFull||0} set={v=>u("repairFull",v)} pre="$" mobile={mobile} />
         </SectionBlock>
 
         {/* Home Value */}
-        <SectionBlock title="🏡 Home Value" color="#0891b2">
+        <SectionBlock title="Home value" color={C.blue}>
           <InputField label="Low" val={p.homeValueLow||0} set={v=>u("homeValueLow",v)} pre="$" mobile={mobile} />
           <InputField label="Median" val={p.homeValueMedian||0}
             set={v=>{ set({...p, homeValueMedian:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$" mobile={mobile} />
           <InputField label="High (ARV)" val={p.homeValueHigh||0}
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v}); }} pre="$" mobile={mobile} />
-          <DataRow label="Tax Value" value={$(p.taxValue)} />
-          <DataRow label="BRRR 80% Median" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.purple} />
+          <DataRow label="Tax value" value={$(p.taxValue)} />
+          <DataRow label="80% of median (BRRRR)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.purple} />
         </SectionBlock>
 
         {/* Summary */}
-        <SectionBlock title="Quick Summary" color={C.sidebar}>
-          <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"All Cash":"Financed"} />
-          <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
-          <DataRow label="Net Cash Flow /mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
-          <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
-          <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
-          <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "--"} />
-          <DataRow label="Yearly Rent (gross)" value={$((p.rentAmount||0)*12)} />
+        <SectionBlock title="Summary" color={C.text}>
+          <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"All cash":"Financed"} />
+          <DataRow label="Out of pocket" value={$(m.chosenOOP)} />
+          <DataRow label="Net cash flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
+          <DataRow label="Cash-on-cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
+          <DataRow label="Cap rate" value={pct(m.chosenCap)} />
+          <DataRow label="Years to payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
+          <DataRow label="Yearly rent (gross)" value={$((p.rentAmount||0)*12)} />
         </SectionBlock>
 
       </div>
@@ -827,157 +1032,178 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
   });
 
   return (
-    <div style={{padding:mobile?"16px 16px 100px":"28px 32px"}}>
-      {/* Hero */}
-      <div style={{background:"linear-gradient(135deg,"+C.sidebar+",#374151)", borderRadius:16,
-        padding:mobile?"20px":"28px 32px", marginBottom:24, color:"white"}}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
-          <div>
-            <div style={{fontSize:12, opacity:.65, fontFamily:F, fontWeight:600, letterSpacing:".06em",
-              textTransform:"uppercase", marginBottom:6}}>Total Monthly Cash Flow</div>
-            <div style={{fontSize:mobile?36:48, fontWeight:900, fontFamily:F, lineHeight:1,
-              color:totalCF>=0?"white":"#fca5a5"}}>{$mo(totalCF)}</div>
-            <div style={{fontSize:13, opacity:.65, fontFamily:F, marginTop:6}}>
-              {properties.length} properties - ${(totalVal/1000).toFixed(0)}k portfolio
-            </div>
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      <PageHeader
+        title="Portfolio"
+        subtitle={properties.length===0 ? "Welcome — let's add your first property." : `${properties.length} ${properties.length===1?"property":"properties"} · ${$(totalVal)} portfolio value`}
+        action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
+      />
+
+      {/* KPI grid */}
+      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:28}}>
+        <Card style={{padding:18}}>
+          <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Cash flow / mo</div>
+          <div style={{fontSize:30, fontWeight:700, color:cfC(totalCF), fontFamily:F, lineHeight:1.1, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums"}}>
+            {$mo(totalCF)}
           </div>
-          <button onClick={onAdd} style={{background:"rgba(255,255,255,.15)",
-            border:"1px solid rgba(255,255,255,.3)", borderRadius:10,
-            padding:"10px 16px", color:"white", fontWeight:600, fontSize:14, fontFamily:F, cursor:"pointer"}}>
-            + Add Property
-          </button>
-        </div>
-        <div style={{display:"grid", gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",
-          gap:16, marginTop:20, paddingTop:18, borderTop:"1px solid rgba(255,255,255,.15)"}}>
-          {[["Properties",properties.length],["Occupied",occupied+"/"+properties.length],
-            ["Rent /mo",$(monthlyRent)],["Alerts",alerts.length]].map(([l,v]) => (
-            <div key={l}>
-              <div style={{fontSize:mobile?20:22, fontWeight:800, fontFamily:F}}>{v}</div>
-              <div style={{fontSize:11, opacity:.65, fontFamily:F, marginTop:2}}>{l}</div>
-            </div>
-          ))}
-        </div>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
+            Net across {properties.length} {properties.length===1?"property":"properties"}
+          </div>
+        </Card>
+        <StatCard label="Occupied" value={`${occupied}/${properties.length||0}`} sub={properties.length>0?Math.round(occupied/Math.max(properties.length,1)*100)+"% occupied":""} icon={<I.building size={16}/>}/>
+        <StatCard label="Rent collected / mo" value={$(monthlyRent)} sub="Gross rent" icon={<I.chart size={16}/>}/>
+        <StatCard label="Alerts" value={alerts.length} color={alerts.length>0?C.amberDark:C.text} sub={alerts.length===0?"All clear":"Needs attention"} icon={<I.alert size={16}/>}/>
       </div>
 
       {/* Alerts */}
-      {alerts.map(p => {
-        const isLate = p.tenantStatus==="Late";
-        const days   = dU(p.leaseEnd);
-        return (
-          <div key={p.id} onClick={()=>onSelect(p.id)}
-            style={{background:isLate?"#fee2e2":"#fff7ed",
-              border:"1px solid "+(isLate?"#fca5a5":"#fed7aa"),
-              borderRadius:12, padding:"12px 16px", marginBottom:10,
-              display:"flex", gap:12, alignItems:"center", cursor:"pointer"}}>
-            <span style={{fontSize:20}}>{isLate?"[!!]":"[!]"}</span>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700, color:isLate?C.red:"#ea580c", fontSize:14, fontFamily:F}}>
-                {isLate ? "Late Rent" : "Lease Expiring in "+days+" days"}
-              </div>
-              <div style={{fontSize:13, color:C.text, fontFamily:F}}>{p.address} - {p.tenantName||"Tenant"}</div>
-            </div>
-            <span style={{color:C.textMuted, fontSize:18}}>›</span>
+      {alerts.length > 0 && (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase", marginBottom:10}}>
+            Needs attention
           </div>
-        );
-      })}
-
-      {alerts.length===0 && properties.length>0 && (
-        <div style={{background:C.greenLight, border:"1px solid #6ee7b7",
-          borderRadius:12, padding:"12px 16px", marginBottom:16,
-          display:"flex", gap:10, alignItems:"center"}}>
-          <span style={{fontSize:20}}>[OK]</span>
-          <div style={{fontWeight:600, color:C.greenDark, fontSize:14, fontFamily:F}}>All clear -- no alerts right now</div>
+          {alerts.map(p => {
+            const isLate = p.tenantStatus==="Late";
+            const days = dU(p.leaseEnd);
+            const palette = isLate
+              ? {bg:C.redSubtle, border:C.redBorder, text:C.redDark}
+              : {bg:C.amberSubtle, border:C.amberBorder, text:C.amberDark};
+            return (
+              <div key={p.id} onClick={()=>onSelect(p.id)}
+                style={{background:palette.bg, border:"1px solid "+palette.border,
+                  borderRadius:C.r3, padding:"12px 14px", marginBottom:8,
+                  display:"flex", gap:12, alignItems:"center", cursor:"pointer",
+                  transition:"transform .12s, box-shadow .12s"}}
+                onMouseEnter={e=>e.currentTarget.style.boxShadow=C.sh2}
+                onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                <div style={{
+                  width:32, height:32, borderRadius:C.r2, background:"rgba(255,255,255,.6)",
+                  border:"1px solid "+palette.border,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  color:palette.text, flexShrink:0,
+                }}><I.alert size={15}/></div>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontWeight:600, color:palette.text, fontSize:13, fontFamily:F, letterSpacing:"-0.005em"}}>
+                    {isLate ? "Rent is late" : `Lease expires in ${days} day${days===1?"":"s"}`}
+                  </div>
+                  <div style={{fontSize:13, color:C.text, fontFamily:F, marginTop:1,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                    {p.address} · {p.tenantName||"Tenant"}
+                  </div>
+                </div>
+                <span style={{color:palette.text, opacity:.7, display:"inline-flex"}}><I.chevronRight size={16}/></span>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* Map */}
       {properties.length > 0 && (
-        <div style={{marginBottom:24}}>
-          <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, marginBottom:10}}>📍 Property Map</div>
-          <div style={{height:mobile?260:360, borderRadius:14, overflow:"hidden", border:"1px solid "+C.border}}>
+        <div style={{marginBottom:28}}>
+          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10}}>
+            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
+              Map
+            </div>
+          </div>
+          <Card style={{padding:0, overflow:"hidden", height:mobile?260:360}}>
             {mapReady
               ? <MapView properties={properties} onSelect={onSelect} />
-              : <div style={{height:"100%", background:C.bg, display:"flex", alignItems:"center",
-                  justifyContent:"center", color:C.textMuted, fontFamily:F}}>Loading map...</div>}
-          </div>
+              : <div style={{height:"100%", display:"flex", alignItems:"center",
+                  justifyContent:"center", color:C.textMuted, fontFamily:F, fontSize:13}}>Loading map…</div>}
+          </Card>
         </div>
       )}
 
       {/* Property grid */}
-      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, marginBottom:14}}>
-        Properties ({properties.length})
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
+        <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
+          Properties
+        </div>
+        <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{properties.length} total</span>
       </div>
 
       {properties.length === 0 ? (
-        <Card style={{padding:48, textAlign:"center"}}>
-          <div style={{fontSize:48, marginBottom:12}}>🏘</div>
-          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:F}}>No properties yet</div>
-          <div style={{fontSize:14, color:C.textSub, fontFamily:F, margin:"8px 0 20px"}}>
-            Add your first property to get started
-          </div>
-          <button onClick={onAdd} style={btnStyle("primary","lg")}>+ Add First Property</button>
-        </Card>
+        <EmptyState
+          icon={<I.building size={22}/>}
+          title="No properties yet"
+          body="Add your first property to start tracking cash flow, lease dates, and projects."
+          action={<button onClick={onAdd} {...btnStyle("primary","lg")}><I.plus size={14}/> Add first property</button>}
+        />
       ) : (
         <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(300px,1fr))", gap:14}}>
           {properties.map(p => {
             const m = calc(p), ob = obBadge(p), days = dU(p.leaseEnd), st = stStyle(p.tenantStatus);
             return (
-              <Card key={p.id} onClick={()=>onSelect(p.id)} style={{cursor:"pointer"}}
-                onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.1)"}
-                onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 4px rgba(0,0,0,.05)"}>
+              <Card key={p.id} onClick={()=>onSelect(p.id)} hover style={{cursor:"pointer"}}>
                 {p.lat && p.lng ? (
                   <div style={{position:"relative", height:140, overflow:"hidden"}}>
                     <img src={svUrl(p.lat,p.lng,900,280)} alt="" style={{width:"100%", height:"100%", objectFit:"cover"}} />
-                    <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.65))"}} />
-                    <div style={{position:"absolute", bottom:10, left:14}}>
-                      <div style={{color:"white", fontWeight:700, fontSize:14, fontFamily:F}}>{p.address}</div>
-                      <div style={{color:"rgba(255,255,255,.8)", fontSize:12, fontFamily:F}}>{p.city}, {p.state}</div>
+                    <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 35%,rgba(9,9,11,.7))"}} />
+                    <div style={{position:"absolute", bottom:10, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:8}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{color:"white", fontWeight:600, fontSize:14, fontFamily:F, letterSpacing:"-0.01em",
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
+                        <div style={{color:"rgba(255,255,255,.8)", fontSize:12, fontFamily:F, marginTop:1}}>{p.city}, {p.state}</div>
+                      </div>
                     </div>
-                    <div style={{position:"absolute", top:10, right:10}}><Badge label={ob.label} bg={ob.bg} c={ob.c} /></div>
+                    <div style={{position:"absolute", top:10, right:10}}>
+                      <Badge label={ob.label} bg={ob.bg} c={ob.c} dot/>
+                    </div>
                   </div>
                 ) : (
                   <div style={{padding:"14px 16px", borderBottom:"1px solid "+C.border,
-                    display:"flex", justifyContent:"space-between"}}>
-                    <div>
-                      <div style={{fontWeight:700, fontSize:14, color:C.text, fontFamily:F}}>{p.address}</div>
-                      <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>{p.city}, {p.state}</div>
+                    display:"flex", justifyContent:"space-between", alignItems:"center", gap:8}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
+                      <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{p.city}, {p.state}</div>
                     </div>
-                    <Badge label={ob.label} bg={ob.bg} c={ob.c} />
+                    <Badge label={ob.label} bg={ob.bg} c={ob.c} dot/>
                   </div>
                 )}
-                <div style={{padding:"12px 14px"}}>
-                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10}}>
+                <div style={{padding:"14px"}}>
+                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:1, marginBottom:12,
+                    background:C.border, borderRadius:C.r2, overflow:"hidden", border:"1px solid "+C.border}}>
                     {[["CF/mo",m.chosenCF,$mo(m.chosenCF)],["CoC",m.chosenCoC,pct(m.chosenCoC)],["Cap",m.chosenCap,pct(m.chosenCap)]].map(([l,v,sv]) => (
-                      <div key={l} style={{textAlign:"center", background:C.bg, borderRadius:8, padding:"8px 6px"}}>
-                        <div style={{fontSize:10, color:C.textMuted, fontFamily:F}}>{l}</div>
-                        <div style={{fontSize:14, fontWeight:700,
-                          color:["CF/mo","CoC"].includes(l)?cfC(v):C.text, fontFamily:F}}>{sv}</div>
+                      <div key={l} style={{textAlign:"center", background:C.card, padding:"10px 6px"}}>
+                        <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                        <div style={{fontSize:14, fontWeight:700, marginTop:3,
+                          color:["CF/mo","CoC"].includes(l)?cfC(v):C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{sv}</div>
                       </div>
                     ))}
                   </div>
                   <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                    <Badge label={p.tenantStatus} bg={st.bg} c={st.c} />
-                    <span style={{fontSize:12, color:C.textMuted, fontFamily:F}}>{p.beds}bd - {p.baths}ba</span>
+                    <Badge label={p.tenantStatus} bg={st.bg} c={st.c} dot/>
+                    <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                      {p.beds}bd · {p.baths}ba{p.sqft?` · ${(p.sqft/1000).toFixed(1)}k sqft`:""}
+                    </span>
                   </div>
                   {days!=null && days<=60 && days>=0 && (
-                    <div style={{marginTop:8, background:"#fff7ed", borderRadius:8, padding:"5px 10px",
-                      fontSize:12, color:"#ea580c", fontWeight:600, fontFamily:F}}>
-                      Lease expires in {days} days
+                    <div style={{marginTop:10, background:C.amberSubtle, borderRadius:C.r1, padding:"5px 10px",
+                      fontSize:11, color:C.amberDark, fontWeight:500, fontFamily:F,
+                      display:"flex", alignItems:"center", gap:5}}>
+                      <I.alert size={11}/> Lease expires in {days} {days===1?"day":"days"}
                     </div>
                   )}
                 </div>
               </Card>
             );
           })}
-          <div onClick={onAdd}
-            style={{border:"2px dashed "+C.border, borderRadius:12, padding:28,
+          <button onClick={onAdd}
+            style={{border:"1px dashed "+C.borderHover, borderRadius:C.r4, padding:28,
               display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer",
-              color:C.textMuted, gap:6, minHeight:140, justifyContent:"center", transition:"all .15s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.green;e.currentTarget.style.color=C.green;e.currentTarget.style.background="#f0fdf4";}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.textMuted;e.currentTarget.style.background="transparent";}}>
-            <div style={{fontSize:32}}>+</div>
-            <div style={{fontSize:14, fontWeight:600, fontFamily:F}}>Add Property</div>
-          </div>
+              color:C.textMuted, gap:8, minHeight:140, justifyContent:"center",
+              background:"transparent", fontFamily:F,
+              transition:"border-color .15s, color .15s, background .15s"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.green;e.currentTarget.style.color=C.green;e.currentTarget.style.background=C.greenSubtle;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderHover;e.currentTarget.style.color=C.textMuted;e.currentTarget.style.background="transparent";}}>
+            <div style={{
+              width:36, height:36, borderRadius:"50%",
+              border:"1px solid currentColor",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}><I.plus size={18}/></div>
+            <div style={{fontSize:13, fontWeight:600}}>Add property</div>
+          </button>
         </div>
       )}
     </div>
@@ -999,95 +1225,112 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
   const totalCF   = properties.reduce((s,p) => s+calc(p).chosenCF, 0);
 
   return (
-    <div style={{padding:mobile?"16px 16px 100px":"28px 32px"}}>
-      <PageHeader title="My Properties" subtitle={properties.length+" properties in your portfolio"}
-        action={<button onClick={onAdd} style={btnStyle("primary","md")}>+ Add Property</button>} />
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      <PageHeader title="Properties" subtitle={`${properties.length} in your portfolio`}
+        action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>} />
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:24}}>
-        <StatCard label="Total" value={properties.length} icon="🏘" />
-        <StatCard label="Occupied" value={properties.filter(p=>p.occupied).length+"/"+properties.length} color={C.green} icon="[OK]" />
-        <StatCard label="Rent /mo" value={$(totalRent)} color={C.green} icon="💰" />
-        <StatCard label="Net CF /mo" value={$mo(totalCF)} color={cfC(totalCF)} icon="📈" />
+        <StatCard label="Total" value={properties.length} icon={<I.building size={16}/>}/>
+        <StatCard label="Occupied" value={`${properties.filter(p=>p.occupied).length}/${properties.length||0}`} icon={<I.check size={16}/>}/>
+        <StatCard label="Rent / mo" value={$(totalRent)} icon={<I.chart size={16}/>}/>
+        <StatCard label="Net CF / mo" value={$mo(totalCF)} color={cfC(totalCF)} icon={<I.chart size={16}/>}/>
       </div>
 
       <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap"}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Search by address or city..."
-          style={{...iS(mobile), flex:1, minWidth:200}} />
+        <div style={{position:"relative", flex:1, minWidth:200}}>
+          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
+            <I.search size={15}/>
+          </span>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search by address or city"
+            style={{...iS(mobile), paddingLeft:36}} />
+        </div>
         <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
           {[["all","All"],["occupied","Occupied"],["vacant","Vacant"],["late","Late"]].map(([id,label]) => (
-            <button key={id} onClick={()=>setFilter(id)} style={btnStyle(filter===id?"primary":"secondary","sm")}>{label}</button>
+            <button key={id} onClick={()=>setFilter(id)} {...btnStyle(filter===id?"primary":"secondary","sm")}>{label}</button>
           ))}
         </div>
       </div>
 
       {filtered.length === 0 ? (
-        <Card style={{padding:48, textAlign:"center"}}>
-          <div style={{fontSize:36, marginBottom:10}}>🔍</div>
-          <div style={{fontSize:15, fontWeight:600, fontFamily:F, color:C.text}}>
-            {search ? "No properties match your search" : "No properties yet"}
-          </div>
-          {!search && <button onClick={onAdd} style={{...btnStyle("primary","md"), marginTop:16}}>+ Add First Property</button>}
-        </Card>
+        <EmptyState
+          icon={<I.search size={20}/>}
+          title={search ? "No matches" : "No properties yet"}
+          body={search ? "Try a different address or city, or clear filters." : "Add your first property to start tracking it."}
+          action={!search && <button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
+        />
       ) : (
-        <Card>
+        <Card padding={0}>
           {!mobile && (
-            <div style={{display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr auto",
-              gap:12, padding:"10px 16px", background:C.bg, borderBottom:"1px solid "+C.border,
-              fontSize:11, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:".05em", fontFamily:F}}>
-              {["Property","Type","Tenant","Cash Flow","CoC","Status",""].map(h => <div key={h}>{h}</div>)}
+            <div style={{display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 1fr 1fr auto",
+              gap:12, padding:"11px 16px", background:C.bgSubtle, borderBottom:"1px solid "+C.border,
+              fontSize:11, fontWeight:600, color:C.textSub, textTransform:"uppercase", letterSpacing:".04em", fontFamily:F}}>
+              {["Property","Type","Tenant","Cash flow","CoC","Status",""].map(h => <div key={h}>{h}</div>)}
             </div>
           )}
           {filtered.map((p,i) => {
-            const m = calc(p), ob = obBadge(p), st = stStyle(p.tenantStatus);
+            const m = calc(p), st = stStyle(p.tenantStatus);
             return (
               <div key={p.id} style={{borderBottom:i<filtered.length-1?"1px solid "+C.border:"none"}}>
                 {mobile ? (
                   <div onClick={()=>onSelect(p.id)}
-                    style={{padding:16, cursor:"pointer", display:"flex", gap:12, alignItems:"center"}}>
-                    {p.lat && p.lng && (
-                      <div style={{width:60, height:60, borderRadius:10, overflow:"hidden", flexShrink:0}}>
+                    style={{padding:14, cursor:"pointer", display:"flex", gap:12, alignItems:"center"}}>
+                    {p.lat && p.lng ? (
+                      <div style={{width:54, height:54, borderRadius:C.r2, overflow:"hidden", flexShrink:0, border:"1px solid "+C.border}}>
                         <img src={svUrl(p.lat,p.lng,120,120)} alt=""
                           style={{width:"100%", height:"100%", objectFit:"cover"}} />
                       </div>
+                    ) : (
+                      <div style={{width:54, height:54, borderRadius:C.r2, background:C.bgSubtle,
+                        display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted, flexShrink:0}}>
+                        <I.building size={20}/>
+                      </div>
                     )}
                     <div style={{flex:1, minWidth:0}}>
-                      <div style={{fontWeight:700, fontSize:14, color:C.text, fontFamily:F,
+                      <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
                         overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
-                      <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>{p.city}, {p.state}</div>
+                      <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{p.city}, {p.state}</div>
                       <div style={{display:"flex", gap:8, marginTop:6, alignItems:"center"}}>
-                        <span style={{fontSize:14, fontWeight:700, color:cfC(m.chosenCF), fontFamily:F}}>{$mo(m.chosenCF)}</span>
-                        <Badge label={p.tenantStatus} bg={st.bg} c={st.c} />
+                        <span style={{fontSize:13, fontWeight:700, color:cfC(m.chosenCF), fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$mo(m.chosenCF)}</span>
+                        <Badge label={p.tenantStatus} bg={st.bg} c={st.c} dot/>
                       </div>
                     </div>
-                    <span style={{color:C.textMuted, fontSize:18}}>›</span>
+                    <span style={{color:C.textMuted, display:"inline-flex"}}><I.chevronRight size={16}/></span>
                   </div>
                 ) : (
-                  <div style={{display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr auto",
+                  <div style={{display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 1fr 1fr auto",
                     gap:12, padding:"12px 16px", alignItems:"center", cursor:"pointer", transition:"background .1s"}}
                     onClick={()=>onSelect(p.id)}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.bgSubtle}
                     onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{display:"flex", gap:10, alignItems:"center"}}>
-                      {p.lat && p.lng && (
-                        <div style={{width:44, height:44, borderRadius:8, overflow:"hidden", flexShrink:0}}>
+                    <div style={{display:"flex", gap:10, alignItems:"center", minWidth:0}}>
+                      {p.lat && p.lng ? (
+                        <div style={{width:38, height:38, borderRadius:C.r2, overflow:"hidden", flexShrink:0, border:"1px solid "+C.border}}>
                           <img src={svUrl(p.lat,p.lng,88,88)} alt=""
                             style={{width:"100%", height:"100%", objectFit:"cover"}} />
                         </div>
+                      ) : (
+                        <div style={{width:38, height:38, borderRadius:C.r2, background:C.bgSubtle,
+                          display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted, flexShrink:0}}>
+                          <I.building size={16}/>
+                        </div>
                       )}
-                      <div>
-                        <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F}}>{p.address}</div>
-                        <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>{p.city}, {p.state} - {p.beds}bd {p.baths}ba</div>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:600, fontSize:13, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
+                        <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{p.city}, {p.state} · {p.beds}bd {p.baths}ba</div>
                       </div>
                     </div>
                     <div style={{fontSize:13, color:C.textSub, fontFamily:F}}>{p.type}</div>
                     <div style={{fontSize:13, color:C.text, fontFamily:F,
-                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tenantName||"--"}</div>
-                    <div style={{fontSize:14, fontWeight:700, color:cfC(m.chosenCF), fontFamily:F}}>{$mo(m.chosenCF)}</div>
-                    <div style={{fontSize:13, fontWeight:600, color:cfC(m.chosenCoC), fontFamily:F}}>{pct(m.chosenCoC)}</div>
-                    <Badge label={p.tenantStatus} bg={st.bg} c={st.c} />
-                    <button onClick={e=>{e.stopPropagation();if(window.confirm("Delete?"))onDelete(p.id);}}
-                      style={btnStyle("danger","sm")}>Del</button>
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.tenantName||"—"}</div>
+                    <div style={{fontSize:13, fontWeight:600, color:cfC(m.chosenCF), fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$mo(m.chosenCF)}</div>
+                    <div style={{fontSize:13, fontWeight:500, color:cfC(m.chosenCoC), fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{pct(m.chosenCoC)}</div>
+                    <Badge label={p.tenantStatus} bg={st.bg} c={st.c} dot/>
+                    <button onClick={e=>{e.stopPropagation();if(window.confirm("Delete this property?"))onDelete(p.id);}}
+                      {...btnStyle("ghost","sm", {color:C.textMuted, padding:"5px 6px"})} aria-label="Delete">
+                      <I.trash size={14}/>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1109,81 +1352,88 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   return (
     <div style={{paddingBottom:mobile?100:40}}>
       {/* Sticky header */}
-      <div style={{background:"white", borderBottom:"1px solid "+C.border,
-        padding:mobile?"12px 16px":"14px 28px",
-        position:"sticky", top:mobile?0:56, zIndex:50}}>
-        <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:10}}>
+      <div style={{background:"rgba(255,255,255,.92)", borderBottom:"1px solid "+C.border,
+        padding:mobile?"12px 16px":"14px 32px",
+        position:"sticky", top:mobile?0:56, zIndex:50,
+        backdropFilter:"saturate(180%) blur(10px)"}}>
+        <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
           <button onClick={onBack}
-            style={{background:C.bg, border:"1px solid "+C.border, borderRadius:8,
-              width:34, height:34, fontSize:18, cursor:"pointer",
-              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>‹</button>
+            style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
+              width:34, height:34, cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+              boxShadow:C.sh1}}>
+            <I.arrowLeft size={16}/>
+          </button>
           <div style={{flex:1, minWidth:0}}>
-            <div style={{fontWeight:800, fontSize:mobile?15:17, color:C.text, fontFamily:F,
+            <div style={{fontWeight:600, fontSize:mobile?15:17, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{prop.address}</div>
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>{prop.city}, {prop.state} - {prop.llc}</div>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{prop.city}, {prop.state} · {prop.llc}</div>
           </div>
           <div style={{display:"flex", gap:8}}>
             <a href={"https://www.zillow.com/homes/"+encodeURIComponent(prop.address+" "+prop.city)+"_rb/"}
               target="_blank" rel="noreferrer"
-              style={{...btnStyle("blue","sm"), textDecoration:"none"}}>Zillow</a>
+              {...btnStyle("secondary","sm")}>Zillow <I.externalLink size={11} stroke={2.5}/></a>
             <button onClick={()=>{ if(window.confirm("Delete this property?")) onDelete(prop.id); }}
-              style={btnStyle("danger","sm")}>Delete</button>
+              {...btnStyle("danger","sm")} aria-label="Delete property">
+              <I.trash size={13}/>
+            </button>
           </div>
         </div>
-        <div style={{display:"flex", overflowX:"auto", WebkitOverflowScrolling:"touch", scrollbarWidth:"none"}}>
+        <div className="dh-tab-row" style={{display:"flex", overflowX:"auto", WebkitOverflowScrolling:"touch", scrollbarWidth:"none", gap:4}}>
           {tabs.map(([id,label]) => (
             <button key={id} onClick={()=>setTab(id)}
-              style={{padding:"8px 14px", border:"none", background:"none", cursor:"pointer",
-                fontSize:13, fontWeight:tab===id?700:400,
-                color:tab===id?C.green:C.textMuted,
-                borderBottom:tab===id?"2px solid "+C.green:"2px solid transparent",
-                fontFamily:F, whiteSpace:"nowrap", flexShrink:0}}>
+              style={{padding:"8px 0", marginRight:18, border:"none", background:"none", cursor:"pointer",
+                fontSize:13, fontWeight:tab===id?600:500,
+                color:tab===id?C.text:C.textMuted,
+                borderBottom: tab===id ? "2px solid "+C.text : "2px solid transparent",
+                fontFamily:F, whiteSpace:"nowrap", flexShrink:0,
+                letterSpacing:"-0.005em",
+                transition:"color .12s, border-color .12s"}}>
               {label}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{padding:mobile?"16px":"24px 28px"}}>
+      <div style={{padding:mobile?"16px":"24px 32px"}}>
         {/* KPI strip */}
-        <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:20}}>
+        <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:24}}>
           {[
-            ["CF/mo ("+(prop.chosenStrategy==="cash"?"Cash":"Fin.")+")", $mo(m.chosenCF), cfC(m.chosenCF)],
-            ["Cash-on-Cash", pct(m.chosenCoC), cfC(m.chosenCoC)],
-            ["Cap Rate", pct(m.chosenCap), C.text],
-            ["Out of Pocket", $(m.chosenOOP), C.text],
+            [`Cash flow / mo (${prop.chosenStrategy==="cash"?"Cash":"Financed"})`, $mo(m.chosenCF), cfC(m.chosenCF)],
+            ["Cash-on-cash", pct(m.chosenCoC), cfC(m.chosenCoC)],
+            ["Cap rate", pct(m.chosenCap), C.text],
+            ["Out of pocket", $(m.chosenOOP), C.text],
           ].map(([l,v,c]) => (
             <Card key={l} style={{padding:"14px 16px"}}>
-              <div style={{fontSize:11, color:C.textMuted, fontWeight:600, textTransform:"uppercase", letterSpacing:".05em", fontFamily:F}}>{l}</div>
-              <div style={{fontSize:20, fontWeight:800, color:c, fontFamily:F, marginTop:4}}>{v}</div>
+              <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>{l}</div>
+              <div style={{fontSize:22, fontWeight:700, color:c, fontFamily:F, marginTop:6, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v}</div>
             </Card>
           ))}
         </div>
 
         {tab==="overview" && (
           <div>
-            <StreetViewImg lat={prop.lat} lng={prop.lng} address={prop.address} height={200} />
-            <Card style={{padding:16, marginBottom:14}}>
-              <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:F, marginBottom:12}}>Property Details</div>
-              <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12}}>
-                {[["Type",prop.type],["Beds/Baths",prop.beds+"bd "+prop.baths+"ba"],
-                  ["Sq Ft",(prop.sqft||0).toLocaleString()],["Built",prop.yearBuilt||"--"],
-                  ["Tax Value",$(prop.taxValue)],["Lockbox",prop.lockboxCode||"--"],
-                  ["Parcel ID",prop.parcelId||"--"],["LLC",prop.llc]].map(([l,v]) => (
+            <StreetViewImg lat={prop.lat} lng={prop.lng} address={prop.address} height={220} />
+            <SectionBlock title="Property details" color={C.text}>
+              <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:18}}>
+                {[["Type",prop.type],["Beds / baths",prop.beds+"bd · "+prop.baths+"ba"],
+                  ["Sq ft",(prop.sqft||0).toLocaleString()],["Year built",prop.yearBuilt||"—"],
+                  ["Tax value",$(prop.taxValue)],["Lockbox",prop.lockboxCode||"—"],
+                  ["Parcel ID",prop.parcelId||"—"],["LLC",prop.llc]].map(([l,v]) => (
                   <div key={l}>
-                    <div style={{fontSize:11, color:C.textMuted, fontFamily:F}}>{l}</div>
-                    <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, marginTop:2}}>{v}</div>
+                    <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                    <div style={{fontSize:14, fontWeight:500, color:C.text, fontFamily:F, marginTop:4, letterSpacing:"-0.005em", fontVariantNumeric:"tabular-nums"}}>{v}</div>
                   </div>
                 ))}
               </div>
-            </Card>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14}}>
+            </SectionBlock>
+            <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:10, marginBottom:14}}>
               <a href={"https://maps.google.com/?q="+encodeURIComponent(prop.address+" "+prop.city)}
                 target="_blank" rel="noreferrer"
-                style={{...btnStyle("secondary","md"), textDecoration:"none"}}>📍 Google Maps</a>
+                {...btnStyle("secondary","md")}><I.pin size={14}/> Open in Google Maps</a>
               <a href={"https://www.zillow.com/homes/"+encodeURIComponent(prop.address+" "+prop.city)+"_rb/"}
                 target="_blank" rel="noreferrer"
-                style={{...btnStyle("blue","md"), textDecoration:"none"}}>🏠 Zillow</a>
+                {...btnStyle("secondary","md")}>View on Zillow <I.externalLink size={13}/></a>
             </div>
           </div>
         )}
@@ -1191,10 +1441,10 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <ProjectsSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="notes"      && (
-          <SectionBlock title="Notes & Details" color={C.greenMid}>
+          <SectionBlock title="Notes" color={C.text}>
             <textarea value={prop.notes||""} onChange={e=>u("notes",e.target.value)}
-              placeholder="Lockbox codes, quit claim, lead safe, legal notes..."
-              style={{...iS(mobile), minHeight:200, resize:"vertical"}} />
+              placeholder="Lockbox codes, quit claim, lead safe, legal notes…"
+              style={{...iS(mobile), minHeight:220, resize:"vertical", lineHeight:1.55}} />
           </SectionBlock>
         )}
       </div>
@@ -1204,55 +1454,77 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
 
 // -- Tenant Section ------------------------------------------------------------
 function TenantSection({p, set, mobile}) {
-  const u = (f,v) => set({...p,[f]:v}), days = dU(p.leaseEnd), st = stStyle(p.tenantStatus);
+  const u = (f,v) => set({...p,[f]:v}), days = dU(p.leaseEnd);
   return (
     <div>
       {p.tenantPhone && (
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14}}>
-          <a href={"tel:"+p.tenantPhone} style={{...btnStyle("primary","md"), textDecoration:"none"}}>📞 Call</a>
-          <a href={"sms:"+p.tenantPhone} style={{...btnStyle("secondary","md"), textDecoration:"none"}}>💬 Text</a>
+          <a href={"tel:"+p.tenantPhone} {...btnStyle("primary","md")}><I.phone size={14}/> Call</a>
+          <a href={"sms:"+p.tenantPhone} {...btnStyle("secondary","md")}><I.message size={14}/> Text</a>
         </div>
       )}
       {days!==null && days<=60 && days>=0 && (
-        <div style={{background:"#fff7ed", border:"1px solid #fed7aa", borderRadius:10, padding:"10px 14px", marginBottom:14,
-          fontSize:13, color:"#ea580c", fontWeight:600, fontFamily:F}}>
-          Lease expiring in {days} days -- follow up about renewal
-        </div>
+        <Banner tone="warn" icon={<I.alert size={14}/>}>
+          Lease expires in <b style={{fontWeight:600}}>{days} day{days===1?"":"s"}</b> — follow up about renewal.
+        </Banner>
       )}
       {days!==null && days<0 && (
-        <div style={{background:"#fee2e2", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 14px", marginBottom:14,
-          fontSize:13, color:C.red, fontWeight:700, fontFamily:F}}>
-          [!!] Lease EXPIRED {Math.abs(days)} days ago
-        </div>
+        <Banner tone="danger" icon={<I.alert size={14}/>}>
+          Lease expired <b style={{fontWeight:700}}>{Math.abs(days)} day{Math.abs(days)===1?"":"s"}</b> ago.
+        </Banner>
       )}
-      <SectionBlock title="👤 Tenant Information" color="#0891b2">
+      <SectionBlock title="Tenant" color={C.green}>
         <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:12}}>
-          <InputField label="Tenant Name" val={p.tenantName||""} set={v=>u("tenantName",v)} type="text" mobile={mobile} />
+          <InputField label="Tenant name" val={p.tenantName||""} set={v=>u("tenantName",v)} type="text" mobile={mobile} />
           <InputField label="Phone" val={p.tenantPhone||""} set={v=>u("tenantPhone",v)} type="text" mobile={mobile} />
           <InputField label="Email" val={p.tenantEmail||""} set={v=>u("tenantEmail",v)} type="text" mobile={mobile} />
-          <InputField label="Security Deposit $" val={p.rentDeposit||0} set={v=>u("rentDeposit",v)} pre="$" mobile={mobile} />
-          <div>
-            <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Lease Start</label>
-            <input type="date" value={p.leaseStart||""} onChange={e=>u("leaseStart",e.target.value)} style={iS(mobile)} />
-          </div>
-          <div>
-            <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Lease End</label>
-            <input type="date" value={p.leaseEnd||""} onChange={e=>u("leaseEnd",e.target.value)} style={iS(mobile)} />
-          </div>
-          <div>
-            <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Payment Status</label>
-            <select value={p.tenantStatus} onChange={e=>u("tenantStatus",e.target.value)} style={iS(mobile)}>
-              {["Current","Late","Partial","Vacant"].map(s => <option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Occupancy</label>
-            <select value={p.occupied?"Occupied":"Vacant"} onChange={e=>u("occupied",e.target.value==="Occupied")} style={iS(mobile)}>
-              <option>Occupied</option><option>Vacant</option>
-            </select>
-          </div>
+          <InputField label="Security deposit" val={p.rentDeposit||0} set={v=>u("rentDeposit",v)} pre="$" mobile={mobile} />
+          <DateField label="Lease start" value={p.leaseStart||""} onChange={v=>u("leaseStart",v)} mobile={mobile}/>
+          <DateField label="Lease end" value={p.leaseEnd||""} onChange={v=>u("leaseEnd",v)} mobile={mobile}/>
+          <SelectField label="Payment status" value={p.tenantStatus} onChange={v=>u("tenantStatus",v)} options={["Current","Late","Partial","Vacant"]} mobile={mobile}/>
+          <SelectField label="Occupancy" value={p.occupied?"Occupied":"Vacant"} onChange={v=>u("occupied",v==="Occupied")} options={["Occupied","Vacant"]} mobile={mobile}/>
         </div>
       </SectionBlock>
+    </div>
+  );
+}
+
+function Banner({tone="info", icon, children}) {
+  const palette = {
+    info:   {bg:C.blueSubtle,   border:C.blueBorder,   text:C.blueDark},
+    warn:   {bg:C.amberSubtle,  border:C.amberBorder,  text:C.amberDark},
+    danger: {bg:C.redSubtle,    border:C.redBorder,    text:C.redDark},
+    success:{bg:C.greenSubtle,  border:C.greenBorder,  text:C.greenDark},
+  }[tone] || {bg:C.bgSubtle, border:C.border, text:C.text};
+  return (
+    <div style={{
+      display:"flex", gap:10, alignItems:"flex-start",
+      background:palette.bg, border:"1px solid "+palette.border,
+      borderRadius:C.r3, padding:"11px 14px", marginBottom:14,
+      fontSize:13, color:palette.text, fontFamily:F, lineHeight:1.55,
+    }}>
+      {icon && <span style={{flexShrink:0, marginTop:1}}>{icon}</span>}
+      <div style={{flex:1}}>{children}</div>
+    </div>
+  );
+}
+
+function DateField({label, value, onChange, mobile}) {
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>{label}</label>
+      <input type="date" value={value} onChange={e=>onChange(e.target.value)} style={iS(mobile)} />
+    </div>
+  );
+}
+
+function SelectField({label, value, onChange, options, mobile}) {
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>{label}</label>
+      <select value={value} onChange={e=>onChange(e.target.value)} style={iS(mobile)}>
+        {options.map(o => <option key={o}>{o}</option>)}
+      </select>
     </div>
   );
 }
@@ -1262,7 +1534,6 @@ function ProjectsSection({p, set, mobile}) {
   const [exp,setExp] = useState(null);
   const [nP,setNP]   = useState({name:"",budget:0,contractor:"",status:"In Progress"});
   const [lg,setLg]   = useState({});
-  const stC = s => s==="Complete"?C.green:s==="In Progress"?C.blue:C.textMuted;
   const add = () => {
     if(!nP.name) return;
     set({...p, projects:[...(p.projects||[]),{id:"pr"+Date.now(),...nP,spent:0,isCapEx:!p.occupied,log:[]}]});
@@ -1275,59 +1546,71 @@ function ProjectsSection({p, set, mobile}) {
   };
   return (
     <div>
-      <div style={{background:"#f5f3ff",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13,color:C.purple,fontFamily:F}}>
-        💡 <b>Vacant</b> = CapEx (pre-tenant) - <b>Occupied</b> = Operating Expense
-      </div>
+      <Banner tone="info">
+        <b style={{fontWeight:600}}>Vacant</b> projects count as CapEx (pre-tenant) ·{" "}
+        <b style={{fontWeight:600}}>Occupied</b> projects count as operating expense.
+      </Banner>
       {(p.projects||[]).map(pr => (
-        <Card key={pr.id} style={{marginBottom:12, overflow:"hidden"}}>
-          <div style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", cursor:"pointer"}}
+        <Card key={pr.id} style={{marginBottom:10}} padding={0}>
+          <div style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:12}}
             onClick={()=>setExp(exp===pr.id?null:pr.id)}>
-            <div>
-              <div style={{fontWeight:700, fontSize:14, fontFamily:F}}>{pr.name}</div>
-              <div style={{display:"flex", gap:6, marginTop:5}}>
-                <span style={{background:stC(pr.status)+"20",color:stC(pr.status),padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:600,fontFamily:F}}>{pr.status}</span>
-                <span style={{background:pr.isCapEx?"#fef3c7":"#dbeafe",color:pr.isCapEx?"#b45309":C.blue,padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:600,fontFamily:F}}>{pr.isCapEx?"CapEx":"Expense"}</span>
+            <div style={{minWidth:0, flex:1}}>
+              <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>{pr.name}</div>
+              <div style={{display:"flex", gap:6, marginTop:6, flexWrap:"wrap"}}>
+                <Badge label={pr.status}
+                  bg={pr.status==="Complete"?C.greenLight:pr.status==="In Progress"?C.blueLight:C.bgSubtle}
+                  c={pr.status==="Complete"?C.greenDark:pr.status==="In Progress"?C.blueDark:C.textSub} dot/>
+                <Badge label={pr.isCapEx?"CapEx":"Expense"}
+                  bg={pr.isCapEx?C.amberLight:C.blueLight} c={pr.isCapEx?C.amberDark:C.blueDark}/>
               </div>
             </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:13,color:C.textSub,fontFamily:F}}>{$(pr.budget)}</div>
-              <div style={{fontSize:13,fontWeight:700,color:pr.spent>pr.budget?C.red:C.green,fontFamily:F}}>{$(pr.spent)} spent</div>
+            <div style={{textAlign:"right", flexShrink:0}}>
+              <div style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>Budget {$(pr.budget)}</div>
+              <div style={{fontSize:13, fontWeight:600, color:pr.spent>pr.budget?C.redDark:C.greenDark, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:2}}>
+                {$(pr.spent)} spent
+              </div>
             </div>
+            <span style={{color:C.textMuted, transition:"transform .2s", transform:exp===pr.id?"rotate(180deg)":"none", display:"inline-flex"}}>
+              <I.chevronDown size={16}/>
+            </span>
           </div>
           {exp===pr.id && (
             <div style={{borderTop:"1px solid "+C.border, padding:16}}>
+              {(pr.log||[]).length === 0 && (
+                <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginBottom:10, fontStyle:"italic"}}>
+                  No updates logged yet.
+                </div>
+              )}
               {(pr.log||[]).map((l,i) => (
-                <div key={i} style={{borderLeft:"3px solid "+C.purple, paddingLeft:10, marginBottom:10}}>
-                  <div style={{fontSize:11,color:C.textMuted,fontFamily:F}}>{l.date}</div>
-                  <div style={{fontSize:13,fontFamily:F,color:C.text}}>{l.note}</div>
+                <div key={i} style={{borderLeft:"2px solid "+C.greenBorder, paddingLeft:12, marginBottom:12}}>
+                  <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{l.date}</div>
+                  <div style={{fontSize:13, fontFamily:F, color:C.text, marginTop:1}}>{l.note}</div>
                 </div>
               ))}
-              <div style={{display:"flex",gap:8,marginTop:8}}>
-                <input placeholder="Add update..." value={lg[pr.id]||""}
+              <div style={{display:"flex", gap:8, marginTop:6}}>
+                <input placeholder="Add an update…" value={lg[pr.id]||""}
                   onChange={e=>setLg(x=>({...x,[pr.id]:e.target.value}))}
                   onKeyDown={e=>e.key==="Enter"&&addLog(pr.id)}
-                  style={{...iS(mobile),flex:1}} />
-                <button onClick={()=>addLog(pr.id)} style={btnStyle("primary","sm")}>Log</button>
+                  style={{...iS(mobile), flex:1}} />
+                <button onClick={()=>addLog(pr.id)} {...btnStyle("primary","md")}>Log</button>
               </div>
               <button onClick={()=>set({...p,projects:(p.projects||[]).filter(x=>x.id!==pr.id)})}
-                style={{...btnStyle("danger","sm"), marginTop:10, width:"100%"}}>Delete Project</button>
+                {...btnStyle("danger","sm", {marginTop:12, width:"100%"})}>
+                <I.trash size={13}/> Delete project
+              </button>
             </div>
           )}
         </Card>
       ))}
-      <Card style={{padding:16}}>
-        <div style={{fontSize:14,fontWeight:700,color:C.purple,marginBottom:12,fontFamily:F}}>+ New Project</div>
-        <InputField label="Project Name" val={nP.name} set={v=>setNP(x=>({...x,name:v}))} type="text" mobile={mobile} />
+      <SectionBlock title="New project" color={C.green}>
+        <InputField label="Project name" val={nP.name} set={v=>setNP(x=>({...x,name:v}))} type="text" mobile={mobile} />
         <InputField label="Contractor" val={nP.contractor} set={v=>setNP(x=>({...x,contractor:v}))} type="text" mobile={mobile} />
-        <InputField label="Budget $" val={nP.budget||0} set={v=>setNP(x=>({...x,budget:v}))} mobile={mobile} />
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Status</label>
-          <select value={nP.status} onChange={e=>setNP(x=>({...x,status:e.target.value}))} style={iS(mobile)}>
-            <option>In Progress</option><option>Complete</option><option>Planned</option>
-          </select>
-        </div>
-        <button onClick={add} style={{...btnStyle("primary","md"),width:"100%"}}>Add Project</button>
-      </Card>
+        <InputField label="Budget" val={nP.budget||0} set={v=>setNP(x=>({...x,budget:v}))} pre="$" mobile={mobile} />
+        <SelectField label="Status" value={nP.status} onChange={v=>setNP(x=>({...x,status:v}))} options={["In Progress","Complete","Planned"]} mobile={mobile}/>
+        <button onClick={add} {...btnStyle("primary","md", {width:"100%"})}>
+          <I.plus size={14}/> Add project
+        </button>
+      </SectionBlock>
     </div>
   );
 }
@@ -1363,53 +1646,59 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
   const winner    = finScore >= cashScore ? "finance" : "cash";
 
   return (
-    <div style={{padding:mobile?"16px 16px 100px":"28px 32px"}}>
-      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before making an offer"
-        action={<button onClick={()=>{setD(newDeal());setErr("");}} style={btnStyle("secondary","md")}>🗑 Clear</button>} />
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
+        action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
       {/* Address */}
-      <SectionBlock title="Property Address" color={C.green}>
+      <SectionBlock title="Property" color={C.green}>
         <div style={{marginBottom:12}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>
-            Start typing to search
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
+            Address
           </label>
           <AddressInput value={d.address} onChange={v=>u("address",v)}
             onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
-            placeholder="e.g. 9923 Bessemer Ave, Cleveland, OH..."
+            placeholder="Start typing an address…"
             mobile={mobile} />
         </div>
         <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={180} />
         {d.city && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:6}}>
             {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (
               <div key={f}>
-                <label style={{fontSize:12,color:C.textMuted,fontFamily:F,display:"block",marginBottom:4}}>{l}</label>
+                <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>{l}</label>
                 <input value={d[f]||""} onChange={e=>u(f,e.target.value)} style={iS(mobile)} />
               </div>
             ))}
           </div>
         )}
         <button onClick={runSearch} disabled={loading}
-          style={{...btnStyle("primary","md"), width:"100%", marginTop:14}}>
-          {loading ? "Searching..." : "🔍 Run Search"}
+          {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
+          {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
         </button>
-        {err && <div style={{color:C.red,fontSize:13,marginTop:8,fontFamily:F}}>{err}</div>}
+        {err && (
+          <div style={{display:"flex", gap:8, alignItems:"center",
+            color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
+            <I.alert size={14}/> {err}
+          </div>
+        )}
         {d.taxValue > 0 && (
-          <div style={{marginTop:12,background:C.greenLight,border:"1px solid #6ee7b7",borderRadius:10,padding:"10px 14px",fontSize:13,fontFamily:F}}>
-            Tax /mo: <b style={{color:C.green}}>{$(d.expPropTax)} OK</b>
-            {d.homeValueMedian>0 && <> - Market: <b style={{color:"#0891b2"}}>{$(d.homeValueMedian)}</b></>}
-            {d.rentEstimate>0 && <> - Rent est: <b style={{color:C.green}}>{$(d.rentEstimate)}/mo OK</b></>}
+          <div style={{marginTop:12, background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2, padding:"10px 12px", fontSize:13, fontFamily:F, color:C.greenDark, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <I.check size={14}/> Found data:
+            <span><b style={{fontWeight:600}}>Tax {$(d.expPropTax)}/mo</b></span>
+            {d.homeValueMedian>0 && <span>· Market <b style={{fontWeight:600}}>{$(d.homeValueMedian)}</b></span>}
+            {d.rentEstimate>0 && <span>· Rent est. <b style={{fontWeight:600}}>{$(d.rentEstimate)}/mo</b></span>}
           </div>
         )}
       </SectionBlock>
 
       {/* Property snapshot */}
       {d.beds > 0 && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",gap:10,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",gap:10,marginBottom:18}}>
           {[["Beds",d.beds],["Baths",d.baths],["Sqft",(d.sqft||0).toLocaleString()],["Built",d.yearBuilt]].map(([l,v]) => (
-            <Card key={l} style={{padding:"12px 10px",textAlign:"center"}}>
-              <div style={{fontSize:11,color:C.textMuted,fontFamily:F}}>{l}</div>
-              <div style={{fontSize:15,fontWeight:700,fontFamily:F}}>{v||"--"}</div>
+            <Card key={l} style={{padding:"12px 14px"}}>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+              <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v||"—"}</div>
             </Card>
           ))}
         </div>
@@ -1419,89 +1708,122 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} />
 
       {/* Recommendation */}
-      {d.purchasePrice > 0 && (
-        <Card style={{padding:20,marginBottom:16,border:"2px solid "+(winner==="finance"?C.green:"#b45309")}}>
-          <div style={{fontWeight:800,color:winner==="finance"?C.green:"#b45309",fontSize:17,fontFamily:F,marginBottom:14}}>
-            💡 Recommendation: {winner==="finance"?"Financed":"All Cash"}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-            {[{id:"cash",label:"All Cash",color:"#b45309",cf:m.cashCF,coc:m.cashCoC,oop:m.cashOOP},
-              {id:"finance",label:"Financed",color:C.green,cf:m.finCF,coc:m.finCoC,oop:m.finOOP}].map(sv => (
-              <div key={sv.id} style={{background:winner===sv.id?(sv.color+"10"):C.bg,
-                borderRadius:10,padding:14,border:"2px solid "+(winner===sv.id?sv.color:"transparent")}}>
-                <div style={{fontWeight:700,color:sv.color,fontFamily:F,marginBottom:6}}>{winner===sv.id?"* ":""}{sv.label}</div>
-                <div style={{fontSize:20,fontWeight:900,color:cfC(sv.cf),fontFamily:F}}>{$mo(sv.cf)}</div>
-                <div style={{fontSize:12,color:C.textSub,fontFamily:F}}>CoC: {pct(sv.coc)}</div>
-                <div style={{fontSize:12,color:C.textSub,fontFamily:F}}>OOP: {$(sv.oop)}</div>
+      {d.purchasePrice > 0 && (() => {
+        const isFinance = winner==="finance";
+        return (
+          <Card style={{padding:20, marginBottom:16}}>
+            <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:14}}>
+              <div style={{width:28, height:28, borderRadius:C.r2, background:C.greenSubtle, color:C.greenDark,
+                display:"flex", alignItems:"center", justifyContent:"center"}}>
+                <I.check size={15} stroke={2.5}/>
               </div>
-            ))}
-          </div>
-          <div style={{fontSize:13,color:C.text,lineHeight:1.7,fontFamily:F}}>
-            {winner==="finance"
-              ? "Financing makes more sense -- CoC of "+pct(m.finCoC)+" is strong. You keep $"+Math.round(m.cashOOP-m.finOOP).toLocaleString()+" in your pocket. After-mortgage cash flow: "+$mo(m.finCF)+"."
-              : "All cash is better here -- financed cash flow of "+$mo(m.finCF)+" is too thin after the mortgage. All-cash gives you "+$mo(m.cashCF)+"/mo."}
-          </div>
-        </Card>
-      )}
+              <div>
+                <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
+                <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
+                  {isFinance ? "Finance this deal" : "Buy with cash"}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14}}>
+              {[{id:"cash",label:"All cash",cf:m.cashCF,coc:m.cashCoC,oop:m.cashOOP},
+                {id:"finance",label:"Financed",cf:m.finCF,coc:m.finCoC,oop:m.finOOP}].map(sv => {
+                const win = winner===sv.id;
+                return (
+                  <div key={sv.id} style={{
+                    background: win ? C.greenSubtle : C.bgSubtle,
+                    border: "1px solid " + (win ? C.greenBorder : C.border),
+                    borderRadius:C.r3, padding:"14px 16px",
+                  }}>
+                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
+                      <span style={{fontSize:12, fontWeight:600, color:win?C.greenDark:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>{sv.label}</span>
+                      {win && <Badge label="Recommended" bg={C.green} c="#fff"/>}
+                    </div>
+                    <div style={{fontSize:24, fontWeight:700, color:cfC(sv.cf), fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>{$mo(sv.cf)}</div>
+                    <div style={{display:"flex", gap:14, marginTop:6, fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                      <span>CoC <b style={{color:C.text, fontWeight:600}}>{pct(sv.coc)}</b></span>
+                      <span>OOP <b style={{color:C.text, fontWeight:600}}>{$(sv.oop)}</b></span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
+              {isFinance
+                ? <>Financing wins — cash-on-cash of <b style={{color:C.text, fontWeight:600}}>{pct(m.finCoC)}</b> is strong, and you keep <b style={{color:C.text, fontWeight:600}}>${Math.round(m.cashOOP-m.finOOP).toLocaleString()}</b> in your pocket. After-mortgage cash flow: <b style={{color:C.text, fontWeight:600}}>{$mo(m.finCF)}</b>.</>
+                : <>Cash wins — financed cash flow of <b style={{color:C.text, fontWeight:600}}>{$mo(m.finCF)}</b> is too thin after the mortgage. All-cash gives you <b style={{color:C.text, fontWeight:600}}>{$mo(m.cashCF)}</b>/mo.</>}
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* Deal Notes */}
-      <SectionBlock title="Deal Notes" color={C.textSub}>
+      <SectionBlock title="Notes" color={C.text}>
         <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)}
-          placeholder="Notes on this deal -- seller motivation, condition, neighborhood, rehab scope..."
-          style={{...iS(mobile), minHeight:100, resize:"vertical"}} />
+          placeholder="Seller motivation, condition, neighborhood, rehab scope…"
+          style={{...iS(mobile), minHeight:110, resize:"vertical", lineHeight:1.55}} />
       </SectionBlock>
 
       {/* Save */}
       <button onClick={saveDeal}
-        style={{...btnStyle("primary","xl"), width:"100%", marginBottom:24}}>
-        💾 Save as {(d.chosenStrategy||"finance")==="cash"?"All Cash":"Financed"} Deal
+        {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
+        Save as {(d.chosenStrategy||"finance")==="cash"?"all-cash":"financed"} deal
       </button>
 
       {/* Saved Deals */}
       {deals.length > 0 && (
         <div>
-          <div style={{fontSize:17,fontWeight:800,color:C.text,fontFamily:F,marginBottom:14}}>
-            Saved Deals ({deals.length})
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
+            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
+              Saved deals
+            </div>
+            <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{deals.length} total</span>
           </div>
           <div style={{display:"grid",gridTemplateColumns:mobile?"1fr":"1fr 1fr",gap:14}}>
             {[...deals].sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt)).map(deal => {
               const dm = calc(deal);
               return (
-                <Card key={deal.id} style={{padding:16}}>
+                <Card key={deal.id} padding={0}>
                   {deal.lat && deal.lng && (
-                    <div style={{margin:"-16px -16px 12px",height:100,overflow:"hidden",position:"relative"}}>
+                    <div style={{height:120, overflow:"hidden", position:"relative"}}>
                       <img src={svUrl(deal.lat,deal.lng,900,200)} alt=""
                         style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.6))"}} />
-                      <div style={{position:"absolute",bottom:8,left:14,color:"white",fontWeight:700,fontSize:13,fontFamily:F}}>{deal.address}</div>
+                      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 35%,rgba(9,9,11,.7))"}} />
+                      <div style={{position:"absolute",bottom:10,left:14,right:14,
+                        color:"white", fontWeight:600, fontSize:13, fontFamily:F, letterSpacing:"-0.005em",
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{deal.address}</div>
                     </div>
                   )}
-                  {!deal.lat && (
-                    <div style={{fontWeight:700,fontSize:14,fontFamily:F,marginBottom:6,
-                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deal.address}</div>
-                  )}
-                  <div style={{fontSize:12,color:C.textMuted,fontFamily:F,marginBottom:8}}>
-                    {deal.city}, {deal.state} - {new Date(deal.savedAt).toLocaleDateString()}
-                  </div>
-                  {deal.notes && (
-                    <div style={{fontSize:12,color:C.textSub,fontFamily:F,marginBottom:8,fontStyle:"italic",
-                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{deal.notes}"</div>
-                  )}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                    {[["CF/mo",$mo(dm.chosenCF),cfC(dm.chosenCF)],["CoC",pct(dm.chosenCoC),cfC(dm.chosenCoC)],
-                      ["Cap Rate",pct(dm.chosenCap)],["Out of Pocket",$(dm.chosenOOP)]].map(([l,v,c]) => (
-                      <div key={l} style={{background:C.bg,borderRadius:8,padding:"8px 10px"}}>
-                        <div style={{fontSize:11,color:C.textMuted,fontFamily:F}}>{l}</div>
-                        <div style={{fontSize:13,fontWeight:700,color:c||C.text,fontFamily:F}}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>setD(deal)} style={btnStyle("secondary","sm")}>Load</button>
-                    <button onClick={()=>onMoveToPortfolio(deal)}
-                      style={{...btnStyle("primary","sm"),flex:1}}>→ Add to My Properties</button>
-                    <button onClick={()=>onSave(deals.filter(x=>x.id!==deal.id))}
-                      style={btnStyle("danger","sm")}>x</button>
+                  <div style={{padding:14}}>
+                    {!deal.lat && (
+                      <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.005em", marginBottom:4,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deal.address}</div>
+                    )}
+                    <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginBottom:10}}>
+                      {deal.city}, {deal.state} · {new Date(deal.savedAt).toLocaleDateString()}
+                    </div>
+                    {deal.notes && (
+                      <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginBottom:10, fontStyle:"italic", lineHeight:1.5,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{deal.notes}"</div>
+                    )}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:1, marginBottom:12,
+                      background:C.border, borderRadius:C.r2, overflow:"hidden", border:"1px solid "+C.border}}>
+                      {[["CF/mo",$mo(dm.chosenCF),cfC(dm.chosenCF)],["CoC",pct(dm.chosenCoC),cfC(dm.chosenCoC)],
+                        ["Cap rate",pct(dm.chosenCap)],["Out of pocket",$(dm.chosenOOP)]].map(([l,v,c]) => (
+                        <div key={l} style={{background:C.card, padding:"8px 10px"}}>
+                          <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                          <div style={{fontSize:13, fontWeight:700, color:c||C.text, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.005em"}}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{display:"flex", gap:6}}>
+                      <button onClick={()=>setD(deal)} {...btnStyle("secondary","sm")}>Load</button>
+                      <button onClick={()=>onMoveToPortfolio(deal)}
+                        {...btnStyle("primary","sm", {flex:1})}>Add to portfolio <I.arrowRight size={13}/></button>
+                      <button onClick={()=>onSave(deals.filter(x=>x.id!==deal.id))}
+                        {...btnStyle("ghost","sm", {color:C.textMuted, padding:"5px 7px"})} aria-label="Delete">
+                        <I.trash size={14}/>
+                      </button>
+                    </div>
                   </div>
                 </Card>
               );
@@ -1561,49 +1883,65 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
     : 0;
 
   return (
-    <div style={{padding:mobile?"16px 16px 100px":"28px 32px"}}>
-      <PageHeader title="Lease Comps" subtitle="Search real rental comps near any address" />
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      <PageHeader title="Lease Comps" subtitle="Real rental comps for any address" />
 
       {(!rentcastKey || showKeyInput) && (
-        <Card style={{padding:20, marginBottom:20, border:"2px solid "+C.amber}}>
-          <div style={{fontSize:15,fontWeight:700,color:C.text,fontFamily:F,marginBottom:6}}>🔑 Rentcast API Key Required</div>
-          <p style={{fontSize:13,color:C.textSub,fontFamily:F,margin:"0 0 12px",lineHeight:1.6}}>
-            Sign up at <a href="https://rentcast.io" target="_blank" rel="noreferrer" style={{color:C.green,fontWeight:600}}>rentcast.io</a> -- free tier includes 50 searches/month, no credit card needed.
+        <Card style={{padding:18, marginBottom:18, borderColor:C.amberBorder, background:C.amberSubtle}}>
+          <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
+            <div style={{
+              width:30, height:30, borderRadius:C.r2, background:"#fff", border:"1px solid "+C.amberBorder,
+              color:C.amberDark, display:"flex", alignItems:"center", justifyContent:"center",
+            }}><I.alert size={15}/></div>
+            <div>
+              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>Rentcast API key required</div>
+              <div style={{fontSize:12, color:C.amberDark, fontFamily:F, marginTop:1}}>Free tier: 50 searches / month — no credit card.</div>
+            </div>
+          </div>
+          <p style={{fontSize:13, color:C.textSub, fontFamily:F, margin:"0 0 12px", lineHeight:1.5}}>
+            Get a key at <a href="https://rentcast.io" target="_blank" rel="noreferrer" style={{color:C.greenDark, fontWeight:600, textDecoration:"underline"}}>rentcast.io</a> and paste it below.
           </p>
-          <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex", gap:8}}>
             <input value={keyInput} onChange={e=>setKeyInput(e.target.value)}
-              placeholder="Paste your free Rentcast API key..."
-              style={{...iS(mobile),flex:1,fontFamily:"monospace",fontSize:13}} />
+              placeholder="Paste API key…"
+              style={{...iS(mobile), flex:1, fontFamily:'"JetBrains Mono", ui-monospace, monospace', fontSize:13}} />
             <button onClick={()=>{if(keyInput){onSaveKey(keyInput);setShowKey(false);}}}
-              style={btnStyle("primary","md")}>Save</button>
+              {...btnStyle("primary","md")}>Save</button>
           </div>
         </Card>
       )}
 
-      <SectionBlock title="Search Comps" color="#0891b2">
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Address</label>
+      <SectionBlock title="Search comps" color={C.green}>
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Address</label>
           <AddressInput value={address} onChange={setAddress} onSelect={handleSelect}
-            placeholder="Enter address to search nearby rentals..." mobile={mobile} />
+            placeholder="Enter an address to find nearby rentals…" mobile={mobile} />
         </div>
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>
-            Bedrooms {autoDetected && <span style={{color:C.green,fontSize:11,fontWeight:700}}>auto-detected</span>}
-          </label>
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
+            <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Bedrooms</label>
+            {autoDetected && <Badge label="Auto-detected" bg={C.greenLight} c={C.greenDark} dot/>}
+          </div>
           <select value={beds} onChange={e=>{setBeds(parseInt(e.target.value));setAuto(false);}} style={iS(mobile)}>
             {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n} bedroom{n>1?"s":""}</option>)}
           </select>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
           <button onClick={search} disabled={loading}
-            style={{...btnStyle("primary","md"),flex:1}}>
-            {loading ? "Searching..." : "🔍 Run Search"}
+            {...btnStyle("primary","md", {flex:1})}>
+            {loading ? "Searching…" : <><I.search size={14}/> Run search</>}
           </button>
           {rentcastKey && (
-            <button onClick={()=>setShowKey(!showKeyInput)} style={btnStyle("secondary","sm")}>[gear] Key</button>
+            <button onClick={()=>setShowKey(!showKeyInput)} {...btnStyle("secondary","md")}>
+              <I.settings size={13}/> Key
+            </button>
           )}
         </div>
-        {err && <div style={{color:C.red,fontSize:13,marginTop:8,fontFamily:F}}>{err}</div>}
+        {err && (
+          <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
+            <I.alert size={14}/> {err}
+          </div>
+        )}
       </SectionBlock>
 
       {location && <StreetViewImg lat={location.lat} lng={location.lng} address={address} height={180} />}
@@ -1611,66 +1949,81 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
       {comps && (
         <div>
           {comps.estimate?.rent && (
-            <div style={{background:"linear-gradient(135deg,#0891b2,#0369a1)",borderRadius:16,padding:22,marginBottom:20,marginTop:14,color:"white"}}>
-              <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",opacity:.8,fontFamily:F,letterSpacing:".06em"}}>
-                Rentcast Market Rent Estimate - {beds} Bed
+            <Card style={{padding:24, marginBottom:20, marginTop:6,
+              background:"linear-gradient(180deg, #fff 0%, "+C.greenSubtle+" 100%)",
+              borderColor:C.greenBorder}}>
+              <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
+                <span style={{fontSize:11, fontWeight:600, color:C.greenDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+                  Market estimate · {beds} bed
+                </span>
               </div>
-              <div style={{fontSize:38,fontWeight:900,fontFamily:F,marginTop:6}}>{$(comps.estimate.rent)}/mo</div>
-              <div style={{fontSize:14,opacity:.8,fontFamily:F}}>
-                {$(comps.estimate.rentRangeLow)} - {$(comps.estimate.rentRangeHigh)}/mo range
+              <div style={{fontSize:42, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.03em", lineHeight:1, fontVariantNumeric:"tabular-nums"}}>
+                {$(comps.estimate.rent)}<span style={{fontSize:18, color:C.textSub, fontWeight:500}}>/mo</span>
               </div>
-              {avg > 0 && (
-                <div style={{fontSize:14,opacity:.8,fontFamily:F,marginTop:2}}>
-                  Avg of {comps.listings.length} active listings: {$(avg)}/mo
-                </div>
-              )}
-            </div>
+              <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:8, fontVariantNumeric:"tabular-nums"}}>
+                Range {$(comps.estimate.rentRangeLow)} – {$(comps.estimate.rentRangeHigh)}/mo
+                {avg > 0 && <> · Avg of {comps.listings.length} listings: <b style={{color:C.text, fontWeight:600}}>{$(avg)}</b></>}
+              </div>
+            </Card>
           )}
           {comps.listings?.length > 0 ? (
             <div>
-              <div style={{fontSize:16,fontWeight:700,fontFamily:F,marginBottom:14}}>
-                🏠 Active Listings ({comps.listings.length})
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
+                <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
+                  Active listings
+                </div>
+                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{comps.listings.length} found</span>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+              <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
                 {comps.listings.map((l,i) => {
                   const rent = l.price||l.rent||0;
                   const img  = l.photoUrl||(l.photos?.[0]?.url)||null;
                   return (
-                    <Card key={l.id||i} style={{overflow:"hidden"}}>
-                      <div style={{height:170,background:C.bg,position:"relative"}}>
+                    <Card key={l.id||i} hover padding={0}>
+                      <div style={{height:170, background:C.bgSubtle, position:"relative"}}>
                         {img
                           ? <img src={img} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
                           : (l.latitude&&l.longitude)
                             ? <img src={svUrl(l.latitude,l.longitude,800,340)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                            : <div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>🏠</div>
+                            : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
+                                <I.building size={28}/>
+                              </div>
                         }
                         <div style={{position:"absolute",top:10,right:10}}>
-                          <Badge label="Active" bg={C.greenLight} c={C.greenDark} />
+                          <Badge label="Active" bg={C.greenLight} c={C.greenDark} dot/>
                         </div>
                         {l.distance && (
-                          <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,.6)",color:"white",padding:"2px 8px",borderRadius:8,fontSize:12,fontFamily:F}}>
+                          <div style={{position:"absolute", bottom:10, left:10,
+                            background:"rgba(9,9,11,.7)", color:"white",
+                            padding:"3px 8px", borderRadius:C.rFull,
+                            fontSize:11, fontFamily:F, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>
                             {l.distance.toFixed(1)} mi
                           </div>
                         )}
                       </div>
                       <div style={{padding:14}}>
-                        <div style={{fontWeight:900,fontSize:22,color:C.green,fontFamily:F}}>{$(rent)}/mo</div>
-                        <div style={{fontSize:13,color:C.text,fontWeight:600,marginTop:4,fontFamily:F}}>{l.formattedAddress||l.address}</div>
-                        <div style={{display:"flex",gap:12,marginTop:8,flexWrap:"wrap"}}>
-                          {l.bedrooms   && <span style={{fontSize:12,color:C.textSub,fontFamily:F}}>🛏 {l.bedrooms}bd</span>}
-                          {l.bathrooms  && <span style={{fontSize:12,color:C.textSub,fontFamily:F}}>🚿 {l.bathrooms}ba</span>}
-                          {l.squareFootage && <span style={{fontSize:12,color:C.textSub,fontFamily:F}}>📐 {l.squareFootage.toLocaleString()} sqft</span>}
+                        <div style={{fontWeight:700, fontSize:22, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>
+                          {$(rent)}<span style={{fontSize:13, color:C.textSub, fontWeight:500}}>/mo</span>
+                        </div>
+                        <div style={{fontSize:13, color:C.text, fontWeight:500, marginTop:4, fontFamily:F, letterSpacing:"-0.005em",
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                          {l.formattedAddress||l.address}
+                        </div>
+                        <div style={{display:"flex", gap:14, marginTop:10, flexWrap:"wrap", fontVariantNumeric:"tabular-nums"}}>
+                          {l.bedrooms   && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{l.bedrooms} bd</span>}
+                          {l.bathrooms  && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{l.bathrooms} ba</span>}
+                          {l.squareFootage && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{l.squareFootage.toLocaleString()} sqft</span>}
                         </div>
                         {l.listedDate && (
-                          <div style={{fontSize:11,color:C.textMuted,marginTop:8,fontFamily:F}}>
+                          <div style={{fontSize:11, color:C.textMuted, marginTop:10, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
                             Listed {new Date(l.listedDate).toLocaleDateString()}
                           </div>
                         )}
                         {l.latitude && l.longitude && (
                           <a href={"https://www.google.com/maps?q="+l.latitude+","+l.longitude}
                             target="_blank" rel="noreferrer"
-                            style={{...btnStyle("secondary","sm"),marginTop:10,width:"100%",textDecoration:"none"}}>
-                            View on Maps →
+                            {...btnStyle("secondary","sm", {marginTop:12, width:"100%"})}>
+                            <I.pin size={12}/> Open in Maps
                           </a>
                         )}
                       </div>
@@ -1680,11 +2033,11 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
               </div>
             </div>
           ) : (
-            <Card style={{padding:36,textAlign:"center"}}>
-              <div style={{fontSize:36,marginBottom:10}}>🔍</div>
-              <div style={{fontSize:15,fontWeight:600,fontFamily:F,color:C.text}}>No active listings found nearby</div>
-              <div style={{fontSize:13,color:C.textSub,fontFamily:F,marginTop:4}}>Market estimate above is still valid</div>
-            </Card>
+            <EmptyState
+              icon={<I.search size={20}/>}
+              title="No active listings nearby"
+              body="Try a wider search area or different bedroom count. The market estimate above is still valid."
+            />
           )}
         </div>
       )}
@@ -1702,46 +2055,81 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail}) {
     setSaved(true); setTimeout(()=>setSaved(false), 2000);
   };
   return (
-    <div style={{padding:mobile?"16px 16px 100px":"28px 32px",maxWidth:640}}>
-      <PageHeader title="Settings" />
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px", maxWidth:680}}>
+      <PageHeader title="Settings"/>
       <SectionBlock title="Account" color={C.green}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div>
-            <div style={{fontSize:14,fontWeight:600,color:C.text,fontFamily:F}}>{userEmail}</div>
-            <div style={{fontSize:12,color:C.textSub,fontFamily:F,marginTop:2}}>DealHive account</div>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:12}}>
+          <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+            <div style={{
+              width:38, height:38, borderRadius:"50%", background:C.bgSubtle,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              color:C.textSub, fontSize:15, fontWeight:600, fontFamily:F, flexShrink:0,
+            }}>{(userEmail||"?")[0].toUpperCase()}</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{userEmail}</div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2}}>Signed in</div>
+            </div>
           </div>
-          <button onClick={onSignOut} style={btnStyle("danger","md")}>Sign Out</button>
+          <button onClick={onSignOut} {...btnStyle("secondary","md")}>Sign out</button>
         </div>
       </SectionBlock>
-      <SectionBlock title="Data Provider" color={C.textSub}>
-        <div style={{background:C.greenLight,border:"1px solid #6ee7b7",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-          <div style={{fontWeight:700,color:C.greenDark,fontSize:14,fontFamily:F,marginBottom:4}}>ATTOM Data API Connected</div>
-          <div style={{fontSize:13,color:C.textSub,fontFamily:F}}>Property data, tax records, home values and rental estimates powered by ATTOM -- 158M+ U.S. properties.</div>
+      <SectionBlock title="Data providers" color={C.green}>
+        <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"12px 14px", marginBottom:10,
+          display:"flex", alignItems:"flex-start", gap:10}}>
+          <div style={{width:28, height:28, borderRadius:C.r2, background:"#fff",
+            border:"1px solid "+C.greenBorder, color:C.greenDark, flexShrink:0,
+            display:"flex", alignItems:"center", justifyContent:"center"}}><I.check size={15}/></div>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{display:"flex", alignItems:"center", gap:8}}>
+              <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>ATTOM Data</div>
+              <Badge label="Connected" bg={C.greenLight} c={C.greenDark} dot/>
+            </div>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+              Property data, tax records, home values and rental estimates · 158M+ U.S. properties.
+            </div>
+          </div>
         </div>
-        <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:10,padding:"10px 14px"}}>
-          <div style={{fontWeight:600,color:C.blue,fontSize:14,fontFamily:F,marginBottom:2}}>📊 Lease Comps -- Rentcast (free)</div>
-          <div style={{fontSize:13,color:C.textSub,fontFamily:F}}>Add your free Rentcast key on the Lease Comps page. Free tier: 50 searches/month.</div>
+        <div style={{background:C.blueSubtle, border:"1px solid "+C.blueBorder, borderRadius:C.r3, padding:"12px 14px",
+          display:"flex", alignItems:"flex-start", gap:10}}>
+          <div style={{width:28, height:28, borderRadius:C.r2, background:"#fff",
+            border:"1px solid "+C.blueBorder, color:C.blueDark, flexShrink:0,
+            display:"flex", alignItems:"center", justifyContent:"center"}}><I.chart size={15}/></div>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>Rentcast (free)</div>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+              Lease comps. Add your key on the Lease Comps page. Free tier: 50 searches / month.
+            </div>
+          </div>
         </div>
       </SectionBlock>
-      <SectionBlock title="Repair Cost Rates ($/sqft)" color={C.textSub}>
-        <InputField label="Light Reno ($/sqft)" val={rates.light} set={v=>setRates(x=>({...x,light:v}))} mobile={mobile} />
-        <InputField label="Medium Reno ($/sqft)" val={rates.medium} set={v=>setRates(x=>({...x,medium:v}))} mobile={mobile} />
-        <InputField label="Full Reno ($/sqft)" val={rates.full} set={v=>setRates(x=>({...x,full:v}))} mobile={mobile} />
+      <SectionBlock title="Repair cost rates" color={C.green}>
+        <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"0 0 12px", lineHeight:1.5}}>
+          Used by the repair estimator. Adjust to your local market.
+        </p>
+        <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr 1fr", gap:12}}>
+          <InputField label="Light reno" val={rates.light} set={v=>setRates(x=>({...x,light:v}))} pre="$" suf="/sqft" mobile={mobile} />
+          <InputField label="Medium reno" val={rates.medium} set={v=>setRates(x=>({...x,medium:v}))} pre="$" suf="/sqft" mobile={mobile} />
+          <InputField label="Full reno" val={rates.full} set={v=>setRates(x=>({...x,full:v}))} pre="$" suf="/sqft" mobile={mobile} />
+        </div>
       </SectionBlock>
-      <SectionBlock title="Your LLCs" color={C.purple}>
-        <p style={{fontSize:13,color:C.textSub,margin:"0 0 10px",fontFamily:F}}>One LLC per line</p>
+      <SectionBlock title="Your LLCs" color={C.green}>
+        <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"0 0 10px", lineHeight:1.5}}>
+          One LLC per line. Properties can be assigned to any of these.
+        </p>
         <textarea value={llcTxt} onChange={e=>setLlcTxt(e.target.value)}
-          style={{...iS(mobile), minHeight:120, resize:"vertical"}} />
+          style={{...iS(mobile), minHeight:130, resize:"vertical", lineHeight:1.55,
+            fontFamily:'"JetBrains Mono", ui-monospace, monospace', fontSize:13}} />
       </SectionBlock>
-      <SectionBlock title="About" color={C.sidebar}>
-        {[["Product","DealHive"],["Version",VERSION],["Website","dealhive.io"],
-          ["Default Closing Costs","$"+DEFAULT_CLOSING.toLocaleString()],
-          ["Default Vacancy Rate","5%"]].map(([l,v]) => (
+      <SectionBlock title="About" color={C.green}>
+        {[["Product","DealHive"], ["Version", "v"+VERSION], ["Website","dealhive.io"],
+          ["Default closing costs", "$"+DEFAULT_CLOSING.toLocaleString()],
+          ["Default vacancy rate", "5%"]].map(([l,v]) => (
           <DataRow key={l} label={l} value={v} />
         ))}
       </SectionBlock>
-      <button onClick={save} style={{...btnStyle(saved?"primary":"primary","xl"),width:"100%"}}>
-        {saved ? "Saved!" : "Save Settings"}
+      <button onClick={save} {...btnStyle(saved?"secondary":"primary","lg", {width:"100%"})}>
+        {saved ? <><I.check size={14}/> Saved</> : "Save settings"}
       </button>
     </div>
   );
@@ -1765,53 +2153,59 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
   };
 
   const outerStyle = mobile
-    ? {position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"flex-end"}
-    : {position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:20};
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500, display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.45)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:"white",borderRadius:"20px 20px 0 0",width:"100%",maxHeight:"90vh",overflowY:"auto",padding:"24px 20px 40px"}
-    : {background:"white",borderRadius:16,width:"100%",maxWidth:560,maxHeight:"88vh",overflowY:"auto",padding:28};
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92vh", overflowY:"auto", padding:"24px 20px 40px", boxShadow:C.sh4}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:540, maxHeight:"88vh", overflowY:"auto", padding:28, boxShadow:C.sh4, border:"1px solid "+C.border};
 
   return (
-    <div style={outerStyle}>
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,fontFamily:F}}>Add New Property</h2>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18}}>
+          <div>
+            <h2 style={{margin:0, fontSize:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>Add property</h2>
+            <p style={{margin:"3px 0 0", fontSize:13, color:C.textSub, fontFamily:F}}>Track a new rental in your portfolio.</p>
+          </div>
           <button onClick={onClose}
-            style={{background:C.bg,border:"1px solid "+C.border,borderRadius:"50%",width:32,height:32,
-              fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>x</button>
+            style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2, width:32, height:32,
+              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh1}}
+            aria-label="Close">
+            <I.x size={15}/>
+          </button>
         </div>
         <div style={{marginBottom:14}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>Property Address</label>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Address</label>
           <AddressInput value={p.address} onChange={v=>u("address",v)}
             onSelect={loc=>setP(prev=>({...prev,address:loc.address,city:loc.city,state:loc.state,zip:loc.zip,lat:loc.lat,lng:loc.lng}))}
+            placeholder="Start typing an address…"
             mobile={mobile} />
         </div>
         <StreetViewImg lat={p.lat} lng={p.lng} address={p.address} height={150} />
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12,marginBottom:12}}>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginTop:6, marginBottom:14}}>
           {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (
             <div key={f}>
-              <label style={{fontSize:12,color:C.textMuted,fontFamily:F,display:"block",marginBottom:4}}>{l}</label>
+              <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>{l}</label>
               <input value={p[f]||""} onChange={e=>u(f,e.target.value)} style={iS(mobile)} />
             </div>
           ))}
         </div>
         <button onClick={runSearch} disabled={loading}
-          style={{...btnStyle("primary","md"),width:"100%",marginBottom:12}}>
-          {loading ? "Searching..." : "🔍 Run Search"}
+          {...btnStyle("secondary","md", {width:"100%", marginBottom:14})}>
+          {loading ? "Searching…" : <><I.search size={13}/> Auto-fill from public records</>}
         </button>
-        {err && <div style={{color:C.red,fontSize:13,marginBottom:10,fontFamily:F}}>{err}</div>}
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13,color:C.textSub,fontWeight:500,display:"block",marginBottom:5,fontFamily:F}}>LLC Owner</label>
-          <select value={p.llc} onChange={e=>u("llc",e.target.value)} style={iS(mobile)}>
-            {llcs.map(l => <option key={l}>{l}</option>)}
-          </select>
-        </div>
-        <InputField label="Purchase Price $" val={p.purchasePrice||0} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-        <InputField label="Expected Rent $" val={p.rentAmount||0} set={v=>u("rentAmount",v)} pre="$"
+        {err && (
+          <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark, fontSize:13, marginBottom:12, fontFamily:F}}>
+            <I.alert size={14}/> {err}
+          </div>
+        )}
+        <SelectField label="LLC owner" value={p.llc} onChange={v=>u("llc",v)} options={llcs} mobile={mobile}/>
+        <InputField label="Purchase price" val={p.purchasePrice||0} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+        <InputField label="Expected rent" val={p.rentAmount||0} set={v=>u("rentAmount",v)} pre="$" suf="/mo"
           note={p.rentEstimate>0?"Est. "+$(p.rentEstimate)+"/mo":""} mobile={mobile} />
         <button onClick={()=>onAdd(p)}
-          style={{...btnStyle("primary","xl"),width:"100%",marginTop:8}}>
-          Add to Portfolio
+          {...btnStyle("primary","lg", {width:"100%", marginTop:8})}>
+          Add to portfolio
         </button>
       </div>
     </div>
@@ -1819,48 +2213,85 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
 }
 
 // -- Desktop Sidebar -----------------------------------------------------------
-function DesktopSidebar({page, setPage, daysLeft}) {
-  const items = [
-    {id:"dashboard",  icon:"🏠", label:"Dashboard"},
-    {id:"properties", icon:"🏘", label:"My Properties"},
-    {id:"deal",       icon:"🔍", label:"Deal Analyzer"},
-    {id:"comps",      icon:"📊", label:"Lease Comps"},
-    {id:"settings",   icon:"*", label:"Settings"},
-  ];
+const NAV_ITEMS = [
+  {id:"dashboard",  Icon:I.home,     label:"Dashboard"},
+  {id:"properties", Icon:I.building, label:"Properties"},
+  {id:"deal",       Icon:I.search,   label:"Deal Analyzer"},
+  {id:"comps",      Icon:I.chart,    label:"Lease Comps"},
+  {id:"settings",   Icon:I.settings, label:"Settings"},
+];
+
+function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
   return (
-    <div style={{width:220, background:C.sidebar, height:"100vh", position:"fixed",
-      left:0, top:0, display:"flex", flexDirection:"column", zIndex:100}}>
-      <div style={{padding:"20px 16px 16px", borderBottom:"1px solid rgba(255,255,255,.08)"}}>
-        <div style={{display:"flex", alignItems:"center", gap:8}}>
-          <div style={{width:34, height:34, background:C.green, borderRadius:10,
-            display:"flex", alignItems:"center", justifyContent:"center", fontSize:18}}>🐝</div>
-          <div style={{fontSize:20, fontWeight:900, color:"white", fontFamily:F, letterSpacing:"-.02em"}}>
-            Deal<span style={{color:C.amber}}>Hive</span>
+    <div style={{width:230, background:C.sidebar, height:"100vh", position:"fixed",
+      left:0, top:0, display:"flex", flexDirection:"column", zIndex:100,
+      borderRight:"1px solid rgba(255,255,255,.06)"}}>
+      <div style={{padding:"20px 18px 14px"}}>
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <div style={{width:30, height:30, background:C.green, borderRadius:C.r2,
+            display:"flex", alignItems:"center", justifyContent:"center", color:"white", boxShadow:C.sh1}}>
+            <I.bee size={17}/>
+          </div>
+          <div style={{fontSize:17, fontWeight:700, color:"#fafafa", fontFamily:F, letterSpacing:"-0.02em"}}>
+            DealHive
           </div>
         </div>
-        {daysLeft !== null && daysLeft <= TRIAL_DAYS && (
-          <div style={{marginTop:10, background:daysLeft<=0?"rgba(239,68,68,.2)":"rgba(245,158,11,.2)",
-            borderRadius:8, padding:"6px 10px", fontSize:11, fontFamily:F,
-            color:daysLeft<=0?"#fca5a5":"#fde68a", fontWeight:600}}>
-            {daysLeft<=0 ? "Trial expired" : "🐝 "+daysLeft+"d trial left"}
+      </div>
+      <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
+        {NAV_ITEMS.map(item => {
+          const active = page===item.id;
+          return (
+            <button key={item.id} onClick={()=>setPage(item.id)}
+              className={active ? undefined : "dh-nav-item"}
+              style={{
+                width:"100%", padding:"8px 12px", border:"none", borderRadius:C.r2,
+                cursor:"pointer", display:"flex", alignItems:"center", gap:10, marginBottom:2,
+                background: active ? "rgba(255,255,255,.08)" : "transparent",
+                color: active ? "#fafafa" : C.sidebarText,
+                fontFamily:F, fontSize:13, fontWeight:active?600:500,
+                transition:"background-color .12s, color .12s",
+                letterSpacing:"-0.005em",
+              }}>
+              <item.Icon size={16} stroke={active?2.2:1.8}/>
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {daysLeft !== null && daysLeft <= TRIAL_DAYS && (
+        <div style={{padding:"10px 14px"}}>
+          <div style={{
+            background: daysLeft<=0 ? "rgba(220,38,38,.15)" : "rgba(217,119,6,.15)",
+            border: "1px solid " + (daysLeft<=0 ? "rgba(220,38,38,.3)" : "rgba(217,119,6,.3)"),
+            borderRadius:C.r2, padding:"10px 12px", fontFamily:F,
+          }}>
+            <div style={{fontSize:11, fontWeight:700, color: daysLeft<=0 ? "#fca5a5" : "#fde68a", letterSpacing:".03em", textTransform:"uppercase"}}>
+              {daysLeft<=0 ? "Trial expired" : "Free trial"}
+            </div>
+            {daysLeft > 0 && (
+              <div style={{fontSize:13, fontWeight:600, color:"#fafafa", marginTop:2}}>
+                {daysLeft} day{daysLeft===1?"":"s"} left
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div style={{flex:1, padding:"12px 8px", overflowY:"auto"}}>
-        {items.map(item => (
-          <button key={item.id} onClick={()=>setPage(item.id)}
-            style={{width:"100%", padding:"10px 12px", border:"none", borderRadius:10,
-              cursor:"pointer", display:"flex", alignItems:"center", gap:10, marginBottom:2,
-              background:page===item.id?C.green:"transparent",
-              color:page===item.id?"white":"rgba(255,255,255,.65)",
-              fontFamily:F, fontSize:14, fontWeight:page===item.id?600:400, transition:"all .15s"}}>
-            <span style={{fontSize:17}}>{item.icon}</span>{item.label}
-          </button>
-        ))}
-      </div>
-      <div style={{padding:"12px 16px", borderTop:"1px solid rgba(255,255,255,.08)",
-        fontSize:11, color:"rgba(255,255,255,.3)", fontFamily:F}}>
-        DealHive v{VERSION} - dealhive.io
+        </div>
+      )}
+      <div style={{
+        padding:"12px 16px", borderTop:"1px solid rgba(255,255,255,.06)",
+        display:"flex", alignItems:"center", gap:10,
+      }}>
+        <div style={{
+          width:26, height:26, borderRadius:"50%", background:"rgba(255,255,255,.08)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          color:C.sidebarText, fontSize:11, fontWeight:600, fontFamily:F, flexShrink:0,
+        }}>{(userEmail||"?")[0].toUpperCase()}</div>
+        <div style={{minWidth:0, flex:1}}>
+          <div style={{fontSize:11, color:C.sidebarText, fontFamily:F,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {userEmail || "—"}
+          </div>
+          <div style={{fontSize:10, color:"rgba(255,255,255,.3)", fontFamily:F, marginTop:1}}>v{VERSION}</div>
+        </div>
       </div>
     </div>
   );
@@ -1869,32 +2300,38 @@ function DesktopSidebar({page, setPage, daysLeft}) {
 // -- Mobile Bottom Nav ---------------------------------------------------------
 function MobileNav({page, setPage, alertCount}) {
   const tabs = [
-    {id:"dashboard",  icon:"🏠", label:"Home"},
-    {id:"properties", icon:"🏘", label:"Properties"},
-    {id:"deal",       icon:"🔍", label:"Analyze"},
-    {id:"comps",      icon:"📊", label:"Comps"},
-    {id:"settings",   icon:"*", label:"More"},
+    {id:"dashboard",  Icon:I.home,     label:"Home"},
+    {id:"properties", Icon:I.building, label:"Properties"},
+    {id:"deal",       Icon:I.search,   label:"Analyze"},
+    {id:"comps",      Icon:I.chart,    label:"Comps"},
+    {id:"settings",   Icon:I.settings, label:"More"},
   ];
   return (
-    <div style={{position:"fixed", bottom:0, left:0, right:0, background:"white",
+    <div style={{position:"fixed", bottom:0, left:0, right:0, background:C.card,
       borderTop:"1px solid "+C.border, zIndex:100,
-      paddingBottom:"env(safe-area-inset-bottom,8px)", boxShadow:"0 -4px 20px rgba(0,0,0,.08)"}}>
+      paddingBottom:"env(safe-area-inset-bottom,8px)",
+      backdropFilter:"saturate(180%) blur(8px)"}}>
       <div style={{display:"flex", maxWidth:600, margin:"0 auto"}}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={()=>setPage(t.id)}
-            style={{flex:1, padding:"10px 4px 8px", border:"none", background:"none", cursor:"pointer",
-              display:"flex", flexDirection:"column", alignItems:"center", gap:3,
-              color:page===t.id?C.green:C.textMuted,
-              WebkitTapHighlightColor:"transparent", position:"relative"}}>
-            <span style={{fontSize:22}}>{t.icon}</span>
-            <span style={{fontSize:10, fontWeight:page===t.id?700:500, fontFamily:F}}>{t.label}</span>
-            {t.id==="dashboard" && alertCount>0 && (
-              <span style={{position:"absolute", top:6, right:"calc(50% - 16px)",
-                background:C.red, color:"white", borderRadius:10,
-                fontSize:9, padding:"1px 5px", fontWeight:700, fontFamily:F}}>{alertCount}</span>
-            )}
-          </button>
-        ))}
+        {tabs.map(t => {
+          const active = page===t.id;
+          return (
+            <button key={t.id} onClick={()=>setPage(t.id)}
+              style={{flex:1, padding:"10px 4px 8px", border:"none", background:"none", cursor:"pointer",
+                display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+                color:active ? C.green : C.textMuted,
+                WebkitTapHighlightColor:"transparent", position:"relative",
+                transition:"color .12s"}}>
+              <t.Icon size={20} stroke={active?2.2:1.8}/>
+              <span style={{fontSize:10, fontWeight:active?700:500, fontFamily:F, letterSpacing:"-0.005em"}}>{t.label}</span>
+              {t.id==="dashboard" && alertCount>0 && (
+                <span style={{position:"absolute", top:4, right:"calc(50% - 18px)",
+                  background:C.red, color:"white", borderRadius:C.rFull,
+                  fontSize:9, lineHeight:1, padding:"3px 5px", fontWeight:700, fontFamily:F,
+                  border:"2px solid "+C.card}}>{alertCount}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1904,37 +2341,51 @@ function MobileNav({page, setPage, alertCount}) {
 function MobileHeader({page, onBack, toast, daysLeft}) {
   const showBack = page==="property";
   const titles = {
-    dashboard:"Portfolio", properties:"My Properties",
+    dashboard:"Portfolio", properties:"Properties",
     deal:"Deal Analyzer", comps:"Lease Comps",
     settings:"Settings", property:"Property"
   };
   return (
-    <div style={{background:"white", borderBottom:"1px solid "+C.border, padding:"12px 16px",
-      position:"sticky", top:0, zIndex:200, boxShadow:"0 1px 6px rgba(0,0,0,.06)",
-      display:"flex", alignItems:"center", gap:12}}>
+    <div style={{background:"rgba(255,255,255,.85)", borderBottom:"1px solid "+C.border,
+      padding:"10px 16px", position:"sticky", top:0, zIndex:200,
+      backdropFilter:"saturate(180%) blur(10px)",
+      display:"flex", alignItems:"center", gap:12, minHeight:54}}>
       {showBack ? (
         <button onClick={onBack}
-          style={{background:C.bg, border:"1px solid "+C.border, borderRadius:8,
-            width:32, height:32, fontSize:18, cursor:"pointer",
-            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>‹</button>
+          style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
+            width:34, height:34, cursor:"pointer", color:C.text,
+            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+            boxShadow:C.sh1}}>
+          <I.arrowLeft size={16}/>
+        </button>
       ) : (
-        <div style={{display:"flex", alignItems:"center", gap:6, flexShrink:0}}>
-          <div style={{width:26, height:26, background:C.green, borderRadius:7,
-            display:"flex", alignItems:"center", justifyContent:"center", fontSize:14}}>🐝</div>
-          <span style={{fontSize:16, fontWeight:900, color:C.text, fontFamily:F, letterSpacing:"-.01em"}}>
-            Deal<span style={{color:C.amber}}>Hive</span>
+        <div style={{display:"flex", alignItems:"center", gap:8, flexShrink:0}}>
+          <div style={{width:28, height:28, background:C.green, borderRadius:C.r2,
+            display:"flex", alignItems:"center", justifyContent:"center", color:"white", boxShadow:C.sh1}}>
+            <I.bee size={16}/>
+          </div>
+          <span style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            DealHive
           </span>
         </div>
       )}
-      <div style={{flex:1}}>
-        <div style={{fontWeight:700, fontSize:15, color:C.text, fontFamily:F}}>{titles[page]||"DealHive"}</div>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{titles[page]||"DealHive"}</div>
         {daysLeft!==null && daysLeft<=TRIAL_DAYS && !showBack && (
-          <div style={{fontSize:11, color:daysLeft<=0?C.red:"#92400e", fontFamily:F, fontWeight:600}}>
-            {daysLeft<=0 ? "Trial expired" : "🐝 "+daysLeft+"d trial left"}
+          <div style={{fontSize:11, color:daysLeft<=0?C.redDark:C.amberDark, fontFamily:F, fontWeight:500, marginTop:1}}>
+            {daysLeft<=0 ? "Trial expired" : daysLeft+"d trial left"}
           </div>
         )}
       </div>
-      {toast && <span style={{fontSize:12, color:C.green, fontWeight:700, fontFamily:F}}>{toast}</span>}
+      {toast && (
+        <span style={{display:"inline-flex", alignItems:"center", gap:5,
+          fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
+          background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+          padding:"4px 9px", borderRadius:C.rFull}}>
+          <I.check size={11} stroke={2.5}/>{toast}
+        </span>
+      )}
     </div>
   );
 }
@@ -1942,16 +2393,26 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
 // -- Desktop Top Bar -----------------------------------------------------------
 function DesktopTopBar({page, propAddress, toast}) {
   const titles = {
-    dashboard:"Portfolio Dashboard", properties:"My Properties",
+    dashboard:"Dashboard", properties:"Properties",
     deal:"Deal Analyzer", comps:"Lease Comps",
-    settings:"Settings", property:propAddress||"Property Detail"
+    settings:"Settings", property:propAddress||"Property"
   };
   return (
-    <div style={{background:"white", borderBottom:"1px solid "+C.border, padding:"0 32px",
-      height:56, display:"flex", alignItems:"center", justifyContent:"space-between",
-      position:"sticky", top:0, zIndex:100, boxShadow:"0 1px 4px rgba(0,0,0,.04)"}}>
-      <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F}}>{titles[page]||"DealHive"}</div>
-      {toast && <span style={{fontSize:13, color:C.green, fontWeight:700, fontFamily:F}}>{toast}</span>}
+    <div style={{background:"rgba(255,255,255,.85)", borderBottom:"1px solid "+C.border,
+      padding:"0 32px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between",
+      position:"sticky", top:0, zIndex:100,
+      backdropFilter:"saturate(180%) blur(10px)"}}>
+      <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+        {titles[page]||"DealHive"}
+      </div>
+      {toast && (
+        <span style={{display:"inline-flex", alignItems:"center", gap:6,
+          fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
+          background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+          padding:"5px 11px", borderRadius:C.rFull}}>
+          <I.check size={12} stroke={2.5}/>{toast}
+        </span>
+      )}
     </div>
   );
 }
@@ -1975,14 +2436,39 @@ export default function App() {
     link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap";
     document.head.appendChild(link);
     const style = document.createElement("style");
-    style.textContent = [
-      "*{box-sizing:border-box;}",
-      "body{margin:0;overscroll-behavior:none;}",
-      "input::placeholder{color:#9ca3af;}",
-      "select{background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px;}",
-      "input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:#e5e7eb;outline:none;}",
-      "input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;cursor:pointer;}",
-    ].join("");
+    style.textContent = `
+      *{box-sizing:border-box;}
+      body{margin:0;overscroll-behavior:none;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+      input,select,textarea,button{font-family:inherit;}
+      input::placeholder,textarea::placeholder{color:${C.textMuted};}
+      input,select,textarea{transition:border-color .15s,box-shadow .15s;}
+      input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
+      select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
+      input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
+      input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
+      input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:${C.green};cursor:pointer;border:2px solid white;box-shadow:${C.sh2};}
+      input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:${C.green};cursor:pointer;border:2px solid white;}
+      input[type=date]{color-scheme:light;}
+      button{cursor:pointer;}
+      button:disabled{opacity:.55;cursor:not-allowed;}
+      .dh-btn-primary:hover:not(:disabled){background:${C.greenHover}!important;border-color:${C.greenHover}!important;}
+      .dh-btn-secondary:hover:not(:disabled){background:${C.bgSubtle}!important;border-color:${C.borderHover}!important;}
+      .dh-btn-danger:hover:not(:disabled){background:${C.redSubtle}!important;border-color:#fca5a5!important;}
+      .dh-btn-blue:hover:not(:disabled){background:${C.blueDark}!important;border-color:${C.blueDark}!important;}
+      .dh-btn-dark:hover:not(:disabled){background:${C.sidebarHover}!important;border-color:${C.sidebarHover}!important;}
+      .dh-btn-ghost:hover:not(:disabled){background:${C.bgSubtle}!important;color:${C.text}!important;}
+      .dh-card-hover{transition:border-color .15s,box-shadow .15s,transform .15s;}
+      .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};transform:translateY(-1px);}
+      .dh-nav-item{transition:background-color .12s,color .12s;}
+      .dh-nav-item:hover{background:rgba(255,255,255,.06);color:#fafafa;}
+      .dh-tab-row::-webkit-scrollbar{display:none;}
+      ::-webkit-scrollbar{width:10px;height:10px;}
+      ::-webkit-scrollbar-track{background:transparent;}
+      ::-webkit-scrollbar-thumb{background:${C.border};border-radius:6px;border:2px solid ${C.bg};}
+      ::-webkit-scrollbar-thumb:hover{background:${C.borderHover};}
+      a{color:inherit;}
+      h1,h2,h3,h4,h5,h6{letter-spacing:-0.02em;font-feature-settings:"cv11","ss01","ss03";}
+    `;
     document.head.appendChild(style);
     const saved = loadAuth();
     if (saved) handleAuth(saved, false, true); else setAL(false);
@@ -2013,13 +2499,14 @@ export default function App() {
 
   // Loading screen
   if (authLoading) return (
-    <div style={{minHeight:"100vh", background:C.sidebar,
-      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16}}>
-      <div style={{fontSize:48}}>🐝</div>
-      <div style={{fontSize:28, fontWeight:900, color:"white", fontFamily:F}}>
-        Deal<span style={{color:C.amber}}>Hive</span>
-      </div>
-      <div style={{fontSize:14, color:"rgba(255,255,255,.5)", fontFamily:F}}>Loading...</div>
+    <div style={{minHeight:"100vh", background:C.bg,
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14}}>
+      <div style={{
+        width:44, height:44, background:C.green, borderRadius:C.r3, color:"white",
+        display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2,
+      }}><I.bee size={26}/></div>
+      <div style={{fontSize:22, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>DealHive</div>
+      <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>Loading your portfolio…</div>
     </div>
   );
 
@@ -2090,8 +2577,8 @@ export default function App() {
   // Desktop layout
   return (
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", display:"flex"}}>
-      <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} />
-      <div style={{marginLeft:220, flex:1, minWidth:0}}>
+      <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} />
+      <div style={{marginLeft:230, flex:1, minWidth:0}}>
         <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast} />
         <TrialBanner daysLeft={daysLeft} />
         <div style={{maxWidth:1200, margin:"0 auto"}}>
