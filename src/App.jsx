@@ -435,7 +435,7 @@ function StreetViewImg({lat, lng, address, height=200}) {
         <div style={{color:"white", fontWeight:700, fontSize:14, fontFamily:F}}>{address}</div>
         <a href={"https://maps.google.com/?q="+lat+","+lng} target="_blank" rel="noreferrer"
           style={{background:"rgba(255,255,255,.9)", color:C.text, padding:"4px 10px", borderRadius:8, fontSize:12, fontWeight:600, textDecoration:"none", fontFamily:F}}>
-          Maps ->
+          Maps →
         </a>
       </div>
     </div>
@@ -561,7 +561,7 @@ function AuthPage({onAuth}) {
                 style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}>Sign in</button></>
             ) : (
               <button onClick={()=>{setMode("signin");setErr("");}}
-                style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}><- Back to sign in</button>
+                style={{background:"none",border:"none",color:C.green,fontWeight:700,cursor:"pointer",fontFamily:F,fontSize:13}}>← Back to sign in</button>
             )}
           </div>
         </Card>
@@ -678,7 +678,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
             <button onClick={()=>u("rentAmount", p.rentEstimate)}
               style={{background:"rgba(255,255,255,.2)", border:"1px solid rgba(255,255,255,.4)",
                 borderRadius:8, padding:"7px 14px", color:"white", fontWeight:600, fontSize:13, fontFamily:F, cursor:"pointer"}}>
-              Use This Estimate ->
+              Use This Estimate →
             </button>
           </div>
           {p.rentAmount > 0 && (
@@ -736,7 +736,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
         {/* BRRR - collapsible */}
         <SectionBlock title="BRRR Estimates" color={C.purple} collapsible defaultOpen={false}>
           <div style={{fontSize:12,color:C.purple,background:"#f5f3ff",padding:"6px 10px",borderRadius:8,marginBottom:10,fontFamily:F}}>
-            All-cash buy -> rehab -> cash-out refi -> keep as rental
+            All-cash buy → rehab → cash-out refi → keep as rental
           </div>
           <InputField label="Cash Out Refi Amount" val={p.brrrCashOut||Math.round((p.homeValueMedian||0)*0.8)}
             set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% median" mobile={mobile} />
@@ -763,7 +763,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
         <SectionBlock title="🔨 Repair Estimator" color={C.textSub}>
           {p.sqft>0 && (
             <div style={{fontSize:12,color:C.textSub,background:C.bg,padding:"6px 10px",borderRadius:8,marginBottom:10,fontFamily:F}}>
-              {(p.sqft).toLocaleString()} sqft x ${renoRates.light}/${renoRates.medium}/${renoRates.full} per sqft
+              {(p.sqft).toLocaleString()} sqft x {`$${renoRates.light}/$${renoRates.medium}/$${renoRates.full}`} per sqft
             </div>
           )}
           <InputField label="Light Reno" val={p.repairLight||0} set={v=>u("repairLight",v)} pre="$" mobile={mobile} />
@@ -876,7 +876,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
               </div>
               <div style={{fontSize:13, color:C.text, fontFamily:F}}>{p.address} - {p.tenantName||"Tenant"}</div>
             </div>
-            <span style={{color:C.textMuted, fontSize:18}}>></span>
+            <span style={{color:C.textMuted, fontSize:18}}>›</span>
           </div>
         );
       })}
@@ -981,7 +981,6 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
         </div>
       )}
     </div>
-  </div>
   );
 }
 
@@ -1061,7 +1060,7 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
                         <Badge label={p.tenantStatus} bg={st.bg} c={st.c} />
                       </div>
                     </div>
-                    <span style={{color:C.textMuted, fontSize:18}}>></span>
+                    <span style={{color:C.textMuted, fontSize:18}}>›</span>
                   </div>
                 ) : (
                   <div style={{display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr auto",
@@ -1117,7 +1116,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
           <button onClick={onBack}
             style={{background:C.bg, border:"1px solid "+C.border, borderRadius:8,
               width:34, height:34, fontSize:18, cursor:"pointer",
-              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}><</button>
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>‹</button>
           <div style={{flex:1, minWidth:0}}>
             <div style={{fontWeight:800, fontSize:mobile?15:17, color:C.text, fontFamily:F,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{prop.address}</div>
@@ -1500,7 +1499,7 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={()=>setD(deal)} style={btnStyle("secondary","sm")}>Load</button>
                     <button onClick={()=>onMoveToPortfolio(deal)}
-                      style={{...btnStyle("primary","sm"),flex:1}}>-> Add to My Properties</button>
+                      style={{...btnStyle("primary","sm"),flex:1}}>→ Add to My Properties</button>
                     <button onClick={()=>onSave(deals.filter(x=>x.id!==deal.id))}
                       style={btnStyle("danger","sm")}>x</button>
                   </div>
@@ -1511,7 +1510,6 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
         </div>
       )}
     </div>
-  </div>
   );
 }
 
@@ -1672,7 +1670,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
                           <a href={"https://www.google.com/maps?q="+l.latitude+","+l.longitude}
                             target="_blank" rel="noreferrer"
                             style={{...btnStyle("secondary","sm"),marginTop:10,width:"100%",textDecoration:"none"}}>
-                            View on Maps ->
+                            View on Maps →
                           </a>
                         )}
                       </div>
@@ -1918,7 +1916,7 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
         <button onClick={onBack}
           style={{background:C.bg, border:"1px solid "+C.border, borderRadius:8,
             width:32, height:32, fontSize:18, cursor:"pointer",
-            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}><</button>
+            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>‹</button>
       ) : (
         <div style={{display:"flex", alignItems:"center", gap:6, flexShrink:0}}>
           <div style={{width:26, height:26, background:C.green, borderRadius:7,
