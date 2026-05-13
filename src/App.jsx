@@ -403,6 +403,9 @@ const I = {
   message:     p => <IconSvg {...p} d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>,
   pin:         p => <IconSvg {...p} d={<g><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></g>}/>,
   bee:         p => <IconSvg {...p} stroke={1.8} d={<g><ellipse cx="12" cy="13" rx="5" ry="6"/><path d="M7 11h10M7 14h10"/><circle cx="9" cy="9" r="2.2" fill="rgba(255,255,255,.3)"/><circle cx="15" cy="9" r="2.2" fill="rgba(255,255,255,.3)"/><path d="M10 6.5L8 4M14 6.5L16 4"/></g>}/>,
+  clipboardCheck: p => <IconSvg {...p} d={<g><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 14l2 2 4-4"/></g>}/>,
+  camera:      p => <IconSvg {...p} d={<g><path d="M14.5 4h-5L7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></g>}/>,
+  flag:        p => <IconSvg {...p} d={<g><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></g>}/>,
 };
 
 // -- UI Primitives -------------------------------------------------------------
@@ -1523,7 +1526,10 @@ function SelectField({label, value, onChange, options, mobile}) {
     <div style={{marginBottom:14}}>
       <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>{label}</label>
       <select value={value} onChange={e=>onChange(e.target.value)} style={iS(mobile)}>
-        {options.map(o => <option key={o}>{o}</option>)}
+        {options.map(o => {
+          const [v, l] = Array.isArray(o) ? o : [o, o];
+          return <option key={v} value={v}>{l}</option>;
+        })}
       </select>
     </div>
   );
@@ -1611,6 +1617,415 @@ function ProjectsSection({p, set, mobile}) {
           <I.plus size={14}/> Add project
         </button>
       </SectionBlock>
+    </div>
+  );
+}
+
+// -- Projects (follow-ups) -----------------------------------------------------
+// Cross-property workspace for capturing quick follow-up items during a
+// contractor call. Reuses the existing `projects` array on each property and
+// extends each entry with: dueDate, priority, details, photos.
+
+const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+
+// Display a YYYY-MM-DD date as something humans want to read.
+const formatDue = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  const today = startOfToday();
+  const diff = Math.round((d - today) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (diff < 0) return `${-diff} days ago`;
+  if (diff < 7) return d.toLocaleDateString(undefined, {weekday:"short"});
+  const sameYear = d.getFullYear() === today.getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
+};
+
+// Resize an uploaded image to maxWidth and return a JPEG data URL.
+const resizeImageToDataUrl = (file, maxWidth=800, quality=0.82) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = Math.min(maxWidth, img.width);
+      const h = Math.round(w * (img.height / img.width));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      try { resolve(canvas.toDataURL("image/jpeg", quality)); } catch (err) { reject(err); }
+    };
+    img.onerror = reject;
+    img.src = e.target.result;
+  };
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+function PhotoUploader({photos=[], onChange, mobile}) {
+  const [uploading, setUploading] = useState(false);
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 800, 0.82);
+      onChange([...(photos||[]), dataUrl]);
+    } catch {}
+    setUploading(false);
+    e.target.value = "";
+  };
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Photos</label>
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        {photos.map((src, i) => (
+          <div key={i} style={{position:"relative", width:68, height:68, borderRadius:C.r2, overflow:"hidden",
+            border:"1px solid "+C.border, background:C.bgSubtle}}>
+            <img src={src} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}} />
+            <button onClick={()=>onChange(photos.filter((_,j)=>j!==i))}
+              aria-label="Remove photo"
+              style={{position:"absolute", top:3, right:3, width:18, height:18, borderRadius:"50%",
+                background:"rgba(9,9,11,.75)", color:"white", border:"none", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
+              <I.x size={10} stroke={3}/>
+            </button>
+          </div>
+        ))}
+        {photos.length < 4 && (
+          <label style={{
+            width:68, height:68, borderRadius:C.r2, border:"1px dashed "+C.borderHover,
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            gap:4, cursor:"pointer", color:C.textMuted, fontSize:10, fontFamily:F, fontWeight:500,
+            transition:"border-color .15s, color .15s",
+            opacity: uploading ? .6 : 1,
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.green; e.currentTarget.style.color=C.green;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderHover; e.currentTarget.style.color=C.textMuted;}}>
+            {uploading ? <span style={{fontSize:11}}>…</span> : <I.camera size={20}/>}
+            <span>{uploading ? "Uploading" : "Add"}</span>
+            <input type="file" accept="image/*" capture="environment" onChange={handleFile}
+              disabled={uploading} style={{display:"none"}} />
+          </label>
+        )}
+      </div>
+      <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6}}>
+        Up to 4 photos · auto-resized to 800px.
+      </div>
+    </div>
+  );
+}
+
+function FollowupExpanded({pr, onChange, onDelete, mobile}) {
+  const u = (f, v) => onChange({...pr, [f]:v});
+  return (
+    <div style={{padding:"4px 16px 16px", background:C.bgSubtle, borderTop:"1px solid "+C.border}}>
+      <InputField label="Description" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
+      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr 1fr", gap:10}}>
+        <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
+        <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
+        <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
+          options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
+      </div>
+      <InputField label="Contractor" type="text" val={pr.contractor||""} set={v=>u("contractor",v)} mobile={mobile} />
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Details</label>
+        <textarea value={pr.details||""} onChange={e=>u("details",e.target.value)}
+          placeholder="Anything else worth noting — color, model, who to call…"
+          style={{...iS(mobile), minHeight:70, resize:"vertical", lineHeight:1.55}} />
+      </div>
+      <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} mobile={mobile} />
+      <button onClick={onDelete} {...btnStyle("danger","sm")}>
+        <I.trash size={12}/> Delete follow-up
+      </button>
+    </div>
+  );
+}
+
+function FollowupRow({pr, propLabel, showProperty=false, onChange, onDelete, mobile, defaultExpanded=false}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const isDone    = pr.status === "Complete";
+  const isOverdue = !isDone && pr.dueDate && new Date(pr.dueDate+"T00:00:00") < startOfToday();
+  const isHigh    = pr.priority === "high";
+  const toggleDone = (e) => {
+    e.stopPropagation();
+    onChange({...pr, status: isDone ? "In Progress" : "Complete"});
+  };
+  return (
+    <div style={{borderBottom:"1px solid "+C.border}}>
+      <div onClick={()=>setExpanded(x=>!x)}
+        style={{
+          display:"flex", gap:10, padding:"11px 14px", alignItems:"center", cursor:"pointer",
+          transition:"background .12s",
+          background: expanded ? C.bgSubtle : "transparent",
+        }}
+        onMouseEnter={e=>{ if (!expanded) e.currentTarget.style.background=C.bgSubtle; }}
+        onMouseLeave={e=>{ if (!expanded) e.currentTarget.style.background="transparent"; }}>
+        <button onClick={toggleDone} aria-label={isDone?"Mark open":"Mark done"}
+          style={{
+            width:18, height:18, borderRadius:"50%",
+            border:"1.5px solid "+(isDone ? C.green : C.borderHover),
+            background: isDone ? C.green : "transparent",
+            color:"white", padding:0, flexShrink:0,
+            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+            transition:"background .12s, border-color .12s",
+          }}>
+          {isDone && <I.check size={11} stroke={3.5}/>}
+        </button>
+        {isHigh && !isDone && (
+          <span title="High priority"
+            style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
+        )}
+        <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:1}}>
+          <div style={{fontSize:13, color: isDone ? C.textMuted : C.text, fontFamily:F,
+            textDecoration: isDone ? "line-through" : "none",
+            letterSpacing:"-0.005em",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {pr.name || <span style={{color:C.textMuted, fontStyle:"italic"}}>Untitled</span>}
+          </div>
+          {showProperty && propLabel && (
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:F,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{propLabel}</div>
+          )}
+        </div>
+        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          {pr.dueDate && (
+            <span style={{
+              fontSize:12,
+              color: isDone ? C.textMuted : isOverdue ? C.redDark : C.textSub,
+              fontFamily:F, fontVariantNumeric:"tabular-nums",
+              fontWeight: isOverdue && !isDone ? 600 : 500,
+            }}>{formatDue(pr.dueDate)}</span>
+          )}
+          {pr.budget > 0 && (
+            <span style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {$(pr.budget)}
+            </span>
+          )}
+          {(pr.photos||[]).length > 0 && (
+            <span style={{display:"inline-flex", alignItems:"center", gap:3, color:C.textMuted, fontSize:11, fontFamily:F}}>
+              <I.camera size={12}/>{pr.photos.length}
+            </span>
+          )}
+          <I.chevronDown size={14}
+            style={{color:C.textMuted, transition:"transform .15s",
+              transform: expanded ? "rotate(180deg)" : "none"}}/>
+        </div>
+      </div>
+      {expanded && (
+        <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} />
+      )}
+    </div>
+  );
+}
+
+function QuickAddForm({onAdd, mobile}) {
+  const [text, setText] = useState("");
+  const [date, setDate] = useState("");
+  const [cost, setCost] = useState("");
+  const submit = () => {
+    if (!text.trim()) return;
+    onAdd({name:text.trim(), dueDate:date, budget:parseFloat(cost)||0, priority:"normal"});
+    setText(""); setDate(""); setCost("");
+  };
+  return (
+    <div style={{
+      display:"grid",
+      gridTemplateColumns: mobile ? "1fr" : "1fr 140px 110px auto",
+      gap:8, padding:"10px 14px", borderTop:"1px solid "+C.border, background:C.bgSubtle,
+    }}>
+      <input value={text} onChange={e=>setText(e.target.value)}
+        onKeyDown={e=>{ if (e.key==="Enter") submit(); }}
+        placeholder="What needs to be done?" style={iS(mobile)} />
+      <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={iS(mobile)}
+        title="Due date (optional)" />
+      <input type="number" value={cost} onChange={e=>setCost(e.target.value)}
+        placeholder="Cost" inputMode="decimal" style={iS(mobile)} />
+      <button onClick={submit} disabled={!text.trim()}
+        {...btnStyle("primary","md", mobile ? {width:"100%"} : {})}>
+        <I.plus size={13}/> Add
+      </button>
+    </div>
+  );
+}
+
+const followupSort = (a, b) => {
+  const aD = a.status === "Complete" ? 1 : 0;
+  const bD = b.status === "Complete" ? 1 : 0;
+  if (aD !== bD) return aD - bD;
+  const aH = a.priority === "high" ? 0 : 1;
+  const bH = b.priority === "high" ? 0 : 1;
+  if (aH !== bH) return aH - bH;
+  if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+  if (a.dueDate) return -1;
+  if (b.dueDate) return 1;
+  return 0;
+};
+
+function PropertySection({property, onUpdateProjects, mobile, filterMode, search}) {
+  const projects = property.projects || [];
+  const filtered = projects.filter(pr => {
+    if (filterMode === "open" && pr.status === "Complete") return false;
+    if (filterMode === "done" && pr.status !== "Complete") return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const hay = `${pr.name||""} ${pr.contractor||""} ${pr.details||""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const sorted = [...filtered].sort(followupSort);
+
+  const updateOne = (updated) => onUpdateProjects(projects.map(pr => pr.id === updated.id ? updated : pr));
+  const deleteOne = (id) => onUpdateProjects(projects.filter(pr => pr.id !== id));
+  const addOne = (item) => onUpdateProjects([...projects, {
+    id:"pr"+Date.now(),
+    status:"In Progress",
+    name:"", dueDate:"", budget:0, spent:0,
+    contractor:"", details:"", priority:"normal", photos:[],
+    isCapEx: !property.occupied, log:[],
+    ...item,
+  }]);
+
+  const openCount = projects.filter(pr => pr.status !== "Complete").length;
+
+  return (
+    <Card style={{marginBottom:14}} padding={0}>
+      <header style={{padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
+        <div style={{minWidth:0}}>
+          <h3 style={{margin:0, fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
+            {property.city}{property.state?`, ${property.state}`:""}
+          </div>
+        </div>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
+          background:C.bgSubtle, border:"1px solid "+C.border, padding:"3px 9px", borderRadius:C.rFull,
+          fontWeight:500, flexShrink:0}}>
+          {openCount === 0 ? "all clear" : `${openCount} open`}
+        </span>
+      </header>
+      {sorted.length === 0 ? (
+        <div style={{padding:"14px 16px", fontSize:12, color:C.textMuted, fontFamily:F, fontStyle:"italic", textAlign:"center"}}>
+          {search || filterMode !== "open" ? "Nothing matches." : "No follow-ups yet — add one below."}
+        </div>
+      ) : (
+        sorted.map(pr => (
+          <FollowupRow key={pr.id} pr={pr}
+            onChange={updateOne} onDelete={()=>deleteOne(pr.id)} mobile={mobile} />
+        ))
+      )}
+      <QuickAddForm onAdd={addOne} mobile={mobile} />
+    </Card>
+  );
+}
+
+function ProjectsPage({properties, onUpdateProperty, mobile}) {
+  const [filterMode, setFilterMode] = useState("open");
+  const [search, setSearch] = useState("");
+
+  const today = startOfToday();
+  const inWeek = new Date(today.getTime() + 7*86400000);
+
+  const all = properties.flatMap(p =>
+    (p.projects||[]).map(pr => ({pr, property:p}))
+  );
+  const dueNow = all
+    .filter(({pr}) => pr.status !== "Complete" && pr.dueDate &&
+      new Date(pr.dueDate+"T00:00:00") <= inWeek)
+    .sort((a,b) => a.pr.dueDate.localeCompare(b.pr.dueDate));
+  const overdueCount = all.filter(({pr}) =>
+    pr.status !== "Complete" && pr.dueDate &&
+    new Date(pr.dueDate+"T00:00:00") < today).length;
+  const openTotal = all.filter(({pr}) => pr.status !== "Complete").length;
+
+  if (properties.length === 0) {
+    return (
+      <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+        <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
+        <EmptyState
+          icon={<I.clipboardCheck size={22}/>}
+          title="Add a property first"
+          body="Once you have properties in your portfolio, this is where you'll capture every follow-up from contractor calls — what's due, what it costs, and whether it's done."
+        />
+      </div>
+    );
+  }
+
+  const handleUpdateProjects = (propId, projects) => {
+    const property = properties.find(p => p.id === propId);
+    if (property) onUpdateProperty({...property, projects});
+  };
+  const handleRowChange = (property, updated) =>
+    handleUpdateProjects(property.id, (property.projects||[]).map(x => x.id === updated.id ? updated : x));
+  const handleRowDelete = (property, id) =>
+    handleUpdateProjects(property.id, (property.projects||[]).filter(x => x.id !== id));
+
+  return (
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      <PageHeader
+        title="Projects"
+        subtitle={openTotal === 0
+          ? "All clear — no open follow-ups."
+          : `${openTotal} open follow-up${openTotal===1?"":"s"} across ${properties.length} ${properties.length===1?"property":"properties"}.`}
+      />
+
+      {dueNow.length > 0 && (
+        <Card style={{marginBottom:24, borderColor: overdueCount > 0 ? C.amberBorder : C.border}} padding={0}>
+          <header style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:10,
+            borderBottom:"1px solid "+C.border,
+            background: overdueCount > 0 ? C.amberSubtle : "transparent"}}>
+            <div style={{
+              width:24, height:24, borderRadius:C.r2,
+              background: overdueCount > 0 ? "#fff" : C.bgSubtle,
+              border:"1px solid "+(overdueCount > 0 ? C.amberBorder : C.border),
+              color: overdueCount > 0 ? C.amberDark : C.textSub,
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+            }}>
+              <I.alert size={13} stroke={2.2}/>
+            </div>
+            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>Due now</div>
+            {overdueCount > 0 && <Badge label={`${overdueCount} overdue`} bg={C.redLight} c={C.redDark} dot/>}
+            <span style={{marginLeft:"auto", fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {dueNow.length} {dueNow.length===1?"item":"items"}
+            </span>
+          </header>
+          {dueNow.map(({pr, property}) => (
+            <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
+              propLabel={property.address} showProperty
+              onChange={updated => handleRowChange(property, updated)}
+              onDelete={() => handleRowDelete(property, pr.id)}
+              mobile={mobile} />
+          ))}
+        </Card>
+      )}
+
+      {/* Filter + search */}
+      <div style={{display:"flex", gap:10, marginBottom:18, flexWrap:"wrap"}}>
+        <div style={{display:"flex", gap:6}}>
+          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => (
+            <button key={id} onClick={()=>setFilterMode(id)}
+              {...btnStyle(filterMode===id?"primary":"secondary","sm")}>{label}</button>
+          ))}
+        </div>
+        <div style={{position:"relative", flex:1, minWidth:220}}>
+          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
+            color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
+            <I.search size={15}/>
+          </span>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search follow-ups, contractors, details"
+            style={{...iS(mobile), paddingLeft:36}} />
+        </div>
+      </div>
+
+      {properties.map(p => (
+        <PropertySection key={p.id} property={p}
+          onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
+          mobile={mobile} filterMode={filterMode} search={search} />
+      ))}
     </div>
   );
 }
@@ -2214,11 +2629,12 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
 
 // -- Desktop Sidebar -----------------------------------------------------------
 const NAV_ITEMS = [
-  {id:"dashboard",  Icon:I.home,     label:"Dashboard"},
-  {id:"properties", Icon:I.building, label:"Properties"},
-  {id:"deal",       Icon:I.search,   label:"Deal Analyzer"},
-  {id:"comps",      Icon:I.chart,    label:"Lease Comps"},
-  {id:"settings",   Icon:I.settings, label:"Settings"},
+  {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
+  {id:"properties", Icon:I.building,       label:"Properties"},
+  {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
+  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
+  {id:"comps",      Icon:I.chart,          label:"Lease Comps"},
+  {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
 function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
@@ -2300,11 +2716,12 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
 // -- Mobile Bottom Nav ---------------------------------------------------------
 function MobileNav({page, setPage, alertCount}) {
   const tabs = [
-    {id:"dashboard",  Icon:I.home,     label:"Home"},
-    {id:"properties", Icon:I.building, label:"Properties"},
-    {id:"deal",       Icon:I.search,   label:"Analyze"},
-    {id:"comps",      Icon:I.chart,    label:"Comps"},
-    {id:"settings",   Icon:I.settings, label:"More"},
+    {id:"dashboard",  Icon:I.home,           label:"Home"},
+    {id:"properties", Icon:I.building,       label:"Properties"},
+    {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
+    {id:"deal",       Icon:I.search,         label:"Analyze"},
+    {id:"comps",      Icon:I.chart,          label:"Comps"},
+    {id:"settings",   Icon:I.settings,       label:"More"},
   ];
   return (
     <div style={{position:"fixed", bottom:0, left:0, right:0, background:C.card,
@@ -2341,7 +2758,7 @@ function MobileNav({page, setPage, alertCount}) {
 function MobileHeader({page, onBack, toast, daysLeft}) {
   const showBack = page==="property";
   const titles = {
-    dashboard:"Portfolio", properties:"Properties",
+    dashboard:"Portfolio", properties:"Properties", projects:"Projects",
     deal:"Deal Analyzer", comps:"Lease Comps",
     settings:"Settings", property:"Property"
   };
@@ -2393,7 +2810,7 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
 // -- Desktop Top Bar -----------------------------------------------------------
 function DesktopTopBar({page, propAddress, toast}) {
   const titles = {
-    dashboard:"Dashboard", properties:"Properties",
+    dashboard:"Dashboard", properties:"Properties", projects:"Projects",
     deal:"Deal Analyzer", comps:"Lease Comps",
     settings:"Settings", property:propAddress||"Property"
   };
@@ -2559,6 +2976,8 @@ export default function App() {
           <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
         ) : page==="properties" ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
+        ) : page==="projects" ? (
+          <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deal" ? (
           <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
         ) : page==="comps" ? (
@@ -2590,6 +3009,8 @@ export default function App() {
               <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
             ) : page==="properties" ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
+            ) : page==="projects" ? (
+              <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deal" ? (
               <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
             ) : page==="comps" ? (
