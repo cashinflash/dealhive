@@ -2321,8 +2321,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         background:pageBg, minHeight:"100%",
         paddingTop:    mobile ? 20 : 32,
         paddingBottom: mobile ? 100 : 32,
-        paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
-        paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
+        paddingLeft:   `calc(${mobile?24:32}px + env(safe-area-inset-left, 0px))`,
+        paddingRight:  `calc(${mobile?24:32}px + env(safe-area-inset-right, 0px))`,
       }}>
         <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
         <EmptyState
@@ -2339,8 +2339,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       background:pageBg, minHeight:"100%",
       paddingTop:    mobile ? 20 : 32,
       paddingBottom: mobile ? 100 : 32,
-      paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
-      paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
+      paddingLeft:   `calc(${mobile?24:32}px + env(safe-area-inset-left, 0px))`,
+      paddingRight:  `calc(${mobile?24:32}px + env(safe-area-inset-right, 0px))`,
     }}>
       <PageHeader
         title="Projects"
