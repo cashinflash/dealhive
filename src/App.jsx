@@ -1758,7 +1758,7 @@ function CallNotesTimeline({pr, onChange, mobile}) {
 function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[]}) {
   const u = (f, v) => onChange({...pr, [f]:v});
   return (
-    <div style={{padding:mobile?"6px 12px 14px":"6px 16px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg}}>
+    <div style={{padding:mobile?"6px 14px 14px":"6px 16px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg}}>
       {/* Row 1: Description (wide) + Type */}
       <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "2fr 1fr", gap:10, marginBottom:4}}>
         <InputField label="Description" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
@@ -1890,7 +1890,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
       <div className="dh-row" style={{borderBottom:"1px solid "+C.bgSubtle}}>
         <div onClick={()=>{ setNoteOpen(false); setExpanded(x=>!x); }}
           style={{
-            display:"flex", gap:10, padding:"10px 12px", alignItems:"flex-start",
+            display:"flex", gap:10, padding:"10px 14px", alignItems:"flex-start",
             cursor:"pointer", background: expanded ? C.bgSubtle : "transparent",
           }}>
           <div style={{paddingTop:2, flexShrink:0}}>{doneCircle}</div>
@@ -2069,7 +2069,7 @@ function QuickAddForm({onAdd, mobile, contractors=[]}) {
   }
 
   return (
-    <div style={{padding:mobile?"14px 12px":"14px 16px", borderTop:"1px solid "+C.border, background:C.bgSubtle}}>
+    <div style={{padding:mobile?"14px 14px":"14px 16px", borderTop:"1px solid "+C.border, background:C.bgSubtle}}>
       <input value={text} onChange={e=>setText(e.target.value)}
         onKeyDown={e=>{
           if (e.key==="Enter") submit();
@@ -2167,16 +2167,9 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
 
   return (
     <Card id={"prop-"+property.id} className="dh-prop-card"
-      style={{
-        marginBottom:14,
-        // 4px colored status stripe lives INSIDE the card as an inset shadow,
-        // so the card itself has symmetric 1px borders on all four sides
-        // (no left/right asymmetry that would shift content visually).
-        "--prop-stripe": status.color,
-        boxShadow: `inset 4px 0 0 ${status.color}, ${C.sh1}`,
-      }} padding={0}>
+      style={{marginBottom:14}} padding={0}>
       {!hideHeader && (
-        <header style={{padding:mobile?"12px 12px":"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
+        <header style={{padding:mobile?"12px 14px":"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
           <div style={{minWidth:0, flex:1}}>
             <h3 style={{margin:0, fontSize:mobile?16:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
@@ -2242,7 +2235,7 @@ function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChan
   if (!items.length) return null;
   return (
     <div style={{background: bg}}>
-      <header style={{padding:mobile?"10px 12px":"10px 16px", display:"flex", alignItems:"center", gap:10}}>
+      <header style={{padding:mobile?"10px 14px":"10px 16px", display:"flex", alignItems:"center", gap:10}}>
         <span style={{fontSize:11, fontWeight:700, color:labelColor, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase"}}>
           {title}
         </span>
@@ -2328,8 +2321,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         background:pageBg, minHeight:"100%",
         paddingTop:    mobile ? 20 : 32,
         paddingBottom: mobile ? 100 : 32,
-        paddingLeft:   `calc(${mobile?14:32}px + env(safe-area-inset-left, 0px))`,
-        paddingRight:  `calc(${mobile?14:32}px + env(safe-area-inset-right, 0px))`,
+        paddingLeft:   `calc(${mobile?16:32}px + env(safe-area-inset-left, 0px))`,
+        paddingRight:  `calc(${mobile?16:32}px + env(safe-area-inset-right, 0px))`,
       }}>
         <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
         <EmptyState
@@ -2346,8 +2339,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       background:pageBg, minHeight:"100%",
       paddingTop:    mobile ? 20 : 32,
       paddingBottom: mobile ? 100 : 32,
-      paddingLeft:   `calc(${mobile?14:32}px + env(safe-area-inset-left, 0px))`,
-      paddingRight:  `calc(${mobile?14:32}px + env(safe-area-inset-right, 0px))`,
+      paddingLeft:   `calc(${mobile?16:32}px + env(safe-area-inset-left, 0px))`,
+      paddingRight:  `calc(${mobile?16:32}px + env(safe-area-inset-right, 0px))`,
     }}>
       <PageHeader
         title="Projects"
@@ -3342,7 +3335,7 @@ export default function App() {
       .dh-card-hover{transition:border-color .15s,box-shadow .15s,transform .15s;}
       .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};}
       .dh-prop-card{transition:box-shadow .15s,transform .15s,border-color .15s;}
-      .dh-prop-card:hover{box-shadow:inset 4px 0 0 var(--prop-stripe,transparent), ${C.sh3}!important;}
+      .dh-prop-card:hover{box-shadow:${C.sh3};}
       .dh-row{position:relative;}
       .dh-row-actions{display:inline-flex;align-items:center;gap:2px;}
       @media (hover:hover){.dh-row .dh-row-actions{opacity:0;transition:opacity .12s;}.dh-row:hover .dh-row-actions{opacity:1;}}
