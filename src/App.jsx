@@ -1922,7 +1922,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
                     fontSize:12, color:onPropertyClick ? C.textSub : C.textMuted, fontFamily:F,
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
                     minWidth:0, maxWidth:"100%",
-                    ...(onPropertyClick ? {textDecoration:"underline", textDecorationColor:C.border, textUnderlineOffset:2} : {}),
+                    ...(onPropertyClick ? {cursor:"pointer"} : {}),
                   }}>{propLabel}</span>
               )}
               {pr.contractor && (
@@ -1988,7 +1988,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
               {showProperty && propLabel && (
                 onPropertyClick
                   ? <span onClick={e=>{e.stopPropagation(); onPropertyClick();}}
-                      style={{cursor:"pointer", color:C.textSub, textDecoration:"underline", textDecorationColor:C.border, textUnderlineOffset:2}}>
+                      style={{cursor:"pointer", color:C.textSub}}>
                       {propLabel}
                     </span>
                   : <span>{propLabel}</span>
@@ -2321,8 +2321,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         background:pageBg, minHeight:"100%",
         paddingTop:    mobile ? 20 : 32,
         paddingBottom: mobile ? 100 : 32,
-        paddingLeft:   `calc(${mobile?16:32}px + env(safe-area-inset-left, 0px))`,
-        paddingRight:  `calc(${mobile?16:32}px + env(safe-area-inset-right, 0px))`,
+        paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
+        paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
       }}>
         <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
         <EmptyState
@@ -2339,8 +2339,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       background:pageBg, minHeight:"100%",
       paddingTop:    mobile ? 20 : 32,
       paddingBottom: mobile ? 100 : 32,
-      paddingLeft:   `calc(${mobile?16:32}px + env(safe-area-inset-left, 0px))`,
-      paddingRight:  `calc(${mobile?16:32}px + env(safe-area-inset-right, 0px))`,
+      paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
+      paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
     }}>
       <PageHeader
         title="Projects"
