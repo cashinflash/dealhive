@@ -2177,7 +2177,14 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
 
   return (
     <Card id={"prop-"+property.id} className="dh-prop-card"
-      style={{marginBottom:14, borderLeft:`4px solid ${status.color}`}} padding={0}>
+      style={{
+        marginBottom:14,
+        // 4px colored status stripe lives INSIDE the card as an inset shadow,
+        // so the card itself has symmetric 1px borders on all four sides
+        // (no left/right asymmetry that would shift content visually).
+        "--prop-stripe": status.color,
+        boxShadow: `inset 4px 0 0 ${status.color}, ${C.sh1}`,
+      }} padding={0}>
       {!hideHeader && (
         <header style={{padding:mobile?"12px 14px":"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
           <div style={{minWidth:0, flex:1}}>
@@ -2327,7 +2334,13 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
 
   if (properties.length === 0) {
     return (
-      <div style={{padding:mobile?"20px 16px 100px":"32px 32px", background:pageBg, minHeight:"100%"}}>
+      <div style={{
+        background:pageBg, minHeight:"100%",
+        paddingTop:    mobile ? 20 : 32,
+        paddingBottom: mobile ? 100 : 32,
+        paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
+        paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
+      }}>
         <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
         <EmptyState
           icon={<I.clipboardCheck size={22}/>}
@@ -2975,14 +2988,8 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
   const [err,setErr]   = useState("");
   const u = (f,v) => setP(prev => ({...prev,[f]:v}));
 
-  // Lock body scroll while the modal is open so the page behind doesn't move.
-  useEffect(() => {
-    const orig = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = orig; };
-  }, []);
-
-  // Close on Escape.
+  // Close on Escape. (Body scroll lock is owned by the App component, tied
+  // directly to the showAdd flag, so it can't get "stuck" on unmount.)
   useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
@@ -3293,6 +3300,14 @@ export default function App() {
   const [authLoading,setAL] = useState(true);
   const mobile = useIsMobile();
 
+  // Body scroll lock — owned here, tied directly to showAdd. Even if the
+  // modal unmounts in some weird state, this effect always reconciles the
+  // overflow value on the next render, so the page can't get stuck.
+  useEffect(() => {
+    document.body.style.overflow = showAdd ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [showAdd]);
+
   // Global styles
   useEffect(() => {
     const link = document.createElement("link");
@@ -3327,7 +3342,7 @@ export default function App() {
       .dh-card-hover{transition:border-color .15s,box-shadow .15s,transform .15s;}
       .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};transform:translateY(-1px);}
       .dh-prop-card{transition:box-shadow .15s,transform .15s,border-color .15s;}
-      .dh-prop-card:hover{box-shadow:${C.sh3};}
+      .dh-prop-card:hover{box-shadow:inset 4px 0 0 var(--prop-stripe,transparent), ${C.sh3}!important;}
       @media (hover:hover){.dh-prop-card:hover{transform:translateY(-2px);}}
       .dh-row{position:relative;}
       .dh-row-actions{display:inline-flex;align-items:center;gap:2px;}
