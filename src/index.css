@@ -1,7 +1,7 @@
 /* DealHive global shell.
    App-specific component styling lives inside src/App.jsx (injected via JS).
-   This file owns ONLY the document-level reset and the app shell colors,
-   so the layout extends edge-to-edge on any viewport. */
+   This file owns the document-level reset, the app shell colors, and the
+   mobile-first behavior that keeps the app feeling native on phones. */
 
 *,
 *::before,
@@ -13,15 +13,33 @@ html,
 body,
 #root {
   width: 100%;
-  min-height: 100vh;
   margin: 0;
   padding: 0;
+  /* Hard lock against any accidental horizontal scrolling. The app shell
+     extends edge-to-edge, so we should never see sideways drift. */
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
 }
 
 html {
   background: #fafafa;
   color-scheme: light;
   -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* `manipulation` removes the 300ms double-tap-to-zoom delay on mobile
+     while still allowing pinch zoom on accessibility-needs (we've also
+     restricted pinch in the viewport meta). */
+  touch-action: manipulation;
+}
+
+html,
+body,
+#root {
+  /* Use the smaller of the dynamic viewport units when available so the
+     app fills the visible area on mobile (iOS Safari url bar, etc.) and
+     falls back cleanly on older browsers. */
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 body {
@@ -35,11 +53,40 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* Prevent the rubber-band overscroll on iOS so the app feels app-like
+     instead of webby. */
   overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Allow text selection in actual content fields, just not on tappable
+   chrome that shouldn't show the iOS copy/lookup menu. */
+input,
+textarea,
+select,
+[contenteditable] {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 #root {
   display: flex;
   flex-direction: column;
   background: #fafafa;
+}
+
+/* Long unbreakable strings (urls, parcel ids) shouldn't push layout wider
+   than its container — wrap them instead. */
+p,
+li,
+span,
+div,
+h1,
+h2,
+h3,
+h4 {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
