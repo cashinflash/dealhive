@@ -1938,26 +1938,9 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
             </div>
           </div>
         </div>
-        {/* Touch-friendly action bar: only show when not expanded and not in note input mode */}
-        {!isDone && !expanded && !noteOpen && (
-          <div style={{display:"flex", justifyContent:"flex-end", gap:4, padding:"0 10px 10px 10px"}}>
-            <button onClick={(e)=>{e.stopPropagation(); snooze();}}
-              aria-label="Snooze 1 day" title="Snooze 1 day"
-              style={{background:"transparent", border:"none", padding:"6px 10px", borderRadius:6,
-                color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
-                display:"inline-flex", alignItems:"center", gap:4}}>
-              <I.clock size={13}/> Snooze
-            </button>
-            <button onClick={(e)=>{e.stopPropagation(); openNoteBar();}}
-              aria-label="Add note" title="Add note"
-              style={{background:"transparent", border:"none", padding:"6px 10px", borderRadius:6,
-                color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
-                display:"inline-flex", alignItems:"center", gap:4}}>
-              <I.messageSquare size={13}/> Note
-            </button>
-          </div>
-        )}
-        {noteBar}
+        {/* On mobile, quick actions (snooze / note) live inside the expanded
+            edit view — tapping the row anywhere expands it. Keeps the
+            collapsed row visually clean. */}
         {expanded && (
           <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
         )}
