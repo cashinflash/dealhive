@@ -1940,7 +1940,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
         </div>
         {/* Touch-friendly action bar: only show when not expanded and not in note input mode */}
         {!isDone && !expanded && !noteOpen && (
-          <div style={{display:"flex", justifyContent:"flex-end", gap:2, padding:"0 8px 8px 38px"}}>
+          <div style={{display:"flex", justifyContent:"flex-end", gap:4, padding:"0 10px 10px 10px"}}>
             <button onClick={(e)=>{e.stopPropagation(); snooze();}}
               aria-label="Snooze 1 day" title="Snooze 1 day"
               style={{background:"transparent", border:"none", padding:"6px 10px", borderRadius:6,
@@ -2338,8 +2338,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         background:pageBg, minHeight:"100%",
         paddingTop:    mobile ? 20 : 32,
         paddingBottom: mobile ? 100 : 32,
-        paddingLeft:   `calc(${mobile?18:32}px + env(safe-area-inset-left, 0px))`,
-        paddingRight:  `calc(${mobile?18:32}px + env(safe-area-inset-right, 0px))`,
+        paddingLeft:   `calc(${mobile?20:32}px + env(safe-area-inset-left, 0px))`,
+        paddingRight:  `calc(${mobile?20:32}px + env(safe-area-inset-right, 0px))`,
       }}>
         <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
         <EmptyState
@@ -2352,7 +2352,13 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
   }
 
   return (
-    <div style={{padding:mobile?"20px 16px 100px":"32px 32px", background:pageBg, minHeight:"100%"}}>
+    <div style={{
+      background:pageBg, minHeight:"100%",
+      paddingTop:    mobile ? 20 : 32,
+      paddingBottom: mobile ? 100 : 32,
+      paddingLeft:   `calc(${mobile?20:32}px + env(safe-area-inset-left, 0px))`,
+      paddingRight:  `calc(${mobile?20:32}px + env(safe-area-inset-right, 0px))`,
+    }}>
       <PageHeader
         title="Projects"
         subtitle={openTotal === 0
@@ -2387,7 +2393,7 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
             <I.search size={15}/>
           </span>
           <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Search follow-ups, contractors, details"
+            placeholder={mobile ? "Search follow-ups…" : "Search follow-ups, contractors, details"}
             style={{...iS(mobile), paddingLeft:36}} />
         </div>
       </div>
