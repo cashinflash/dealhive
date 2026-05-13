@@ -1442,7 +1442,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         )}
         {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
-        {tab==="projects"   && <ProjectsSection p={prop} set={onChange} mobile={mobile} />}
+        {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="notes"      && (
           <SectionBlock title="Notes" color={C.text}>
             <textarea value={prop.notes||""} onChange={e=>u("notes",e.target.value)}
@@ -1535,88 +1535,43 @@ function SelectField({label, value, onChange, options, mobile}) {
   );
 }
 
-// -- Projects Section ----------------------------------------------------------
-function ProjectsSection({p, set, mobile}) {
-  const [exp,setExp] = useState(null);
-  const [nP,setNP]   = useState({name:"",budget:0,contractor:"",status:"In Progress"});
-  const [lg,setLg]   = useState({});
-  const add = () => {
-    if(!nP.name) return;
-    set({...p, projects:[...(p.projects||[]),{id:"pr"+Date.now(),...nP,spent:0,isCapEx:!p.occupied,log:[]}]});
-    setNP({name:"",budget:0,contractor:"",status:"In Progress"});
-  };
-  const addLog = pid => {
-    if(!lg[pid]) return;
-    set({...p, projects:(p.projects||[]).map(pr=>pr.id===pid?{...pr,log:[...(pr.log||[]),{date:new Date().toISOString().split("T")[0],note:lg[pid]}]}:pr)});
-    setLg(x=>({...x,[pid]:""}));
-  };
+// -- Property Projects Tab -----------------------------------------------------
+// Per-property view of follow-ups. Reuses the same PropertySection rows + quick
+// add form that the cross-property Projects page uses, so adding/editing/marking
+// done from either place writes to the same projects array on the property.
+function PropertyProjectsTab({p, set, mobile}) {
+  const [filterMode, setFilterMode] = useState("open");
+  const [search, setSearch]         = useState("");
+
+  const onUpdateProjects = (projects) => set({...p, projects});
+
+  const openCount = (p.projects||[]).filter(pr => pr.status !== "Complete").length;
+  const doneCount = (p.projects||[]).filter(pr => pr.status === "Complete").length;
+
   return (
     <div>
-      <Banner tone="info">
-        <b style={{fontWeight:600}}>Vacant</b> projects count as CapEx (pre-tenant) ·{" "}
-        <b style={{fontWeight:600}}>Occupied</b> projects count as operating expense.
-      </Banner>
-      {(p.projects||[]).map(pr => (
-        <Card key={pr.id} style={{marginBottom:10}} padding={0}>
-          <div style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:12}}
-            onClick={()=>setExp(exp===pr.id?null:pr.id)}>
-            <div style={{minWidth:0, flex:1}}>
-              <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>{pr.name}</div>
-              <div style={{display:"flex", gap:6, marginTop:6, flexWrap:"wrap"}}>
-                <Badge label={pr.status}
-                  bg={pr.status==="Complete"?C.greenLight:pr.status==="In Progress"?C.blueLight:C.bgSubtle}
-                  c={pr.status==="Complete"?C.greenDark:pr.status==="In Progress"?C.blueDark:C.textSub} dot/>
-                <Badge label={pr.isCapEx?"CapEx":"Expense"}
-                  bg={pr.isCapEx?C.amberLight:C.blueLight} c={pr.isCapEx?C.amberDark:C.blueDark}/>
-              </div>
-            </div>
-            <div style={{textAlign:"right", flexShrink:0}}>
-              <div style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>Budget {$(pr.budget)}</div>
-              <div style={{fontSize:13, fontWeight:600, color:pr.spent>pr.budget?C.redDark:C.greenDark, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:2}}>
-                {$(pr.spent)} spent
-              </div>
-            </div>
-            <span style={{color:C.textMuted, transition:"transform .2s", transform:exp===pr.id?"rotate(180deg)":"none", display:"inline-flex"}}>
-              <I.chevronDown size={16}/>
-            </span>
-          </div>
-          {exp===pr.id && (
-            <div style={{borderTop:"1px solid "+C.border, padding:16}}>
-              {(pr.log||[]).length === 0 && (
-                <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginBottom:10, fontStyle:"italic"}}>
-                  No updates logged yet.
-                </div>
-              )}
-              {(pr.log||[]).map((l,i) => (
-                <div key={i} style={{borderLeft:"2px solid "+C.greenBorder, paddingLeft:12, marginBottom:12}}>
-                  <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{l.date}</div>
-                  <div style={{fontSize:13, fontFamily:F, color:C.text, marginTop:1}}>{l.note}</div>
-                </div>
-              ))}
-              <div style={{display:"flex", gap:8, marginTop:6}}>
-                <input placeholder="Add an update…" value={lg[pr.id]||""}
-                  onChange={e=>setLg(x=>({...x,[pr.id]:e.target.value}))}
-                  onKeyDown={e=>e.key==="Enter"&&addLog(pr.id)}
-                  style={{...iS(mobile), flex:1}} />
-                <button onClick={()=>addLog(pr.id)} {...btnStyle("primary","md")}>Log</button>
-              </div>
-              <button onClick={()=>set({...p,projects:(p.projects||[]).filter(x=>x.id!==pr.id)})}
-                {...btnStyle("danger","sm", {marginTop:12, width:"100%"})}>
-                <I.trash size={13}/> Delete project
-              </button>
-            </div>
-          )}
-        </Card>
-      ))}
-      <SectionBlock title="New project" color={C.green}>
-        <InputField label="Project name" val={nP.name} set={v=>setNP(x=>({...x,name:v}))} type="text" mobile={mobile} />
-        <InputField label="Contractor" val={nP.contractor} set={v=>setNP(x=>({...x,contractor:v}))} type="text" mobile={mobile} />
-        <InputField label="Budget" val={nP.budget||0} set={v=>setNP(x=>({...x,budget:v}))} pre="$" mobile={mobile} />
-        <SelectField label="Status" value={nP.status} onChange={v=>setNP(x=>({...x,status:v}))} options={["In Progress","Complete","Planned"]} mobile={mobile}/>
-        <button onClick={add} {...btnStyle("primary","md", {width:"100%"})}>
-          <I.plus size={14}/> Add project
-        </button>
-      </SectionBlock>
+      <div style={{display:"flex", gap:10, marginBottom:14, flexWrap:"wrap", alignItems:"center"}}>
+        <div style={{display:"flex", gap:6}}>
+          <button onClick={()=>setFilterMode("open")} {...btnStyle(filterMode==="open"?"primary":"secondary","sm")}>
+            Open{openCount?` · ${openCount}`:""}
+          </button>
+          <button onClick={()=>setFilterMode("done")} {...btnStyle(filterMode==="done"?"primary":"secondary","sm")}>
+            Done{doneCount?` · ${doneCount}`:""}
+          </button>
+          <button onClick={()=>setFilterMode("all")} {...btnStyle(filterMode==="all"?"primary":"secondary","sm")}>All</button>
+        </div>
+        <div style={{position:"relative", flex:1, minWidth:200}}>
+          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
+            color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
+            <I.search size={15}/>
+          </span>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search follow-ups"
+            style={{...iS(mobile), paddingLeft:36}} />
+        </div>
+      </div>
+      <PropertySection property={p} onUpdateProjects={onUpdateProjects}
+        mobile={mobile} filterMode={filterMode} search={search} hideHeader />
     </div>
   );
 }
@@ -1864,7 +1819,7 @@ const followupSort = (a, b) => {
   return 0;
 };
 
-function PropertySection({property, onUpdateProjects, mobile, filterMode, search}) {
+function PropertySection({property, onUpdateProjects, mobile, filterMode, search, hideHeader=false}) {
   const projects = property.projects || [];
   const filtered = projects.filter(pr => {
     if (filterMode === "open" && pr.status === "Complete") return false;
@@ -1893,20 +1848,22 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
 
   return (
     <Card style={{marginBottom:14}} padding={0}>
-      <header style={{padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
-        <div style={{minWidth:0}}>
-          <h3 style={{margin:0, fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
-            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
-          <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
-            {property.city}{property.state?`, ${property.state}`:""}
+      {!hideHeader && (
+        <header style={{padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
+          <div style={{minWidth:0}}>
+            <h3 style={{margin:0, fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
+              {property.city}{property.state?`, ${property.state}`:""}
+            </div>
           </div>
-        </div>
-        <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
-          background:C.bgSubtle, border:"1px solid "+C.border, padding:"3px 9px", borderRadius:C.rFull,
-          fontWeight:500, flexShrink:0}}>
-          {openCount === 0 ? "all clear" : `${openCount} open`}
-        </span>
-      </header>
+          <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
+            background:C.bgSubtle, border:"1px solid "+C.border, padding:"3px 9px", borderRadius:C.rFull,
+            fontWeight:500, flexShrink:0}}>
+            {openCount === 0 ? "all clear" : `${openCount} open`}
+          </span>
+        </header>
+      )}
       {sorted.length === 0 ? (
         <div style={{padding:"14px 16px", fontSize:12, color:C.textMuted, fontFamily:F, fontStyle:"italic", textAlign:"center"}}>
           {search || filterMode !== "open" ? "Nothing matches." : "No follow-ups yet — add one below."}
