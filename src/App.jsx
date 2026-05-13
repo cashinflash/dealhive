@@ -193,6 +193,16 @@ function useIsMobile() {
   return m;
 }
 
+function useIsWide() {
+  const [w,setW] = useState(window.innerWidth >= 1024);
+  useEffect(() => {
+    const h = () => setW(window.innerWidth >= 1024);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return w;
+}
+
 // -- Design System -------------------------------------------------------------
 // Polished SaaS palette: zinc neutrals + restrained accents (Linear/Stripe-style).
 const C = {
@@ -406,13 +416,64 @@ const I = {
   clipboardCheck: p => <IconSvg {...p} d={<g><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 14l2 2 4-4"/></g>}/>,
   camera:      p => <IconSvg {...p} d={<g><path d="M14.5 4h-5L7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></g>}/>,
   flag:        p => <IconSvg {...p} d={<g><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></g>}/>,
+  clock:       p => <IconSvg {...p} d={<g><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></g>}/>,
+  messageSquare:p => <IconSvg {...p} d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>,
 };
 
+// Follow-up "type" taxonomy. 10% tint background, full-saturation text/border.
+const TYPE_PALETTE = {
+  repair:     {color:"#d97706", bg:"rgba(245,158,11,.10)",  border:"rgba(245,158,11,.30)", label:"Repair"},
+  inspection: {color:"#9333ea", bg:"rgba(168,85,247,.10)",  border:"rgba(168,85,247,.30)", label:"Inspection"},
+  waiting:    {color:"#2563eb", bg:"rgba(59,130,246,.10)",  border:"rgba(59,130,246,.30)", label:"Waiting"},
+  admin:      {color:"#475569", bg:"rgba(100,116,139,.10)", border:"rgba(100,116,139,.25)", label:"Admin"},
+  tenant:     {color:"#0d9488", bg:"rgba(20,184,166,.10)",  border:"rgba(20,184,166,.30)", label:"Tenant"},
+  other:      {color:"#71717a", bg:"rgba(161,161,170,.10)", border:"rgba(161,161,170,.25)", label:"Other"},
+};
+const TYPE_KEYS = ["repair","inspection","waiting","admin","tenant","other"];
+const typeOf = (pr) => (pr && pr.type && TYPE_PALETTE[pr.type]) ? pr.type : "other";
+
+function TypePill({type="other", size="sm", onClick, style={}}) {
+  const t = TYPE_PALETTE[type] || TYPE_PALETTE.other;
+  return (
+    <span onClick={onClick} style={{
+      display:"inline-flex", alignItems:"center", flexShrink:0,
+      padding: size==="md" ? "3px 10px" : "2px 8px",
+      borderRadius:9999, fontSize: size==="md"?12:11, fontWeight:600,
+      color:t.color, background:t.bg, border:"1px solid "+t.border,
+      letterSpacing:"-0.005em", lineHeight:1.3,
+      fontFamily:F, whiteSpace:"nowrap",
+      cursor: onClick ? "pointer" : "default",
+      ...style,
+    }}>{t.label}</span>
+  );
+}
+
+function TypePicker({value, onChange}) {
+  return (
+    <div style={{display:"flex", gap:5, flexWrap:"wrap"}}>
+      {TYPE_KEYS.map(key => {
+        const t = TYPE_PALETTE[key];
+        const active = value === key;
+        return (
+          <button key={key} type="button" onClick={()=>onChange(key)} style={{
+            background: active ? t.bg : "transparent",
+            color: active ? t.color : C.textSub,
+            border: "1px solid " + (active ? t.border : C.border),
+            borderRadius: 9999, padding: "4px 10px", fontSize: 12, fontWeight: 600,
+            fontFamily: F, cursor: "pointer", letterSpacing:"-0.005em",
+            transition: "background .12s, color .12s, border-color .12s",
+          }}>{t.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
 // -- UI Primitives -------------------------------------------------------------
-function Card({children, style={}, hover=false, onClick, onMouseEnter, onMouseLeave, padding}) {
+function Card({children, style={}, hover=false, onClick, onMouseEnter, onMouseLeave, padding, id, className}) {
   const [h, setH] = useState(false);
   return (
-    <div onClick={onClick}
+    <div id={id} className={className} onClick={onClick}
       onMouseEnter={e => { if (hover) setH(true); onMouseEnter && onMouseEnter(e); }}
       onMouseLeave={e => { if (hover) setH(false); onMouseLeave && onMouseLeave(e); }}
       style={{
@@ -1542,11 +1603,721 @@ function SelectField({label, value, onChange, options, mobile}) {
 // Per-property view of follow-ups. Reuses the same PropertySection rows + quick
 // add form that the cross-property Projects page uses, so adding/editing/marking
 // done from either place writes to the same projects array on the property.
+// -- Projects (follow-ups) -----------------------------------------------------
+// Cross-property workspace for capturing quick follow-up items during a
+// contractor call. Reuses the existing `projects` array on each property and
+// extends each entry with: type, dueDate, priority, contractor, log, photos.
+
+const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+
+// Display a YYYY-MM-DD date as something humans want to read.
+const formatDue = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  const today = startOfToday();
+  const diff = Math.round((d - today) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (diff < 0) return `${-diff} days ago`;
+  if (diff < 7) return d.toLocaleDateString(undefined, {weekday:"short"});
+  const sameYear = d.getFullYear() === today.getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
+};
+
+// MMM D, h:mm a — for the call-note timeline timestamps.
+const formatNoteStamp = (d=new Date()) => d.toLocaleString("en-US", {
+  month:"short", day:"numeric", hour:"numeric", minute:"2-digit", hour12:true,
+});
+
+// Add 1 day to an ISO date (or "today" if none), return YYYY-MM-DD.
+const nextDayIso = (iso) => {
+  const base = iso ? new Date(iso + "T00:00:00") : startOfToday();
+  base.setDate(base.getDate() + 1);
+  const y = base.getFullYear(), m = String(base.getMonth()+1).padStart(2,"0"), d = String(base.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+};
+
+// Resize an uploaded image to maxWidth and return a JPEG data URL.
+const resizeImageToDataUrl = (file, maxWidth=800, quality=0.82) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = Math.min(maxWidth, img.width);
+      const h = Math.round(w * (img.height / img.width));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      try { resolve(canvas.toDataURL("image/jpeg", quality)); } catch (err) { reject(err); }
+    };
+    img.onerror = reject;
+    img.src = e.target.result;
+  };
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+// 4-up aspect-square photo grid with inline upload.
+function PhotoUploader({photos=[], onChange}) {
+  const [uploading, setUploading] = useState(false);
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 800, 0.82);
+      onChange([...(photos||[]), dataUrl]);
+    } catch {}
+    setUploading(false);
+    e.target.value = "";
+  };
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Photos</label>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8}}>
+        {photos.map((src, i) => (
+          <div key={i} style={{position:"relative", aspectRatio:"1/1", borderRadius:C.r2, overflow:"hidden",
+            border:"1px solid "+C.border, background:C.bgSubtle}}>
+            <img src={src} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}} />
+            <button onClick={()=>onChange(photos.filter((_,j)=>j!==i))}
+              aria-label="Remove photo"
+              style={{position:"absolute", top:4, right:4, width:20, height:20, borderRadius:"50%",
+                background:"rgba(9,9,11,.75)", color:"white", border:"none", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
+              <I.x size={11} stroke={3}/>
+            </button>
+          </div>
+        ))}
+        {photos.length < 4 && (
+          <label style={{
+            aspectRatio:"1/1", borderRadius:C.r2, border:"1px dashed "+C.borderHover,
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            gap:4, cursor:"pointer", color:C.textMuted, fontSize:11, fontFamily:F, fontWeight:500,
+            transition:"border-color .12s, color .12s, background .12s",
+            opacity: uploading ? .6 : 1,
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.green; e.currentTarget.style.color=C.green; e.currentTarget.style.background=C.greenSubtle;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderHover; e.currentTarget.style.color=C.textMuted; e.currentTarget.style.background="transparent";}}>
+            {uploading ? <span style={{fontSize:11}}>…</span> : <I.camera size={20}/>}
+            <span>{uploading ? "Uploading" : "Add"}</span>
+            <input type="file" accept="image/*" capture="environment" onChange={handleFile}
+              disabled={uploading} style={{display:"none"}} />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Newest-first call-note timeline + inline "Add a note…" input.
+function CallNotesTimeline({pr, onChange, mobile}) {
+  const [text, setText] = useState("");
+  // Combine legacy `details` (one-shot) with the timestamped `log`. Older first
+  // in storage, newest-first on display.
+  const notes = [
+    ...(pr.details ? [{date:"Earlier note", note: pr.details}] : []),
+    ...(pr.log || []),
+  ].slice().reverse();
+
+  const submit = () => {
+    const v = text.trim();
+    if (!v) return;
+    onChange({...pr, log: [...(pr.log||[]), {date: formatNoteStamp(), note: v}]});
+    setText("");
+  };
+
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Call notes</label>
+      <input value={text} onChange={e=>setText(e.target.value)}
+        onKeyDown={e=>{ if (e.key === "Enter") submit(); }}
+        placeholder="Add a note…  (Enter to save)"
+        style={{...iS(mobile), marginBottom: notes.length ? 10 : 0}} />
+      {notes.map((l, i) => (
+        <div key={i} style={{
+          borderLeft:"2px solid "+C.border, paddingLeft:12,
+          paddingTop:6, paddingBottom:6, marginBottom:4,
+        }}>
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{l.date}</div>
+          <div style={{fontSize:13, color:C.text, fontFamily:F, marginTop:2, lineHeight:1.5}}>{l.note}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[]}) {
+  const u = (f, v) => onChange({...pr, [f]:v});
+  return (
+    <div style={{padding:"6px 16px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg}}>
+      {/* Row 1: Description (wide) + Type */}
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "2fr 1fr", gap:10, marginBottom:4}}>
+        <InputField label="Description" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Type</label>
+          <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
+        </div>
+      </div>
+      {/* Row 2: Due / Cost / Priority / Contractor */}
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap:10}}>
+        <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
+        <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
+        <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
+          options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Contractor</label>
+          <input value={pr.contractor||""} onChange={e=>u("contractor", e.target.value)}
+            list="dh-contractors" placeholder="Name" style={iS(mobile)} />
+        </div>
+      </div>
+      <CallNotesTimeline pr={pr} onChange={onChange} mobile={mobile} />
+      <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
+      <div style={{display:"flex", justifyContent:"flex-end"}}>
+        <button onClick={onDelete}
+          style={{background:"none", border:"none", padding:"4px 8px",
+            color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
+            display:"inline-flex", alignItems:"center", gap:5,
+            textDecoration:"underline", textDecorationColor:C.border,
+            textUnderlineOffset:2,
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.color=C.redDark;}}
+          onMouseLeave={e=>{e.currentTarget.style.color=C.textMuted;}}>
+          <I.trash size={11}/> Delete follow-up
+        </button>
+      </div>
+      {contractors.length > 0 && (
+        <datalist id="dh-contractors">
+          {contractors.map(c => <option key={c} value={c}/>)}
+        </datalist>
+      )}
+    </div>
+  );
+}
+
+function RowAction({icon, label, onClick, color}) {
+  return (
+    <button onClick={(e)=>{e.stopPropagation(); onClick(e);}}
+      aria-label={label} title={label}
+      className="dh-row-action"
+      style={color ? {color} : undefined}>
+      {icon}
+    </button>
+  );
+}
+
+function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick,
+                      onChange, onDelete, mobile, contractors=[]}) {
+  const [expanded, setExpanded] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const isDone    = pr.status === "Complete";
+  const isOverdue = !isDone && pr.dueDate && new Date(pr.dueDate+"T00:00:00") < startOfToday();
+  const isHigh    = pr.priority === "high";
+
+  const toggleDone = (e) => {
+    e && e.stopPropagation();
+    onChange({...pr, status: isDone ? "In Progress" : "Complete"});
+  };
+  const snooze = () => onChange({...pr, dueDate: nextDayIso(pr.dueDate)});
+  const openNoteBar = () => {
+    if (expanded) { setExpanded(false); }
+    setNoteOpen(true);
+  };
+  const submitInlineNote = () => {
+    const v = noteText.trim();
+    if (!v) return;
+    onChange({...pr, log: [...(pr.log||[]), {date: formatNoteStamp(), note: v}]});
+    setNoteText("");
+    setNoteOpen(false);
+  };
+
+  return (
+    <div className="dh-row" style={{borderBottom:"1px solid "+C.bgSubtle}}>
+      <div onClick={()=>{ setNoteOpen(false); setExpanded(x=>!x); }}
+        style={{
+          display:"flex", gap:10, padding:"10px 14px", alignItems:"center", cursor:"pointer",
+          transition:"background .12s",
+          background: expanded ? C.bgSubtle : "transparent",
+        }}
+        onMouseEnter={e=>{ if (!expanded) e.currentTarget.style.background=C.bgSubtle; }}
+        onMouseLeave={e=>{ if (!expanded) e.currentTarget.style.background="transparent"; }}>
+        <button onClick={toggleDone} aria-label={isDone?"Mark open":"Mark done"}
+          style={{
+            width:18, height:18, borderRadius:"50%",
+            border:"1.5px solid "+(isDone ? C.green : C.borderHover),
+            background: isDone ? C.green : "transparent",
+            color:"white", padding:0, flexShrink:0,
+            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+            transition:"background .12s, border-color .12s",
+          }}>
+          {isDone && <I.check size={11} stroke={3.5}/>}
+        </button>
+
+        <TypePill type={typeOf(pr)} />
+
+        {isHigh && !isDone && (
+          <span title="High priority"
+            style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
+        )}
+
+        <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:1}}>
+          <div style={{fontSize:13, color: isDone ? C.textMuted : C.text, fontFamily:F,
+            textDecoration: isDone ? "line-through" : "none",
+            letterSpacing:"-0.005em",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {pr.name || <span style={{color:C.textMuted, fontStyle:"italic"}}>Untitled</span>}
+          </div>
+          {(showProperty && propLabel) || pr.contractor ? (
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:F, display:"flex", gap:6,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {showProperty && propLabel && (
+                onPropertyClick
+                  ? <span onClick={e=>{e.stopPropagation(); onPropertyClick();}}
+                      style={{cursor:"pointer", color:C.textSub, textDecoration:"underline", textDecorationColor:C.border, textUnderlineOffset:2}}>
+                      {propLabel}
+                    </span>
+                  : <span>{propLabel}</span>
+              )}
+              {pr.contractor && <span style={{color:C.textMuted}}>· {pr.contractor}</span>}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+          {pr.dueDate && (
+            <span style={{
+              fontSize:12,
+              color: isDone ? C.textMuted : isOverdue ? C.redDark : C.textSub,
+              fontFamily:F, fontVariantNumeric:"tabular-nums",
+              fontWeight: isOverdue && !isDone ? 600 : 500,
+            }}>{formatDue(pr.dueDate)}</span>
+          )}
+          {pr.budget > 0 && (
+            <span style={{fontSize:12, color:"#3f3f46", fontFamily:F, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>
+              ${Math.round(pr.budget).toLocaleString()}
+            </span>
+          )}
+          {(pr.photos||[]).length > 0 && (
+            <span style={{display:"inline-flex", alignItems:"center", gap:3, color:C.textMuted, fontSize:11, fontFamily:F}}>
+              <I.camera size={12}/>{pr.photos.length}
+            </span>
+          )}
+
+          {/* Quick actions — fade in on hover for non-done rows */}
+          {!isDone && (
+            <div className="dh-row-actions">
+              <RowAction icon={<I.check size={14} stroke={2.2}/>}    label="Mark done"        onClick={toggleDone}/>
+              <RowAction icon={<I.clock size={14}/>}                  label="Snooze 1 day"     onClick={snooze}/>
+              <RowAction icon={<I.messageSquare size={14}/>}          label="Add note"         onClick={openNoteBar}/>
+            </div>
+          )}
+
+          <I.chevronDown size={14}
+            style={{color:C.textMuted, transition:"transform .15s",
+              transform: expanded ? "rotate(180deg)" : "none"}}/>
+        </div>
+      </div>
+
+      {/* Inline quick-note bar */}
+      {noteOpen && !expanded && (
+        <div style={{padding:"8px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg,
+          display:"flex", gap:8, alignItems:"center"}}>
+          <I.messageSquare size={14} style={{color:C.textMuted, flexShrink:0}}/>
+          <input autoFocus value={noteText} onChange={e=>setNoteText(e.target.value)}
+            onKeyDown={e=>{
+              if (e.key === "Enter") submitInlineNote();
+              if (e.key === "Escape") { setNoteText(""); setNoteOpen(false); }
+            }}
+            placeholder="Quick note — Enter to save, Esc to cancel"
+            style={{...iS(mobile), flex:1}} />
+          <button onClick={()=>{ setNoteText(""); setNoteOpen(false); }}
+            {...btnStyle("ghost","sm", {color:C.textMuted})}>Cancel</button>
+        </div>
+      )}
+
+      {expanded && (
+        <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
+      )}
+    </div>
+  );
+}
+
+function QuickAddForm({onAdd, mobile, contractors=[]}) {
+  const [open, setOpen]           = useState(false);
+  const [text, setText]           = useState("");
+  const [type, setType]           = useState("other");
+  const [date, setDate]           = useState("");
+  const [cost, setCost]           = useState("");
+  const [contractor, setContractor] = useState("");
+
+  const submit = () => {
+    if (!text.trim()) return;
+    onAdd({name:text.trim(), type, dueDate:date, budget:parseFloat(cost)||0,
+      contractor:contractor.trim(), priority:"normal"});
+    setText(""); setType("other"); setDate(""); setCost(""); setContractor("");
+    setOpen(false);
+  };
+  const cancel = () => {
+    setText(""); setType("other"); setDate(""); setCost(""); setContractor("");
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button onClick={()=>setOpen(true)}
+        style={{
+          width:"100%", padding:"11px 14px", border:"none",
+          background:"transparent", color:C.textSub,
+          fontFamily:F, fontSize:13, fontWeight:500, cursor:"pointer",
+          display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+          borderTop:"1px solid "+C.border,
+          transition:"background .12s, color .12s",
+        }}
+        onMouseEnter={e=>{e.currentTarget.style.background=C.bgSubtle; e.currentTarget.style.color=C.text;}}
+        onMouseLeave={e=>{e.currentTarget.style.background="transparent"; e.currentTarget.style.color=C.textSub;}}>
+        <I.plus size={14}/> Add follow-up
+      </button>
+    );
+  }
+
+  return (
+    <div style={{padding:"14px 16px", borderTop:"1px solid "+C.border, background:C.bgSubtle}}>
+      <input value={text} onChange={e=>setText(e.target.value)}
+        onKeyDown={e=>{
+          if (e.key==="Enter") submit();
+          if (e.key==="Escape") cancel();
+        }}
+        autoFocus
+        placeholder="What needs to be done?"
+        style={{...iS(mobile), marginBottom:10}} />
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:11, color:C.textSub, fontWeight:600, marginBottom:6, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Type</div>
+        <TypePicker value={type} onChange={setType}/>
+      </div>
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr 1.5fr", gap:8, marginBottom:12}}>
+        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={iS(mobile)}/>
+        <input type="number" value={cost} onChange={e=>setCost(e.target.value)}
+          placeholder="Cost ($)" inputMode="decimal" style={iS(mobile)}/>
+        <input value={contractor} onChange={e=>setContractor(e.target.value)}
+          list="dh-contractors" placeholder="Contractor"
+          style={{...iS(mobile), gridColumn: mobile ? "span 2" : "auto"}}/>
+      </div>
+      {contractors.length > 0 && (
+        <datalist id="dh-contractors">
+          {contractors.map(c => <option key={c} value={c}/>)}
+        </datalist>
+      )}
+      <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+        <button onClick={cancel} {...btnStyle("ghost","sm")}>Cancel</button>
+        <button onClick={submit} disabled={!text.trim()} {...btnStyle("primary","sm")}>
+          <I.plus size={12}/> Add follow-up
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const followupSort = (a, b) => {
+  const aD = a.status === "Complete" ? 1 : 0;
+  const bD = b.status === "Complete" ? 1 : 0;
+  if (aD !== bD) return aD - bD;
+  const aH = a.priority === "high" ? 0 : 1;
+  const bH = b.priority === "high" ? 0 : 1;
+  if (aH !== bH) return aH - bH;
+  if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+  if (a.dueDate) return -1;
+  if (b.dueDate) return 1;
+  return 0;
+};
+
+// Worst open-status for a property's left-border + summary dot.
+const propertyStatus = (property) => {
+  const today = startOfToday();
+  const inWeek = new Date(today.getTime() + 7*86400000);
+  const open = (property.projects||[]).filter(pr => pr.status !== "Complete");
+  const overdueItems = open.filter(pr => pr.dueDate && new Date(pr.dueDate+"T00:00:00") < today);
+  const dueSoonItems = open.filter(pr => pr.dueDate && new Date(pr.dueDate+"T00:00:00") <= inWeek && new Date(pr.dueDate+"T00:00:00") >= today);
+  if (overdueItems.length) return {kind:"overdue", color:C.red, openCount:open.length, overdueCount:overdueItems.length};
+  if (dueSoonItems.length) return {kind:"due-soon", color:C.amber, openCount:open.length, overdueCount:0};
+  if (open.length === 0) return {kind:"clear", color:C.green, openCount:0, overdueCount:0};
+  return {kind:"open", color:C.borderHover, openCount:open.length, overdueCount:0};
+};
+
+function PropertySection({property, onUpdateProjects, mobile, filterMode, search, contractor, contractors=[], hideHeader=false}) {
+  const projects = property.projects || [];
+  const filtered = projects.filter(pr => {
+    if (filterMode === "open" && pr.status === "Complete") return false;
+    if (filterMode === "done" && pr.status !== "Complete") return false;
+    if (contractor && (pr.contractor||"") !== contractor) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const hay = `${pr.name||""} ${pr.contractor||""} ${pr.details||""} ${(pr.log||[]).map(l=>l.note).join(" ")}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const sorted = [...filtered].sort(followupSort);
+
+  const updateOne = (updated) => onUpdateProjects(projects.map(pr => pr.id === updated.id ? updated : pr));
+  const deleteOne = (id) => onUpdateProjects(projects.filter(pr => pr.id !== id));
+  const addOne = (item) => onUpdateProjects([...projects, {
+    id:"pr"+Date.now(),
+    status:"In Progress",
+    name:"", dueDate:"", budget:0, spent:0,
+    contractor:"", details:"", priority:"normal", photos:[], log:[],
+    type:"other",
+    isCapEx: !property.occupied,
+    ...item,
+  }]);
+
+  const status = propertyStatus(property);
+  const summary = status.openCount === 0
+    ? "All clear"
+    : status.overdueCount > 0
+      ? `${status.openCount} open · ${status.overdueCount} overdue`
+      : `${status.openCount} open`;
+
+  return (
+    <Card id={"prop-"+property.id} className="dh-prop-card"
+      style={{marginBottom:14, borderLeft:`4px solid ${status.color}`}} padding={0}>
+      {!hideHeader && (
+        <header style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
+          <div style={{minWidth:0}}>
+            <h3 style={{margin:0, fontSize:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
+            <div style={{fontSize:13, color:"#71717a", fontFamily:F, marginTop:1}}>
+              {property.city}{property.state?`, ${property.state}`:""}
+            </div>
+          </div>
+          <div style={{display:"inline-flex", alignItems:"center", gap:6, flexShrink:0}}>
+            <span className={status.kind === "overdue" ? "dh-pulse" : undefined}
+              style={{width:8, height:8, borderRadius:"50%", background:status.color, flexShrink:0}}/>
+            <span style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {summary}
+            </span>
+          </div>
+        </header>
+      )}
+      {sorted.length === 0 ? (
+        <div style={{padding:"30px 16px 24px", textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:6}}>
+          {!search && filterMode === "open" ? (
+            <>
+              <div style={{
+                width:36, height:36, borderRadius:"50%", background:C.greenSubtle,
+                border:"1px solid "+C.greenBorder, color:C.greenDark,
+                display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                <I.check size={17} stroke={2.5}/>
+              </div>
+              <div style={{fontSize:13, color:"#71717a", fontFamily:F}}>All caught up on this property</div>
+            </>
+          ) : (
+            <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>
+              {filterMode === "done" ? "No completed follow-ups yet." : "Nothing matches your filters."}
+            </div>
+          )}
+        </div>
+      ) : (
+        sorted.map(pr => (
+          <FollowupRow key={pr.id} pr={pr} contractors={contractors}
+            onChange={updateOne} onDelete={()=>deleteOne(pr.id)} mobile={mobile} />
+        ))
+      )}
+      <QuickAddForm onAdd={addOne} mobile={mobile} contractors={contractors} />
+    </Card>
+  );
+}
+
+function ContractorChip({label, active, onClick}) {
+  return (
+    <button onClick={onClick} style={{
+      flexShrink:0, padding:"6px 12px", borderRadius:9999,
+      background: active ? C.text : C.card,
+      color: active ? "#fff" : C.textSub,
+      border: "1px solid " + (active ? C.text : C.border),
+      fontSize:12, fontWeight:600, fontFamily:F, cursor:"pointer",
+      letterSpacing:"-0.005em", whiteSpace:"nowrap",
+      transition: "background .12s, color .12s, border-color .12s",
+    }}>{label}</button>
+  );
+}
+
+function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChange, onRowDelete, mobile, contractors}) {
+  if (!items.length) return null;
+  return (
+    <div style={{background: bg}}>
+      <header style={{padding:"10px 16px", display:"flex", alignItems:"center", gap:10}}>
+        <span style={{fontSize:11, fontWeight:700, color:labelColor, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase"}}>
+          {title}
+        </span>
+        <span style={{fontSize:11, color:labelColor, fontFamily:F, fontWeight:600, fontVariantNumeric:"tabular-nums",
+          background:"rgba(255,255,255,.65)", border:"1px solid rgba(0,0,0,.05)", padding:"1px 8px", borderRadius:9999}}>
+          {items.length}
+        </span>
+      </header>
+      {items.map(({pr, property}) => (
+        <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
+          propLabel={property.address} propId={property.id} showProperty
+          onPropertyClick={() => onPropertyClick(property.id)}
+          onChange={updated => onRowChange(property, updated)}
+          onDelete={() => onRowDelete(property, pr.id)}
+          mobile={mobile} contractors={contractors} />
+      ))}
+    </div>
+  );
+}
+
+function ProjectsPage({properties, onUpdateProperty, mobile}) {
+  const isWide = useIsWide();
+  const [filterMode, setFilterMode] = useState("open");
+  const [search, setSearch]         = useState("");
+  // Persist contractor selection in URL ?contractor=...
+  const [contractor, setContractor] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("contractor") || ""; } catch { return ""; }
+  });
+  useEffect(() => {
+    try {
+      const url = new URL(window.location);
+      if (contractor) url.searchParams.set("contractor", contractor);
+      else url.searchParams.delete("contractor");
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
+  }, [contractor]);
+
+  // Build unique sorted contractor list across all properties.
+  const contractors = Array.from(new Set(
+    properties.flatMap(p => (p.projects||[])
+      .map(pr => (pr.contractor||"").trim())
+      .filter(Boolean))
+  )).sort((a,b) => a.localeCompare(b));
+
+  const today    = startOfToday();
+  const tomorrow = new Date(today.getTime() + 86400000);
+  const inWeek   = new Date(today.getTime() + 7*86400000);
+
+  // All open follow-ups with their owning property, after contractor filter.
+  const allOpen = properties.flatMap(p =>
+    (p.projects||[])
+      .filter(pr => pr.status !== "Complete")
+      .filter(pr => !contractor || (pr.contractor||"") === contractor)
+      .map(pr => ({pr, property:p}))
+  );
+
+  const sortByDue = (a, b) => (a.pr.dueDate||"").localeCompare(b.pr.dueDate||"");
+  const overdue  = allOpen.filter(({pr}) => pr.dueDate && new Date(pr.dueDate+"T00:00:00") < today).sort(sortByDue);
+  const todayItems = allOpen.filter(({pr}) => pr.dueDate && new Date(pr.dueDate+"T00:00:00") >= today && new Date(pr.dueDate+"T00:00:00") < tomorrow).sort(sortByDue);
+  const thisWeek = allOpen.filter(({pr}) => pr.dueDate && new Date(pr.dueDate+"T00:00:00") >= tomorrow && new Date(pr.dueDate+"T00:00:00") <= inWeek).sort(sortByDue);
+  const dueNowTotal = overdue.length + todayItems.length + thisWeek.length;
+
+  const openTotal = allOpen.length;
+
+  const pageBg = "#FAFAF7";
+
+  const handleUpdateProjects = (propId, projects) => {
+    const property = properties.find(p => p.id === propId);
+    if (property) onUpdateProperty({...property, projects});
+  };
+  const handleRowChange = (property, updated) =>
+    handleUpdateProjects(property.id, (property.projects||[]).map(x => x.id === updated.id ? updated : x));
+  const handleRowDelete = (property, id) =>
+    handleUpdateProjects(property.id, (property.projects||[]).filter(x => x.id !== id));
+  const scrollToProperty = (id) => {
+    const el = document.getElementById("prop-" + id);
+    if (el) el.scrollIntoView({behavior:"smooth", block:"start"});
+  };
+
+  if (properties.length === 0) {
+    return (
+      <div style={{padding:mobile?"20px 16px 100px":"32px 32px", background:pageBg, minHeight:"100%"}}>
+        <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
+        <EmptyState
+          icon={<I.clipboardCheck size={22}/>}
+          title="Add a property first"
+          body="Once you have properties in your portfolio, this is where you'll capture every follow-up from contractor calls — what's due, what it costs, and whether it's done."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px", background:pageBg, minHeight:"100%"}}>
+      <PageHeader
+        title="Projects"
+        subtitle={openTotal === 0
+          ? "All clear — no open follow-ups."
+          : `${openTotal} open follow-up${openTotal===1?"":"s"} across ${properties.length} ${properties.length===1?"property":"properties"}.`}
+      />
+
+      {dueNowTotal > 0 && (
+        <Card style={{marginBottom:24}} padding={0}>
+          <DueNowSection title={`Overdue · ${overdue.length}`}    items={overdue}    bg="#FEF2F2" labelColor="#991b1b"
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+          {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
+          <DueNowSection title={`Today · ${todayItems.length}`}    items={todayItems} bg="#FFFBEB" labelColor="#92400e"
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+          {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
+          <DueNowSection title={`This week · ${thisWeek.length}`}  items={thisWeek}   bg="#FAFAFA" labelColor="#3f3f46"
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+        </Card>
+      )}
+
+      {/* Filter + search */}
+      <div style={{display:"flex", gap:10, marginBottom:12, flexWrap:"wrap"}}>
+        <div style={{display:"flex", gap:6}}>
+          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => (
+            <button key={id} onClick={()=>setFilterMode(id)}
+              {...btnStyle(filterMode===id?"primary":"secondary","sm")}>{label}</button>
+          ))}
+        </div>
+        <div style={{position:"relative", flex:1, minWidth:220}}>
+          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
+            color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
+            <I.search size={15}/>
+          </span>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search follow-ups, contractors, details"
+            style={{...iS(mobile), paddingLeft:36}} />
+        </div>
+      </div>
+
+      {/* Contractor chip row */}
+      {contractors.length > 0 && (
+        <div className="dh-chip-row" style={{display:"flex", gap:6, marginBottom:18, overflowX:"auto",
+          WebkitOverflowScrolling:"touch", paddingBottom:2}}>
+          <ContractorChip label="All contractors" active={!contractor} onClick={()=>setContractor("")}/>
+          {contractors.map(c => (
+            <ContractorChip key={c} label={c} active={contractor===c}
+              onClick={()=>setContractor(contractor===c ? "" : c)}/>
+          ))}
+        </div>
+      )}
+
+      <div style={{display:"grid", gridTemplateColumns: isWide ? "1fr 1fr" : "1fr", gap:14}}>
+        {properties.map(p => (
+          <PropertySection key={p.id} property={p}
+            onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
+            mobile={mobile} filterMode={filterMode} search={search}
+            contractor={contractor} contractors={contractors} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Single-property view (inside Property Detail → Projects tab). Same components,
+// just no cross-property panels.
 function PropertyProjectsTab({p, set, mobile}) {
   const [filterMode, setFilterMode] = useState("open");
   const [search, setSearch]         = useState("");
 
   const onUpdateProjects = (projects) => set({...p, projects});
+
+  // Just this property's contractors for the datalist.
+  const contractors = Array.from(new Set(
+    (p.projects||[]).map(pr => (pr.contractor||"").trim()).filter(Boolean)
+  )).sort();
 
   const openCount = (p.projects||[]).filter(pr => pr.status !== "Complete").length;
   const doneCount = (p.projects||[]).filter(pr => pr.status === "Complete").length;
@@ -1574,418 +2345,8 @@ function PropertyProjectsTab({p, set, mobile}) {
         </div>
       </div>
       <PropertySection property={p} onUpdateProjects={onUpdateProjects}
-        mobile={mobile} filterMode={filterMode} search={search} hideHeader />
-    </div>
-  );
-}
-
-// -- Projects (follow-ups) -----------------------------------------------------
-// Cross-property workspace for capturing quick follow-up items during a
-// contractor call. Reuses the existing `projects` array on each property and
-// extends each entry with: dueDate, priority, details, photos.
-
-const startOfToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
-
-// Display a YYYY-MM-DD date as something humans want to read.
-const formatDue = (iso) => {
-  if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
-  const today = startOfToday();
-  const diff = Math.round((d - today) / 86400000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Tomorrow";
-  if (diff === -1) return "Yesterday";
-  if (diff < 0) return `${-diff} days ago`;
-  if (diff < 7) return d.toLocaleDateString(undefined, {weekday:"short"});
-  const sameYear = d.getFullYear() === today.getFullYear();
-  return d.toLocaleDateString(undefined, sameYear ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
-};
-
-// Resize an uploaded image to maxWidth and return a JPEG data URL.
-const resizeImageToDataUrl = (file, maxWidth=800, quality=0.82) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const img = new Image();
-    img.onload = () => {
-      const w = Math.min(maxWidth, img.width);
-      const h = Math.round(w * (img.height / img.width));
-      const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
-      try { resolve(canvas.toDataURL("image/jpeg", quality)); } catch (err) { reject(err); }
-    };
-    img.onerror = reject;
-    img.src = e.target.result;
-  };
-  reader.onerror = reject;
-  reader.readAsDataURL(file);
-});
-
-function PhotoUploader({photos=[], onChange, mobile}) {
-  const [uploading, setUploading] = useState(false);
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const dataUrl = await resizeImageToDataUrl(file, 800, 0.82);
-      onChange([...(photos||[]), dataUrl]);
-    } catch {}
-    setUploading(false);
-    e.target.value = "";
-  };
-  return (
-    <div style={{marginBottom:14}}>
-      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Photos</label>
-      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-        {photos.map((src, i) => (
-          <div key={i} style={{position:"relative", width:68, height:68, borderRadius:C.r2, overflow:"hidden",
-            border:"1px solid "+C.border, background:C.bgSubtle}}>
-            <img src={src} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}} />
-            <button onClick={()=>onChange(photos.filter((_,j)=>j!==i))}
-              aria-label="Remove photo"
-              style={{position:"absolute", top:3, right:3, width:18, height:18, borderRadius:"50%",
-                background:"rgba(9,9,11,.75)", color:"white", border:"none", cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
-              <I.x size={10} stroke={3}/>
-            </button>
-          </div>
-        ))}
-        {photos.length < 4 && (
-          <label style={{
-            width:68, height:68, borderRadius:C.r2, border:"1px dashed "+C.borderHover,
-            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-            gap:4, cursor:"pointer", color:C.textMuted, fontSize:10, fontFamily:F, fontWeight:500,
-            transition:"border-color .15s, color .15s",
-            opacity: uploading ? .6 : 1,
-          }}
-          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.green; e.currentTarget.style.color=C.green;}}
-          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderHover; e.currentTarget.style.color=C.textMuted;}}>
-            {uploading ? <span style={{fontSize:11}}>…</span> : <I.camera size={20}/>}
-            <span>{uploading ? "Uploading" : "Add"}</span>
-            <input type="file" accept="image/*" capture="environment" onChange={handleFile}
-              disabled={uploading} style={{display:"none"}} />
-          </label>
-        )}
-      </div>
-      <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6}}>
-        Up to 4 photos · auto-resized to 800px.
-      </div>
-    </div>
-  );
-}
-
-function FollowupExpanded({pr, onChange, onDelete, mobile}) {
-  const u = (f, v) => onChange({...pr, [f]:v});
-  return (
-    <div style={{padding:"4px 16px 16px", background:C.bgSubtle, borderTop:"1px solid "+C.border}}>
-      <InputField label="Description" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
-      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr 1fr", gap:10}}>
-        <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
-        <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
-        <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
-          options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
-      </div>
-      <InputField label="Contractor" type="text" val={pr.contractor||""} set={v=>u("contractor",v)} mobile={mobile} />
-      <div style={{marginBottom:14}}>
-        <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Details</label>
-        <textarea value={pr.details||""} onChange={e=>u("details",e.target.value)}
-          placeholder="Anything else worth noting — color, model, who to call…"
-          style={{...iS(mobile), minHeight:70, resize:"vertical", lineHeight:1.55}} />
-      </div>
-      <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} mobile={mobile} />
-      <button onClick={onDelete} {...btnStyle("danger","sm")}>
-        <I.trash size={12}/> Delete follow-up
-      </button>
-    </div>
-  );
-}
-
-function FollowupRow({pr, propLabel, showProperty=false, onChange, onDelete, mobile, defaultExpanded=false}) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const isDone    = pr.status === "Complete";
-  const isOverdue = !isDone && pr.dueDate && new Date(pr.dueDate+"T00:00:00") < startOfToday();
-  const isHigh    = pr.priority === "high";
-  const toggleDone = (e) => {
-    e.stopPropagation();
-    onChange({...pr, status: isDone ? "In Progress" : "Complete"});
-  };
-  return (
-    <div style={{borderBottom:"1px solid "+C.border}}>
-      <div onClick={()=>setExpanded(x=>!x)}
-        style={{
-          display:"flex", gap:10, padding:"11px 14px", alignItems:"center", cursor:"pointer",
-          transition:"background .12s",
-          background: expanded ? C.bgSubtle : "transparent",
-        }}
-        onMouseEnter={e=>{ if (!expanded) e.currentTarget.style.background=C.bgSubtle; }}
-        onMouseLeave={e=>{ if (!expanded) e.currentTarget.style.background="transparent"; }}>
-        <button onClick={toggleDone} aria-label={isDone?"Mark open":"Mark done"}
-          style={{
-            width:18, height:18, borderRadius:"50%",
-            border:"1.5px solid "+(isDone ? C.green : C.borderHover),
-            background: isDone ? C.green : "transparent",
-            color:"white", padding:0, flexShrink:0,
-            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
-            transition:"background .12s, border-color .12s",
-          }}>
-          {isDone && <I.check size={11} stroke={3.5}/>}
-        </button>
-        {isHigh && !isDone && (
-          <span title="High priority"
-            style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
-        )}
-        <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:1}}>
-          <div style={{fontSize:13, color: isDone ? C.textMuted : C.text, fontFamily:F,
-            textDecoration: isDone ? "line-through" : "none",
-            letterSpacing:"-0.005em",
-            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-            {pr.name || <span style={{color:C.textMuted, fontStyle:"italic"}}>Untitled</span>}
-          </div>
-          {showProperty && propLabel && (
-            <div style={{fontSize:11, color:C.textMuted, fontFamily:F,
-              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{propLabel}</div>
-          )}
-        </div>
-        <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {pr.dueDate && (
-            <span style={{
-              fontSize:12,
-              color: isDone ? C.textMuted : isOverdue ? C.redDark : C.textSub,
-              fontFamily:F, fontVariantNumeric:"tabular-nums",
-              fontWeight: isOverdue && !isDone ? 600 : 500,
-            }}>{formatDue(pr.dueDate)}</span>
-          )}
-          {pr.budget > 0 && (
-            <span style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-              {$(pr.budget)}
-            </span>
-          )}
-          {(pr.photos||[]).length > 0 && (
-            <span style={{display:"inline-flex", alignItems:"center", gap:3, color:C.textMuted, fontSize:11, fontFamily:F}}>
-              <I.camera size={12}/>{pr.photos.length}
-            </span>
-          )}
-          <I.chevronDown size={14}
-            style={{color:C.textMuted, transition:"transform .15s",
-              transform: expanded ? "rotate(180deg)" : "none"}}/>
-        </div>
-      </div>
-      {expanded && (
-        <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} />
-      )}
-    </div>
-  );
-}
-
-function QuickAddForm({onAdd, mobile}) {
-  const [text, setText] = useState("");
-  const [date, setDate] = useState("");
-  const [cost, setCost] = useState("");
-  const submit = () => {
-    if (!text.trim()) return;
-    onAdd({name:text.trim(), dueDate:date, budget:parseFloat(cost)||0, priority:"normal"});
-    setText(""); setDate(""); setCost("");
-  };
-  return (
-    <div style={{
-      display:"grid",
-      gridTemplateColumns: mobile ? "1fr" : "1fr 140px 110px auto",
-      gap:8, padding:"10px 14px", borderTop:"1px solid "+C.border, background:C.bgSubtle,
-    }}>
-      <input value={text} onChange={e=>setText(e.target.value)}
-        onKeyDown={e=>{ if (e.key==="Enter") submit(); }}
-        placeholder="What needs to be done?" style={iS(mobile)} />
-      <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={iS(mobile)}
-        title="Due date (optional)" />
-      <input type="number" value={cost} onChange={e=>setCost(e.target.value)}
-        placeholder="Cost" inputMode="decimal" style={iS(mobile)} />
-      <button onClick={submit} disabled={!text.trim()}
-        {...btnStyle("primary","md", mobile ? {width:"100%"} : {})}>
-        <I.plus size={13}/> Add
-      </button>
-    </div>
-  );
-}
-
-const followupSort = (a, b) => {
-  const aD = a.status === "Complete" ? 1 : 0;
-  const bD = b.status === "Complete" ? 1 : 0;
-  if (aD !== bD) return aD - bD;
-  const aH = a.priority === "high" ? 0 : 1;
-  const bH = b.priority === "high" ? 0 : 1;
-  if (aH !== bH) return aH - bH;
-  if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-  if (a.dueDate) return -1;
-  if (b.dueDate) return 1;
-  return 0;
-};
-
-function PropertySection({property, onUpdateProjects, mobile, filterMode, search, hideHeader=false}) {
-  const projects = property.projects || [];
-  const filtered = projects.filter(pr => {
-    if (filterMode === "open" && pr.status === "Complete") return false;
-    if (filterMode === "done" && pr.status !== "Complete") return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const hay = `${pr.name||""} ${pr.contractor||""} ${pr.details||""}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-  const sorted = [...filtered].sort(followupSort);
-
-  const updateOne = (updated) => onUpdateProjects(projects.map(pr => pr.id === updated.id ? updated : pr));
-  const deleteOne = (id) => onUpdateProjects(projects.filter(pr => pr.id !== id));
-  const addOne = (item) => onUpdateProjects([...projects, {
-    id:"pr"+Date.now(),
-    status:"In Progress",
-    name:"", dueDate:"", budget:0, spent:0,
-    contractor:"", details:"", priority:"normal", photos:[],
-    isCapEx: !property.occupied, log:[],
-    ...item,
-  }]);
-
-  const openCount = projects.filter(pr => pr.status !== "Complete").length;
-
-  return (
-    <Card style={{marginBottom:14}} padding={0}>
-      {!hideHeader && (
-        <header style={{padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
-          <div style={{minWidth:0}}>
-            <h3 style={{margin:0, fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
-              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
-              {property.city}{property.state?`, ${property.state}`:""}
-            </div>
-          </div>
-          <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
-            background:C.bgSubtle, border:"1px solid "+C.border, padding:"3px 9px", borderRadius:C.rFull,
-            fontWeight:500, flexShrink:0}}>
-            {openCount === 0 ? "all clear" : `${openCount} open`}
-          </span>
-        </header>
-      )}
-      {sorted.length === 0 ? (
-        <div style={{padding:"14px 16px", fontSize:12, color:C.textMuted, fontFamily:F, fontStyle:"italic", textAlign:"center"}}>
-          {search || filterMode !== "open" ? "Nothing matches." : "No follow-ups yet — add one below."}
-        </div>
-      ) : (
-        sorted.map(pr => (
-          <FollowupRow key={pr.id} pr={pr}
-            onChange={updateOne} onDelete={()=>deleteOne(pr.id)} mobile={mobile} />
-        ))
-      )}
-      <QuickAddForm onAdd={addOne} mobile={mobile} />
-    </Card>
-  );
-}
-
-function ProjectsPage({properties, onUpdateProperty, mobile}) {
-  const [filterMode, setFilterMode] = useState("open");
-  const [search, setSearch] = useState("");
-
-  const today = startOfToday();
-  const inWeek = new Date(today.getTime() + 7*86400000);
-
-  const all = properties.flatMap(p =>
-    (p.projects||[]).map(pr => ({pr, property:p}))
-  );
-  const dueNow = all
-    .filter(({pr}) => pr.status !== "Complete" && pr.dueDate &&
-      new Date(pr.dueDate+"T00:00:00") <= inWeek)
-    .sort((a,b) => a.pr.dueDate.localeCompare(b.pr.dueDate));
-  const overdueCount = all.filter(({pr}) =>
-    pr.status !== "Complete" && pr.dueDate &&
-    new Date(pr.dueDate+"T00:00:00") < today).length;
-  const openTotal = all.filter(({pr}) => pr.status !== "Complete").length;
-
-  if (properties.length === 0) {
-    return (
-      <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
-        <PageHeader title="Projects" subtitle="Track follow-ups across your portfolio"/>
-        <EmptyState
-          icon={<I.clipboardCheck size={22}/>}
-          title="Add a property first"
-          body="Once you have properties in your portfolio, this is where you'll capture every follow-up from contractor calls — what's due, what it costs, and whether it's done."
-        />
-      </div>
-    );
-  }
-
-  const handleUpdateProjects = (propId, projects) => {
-    const property = properties.find(p => p.id === propId);
-    if (property) onUpdateProperty({...property, projects});
-  };
-  const handleRowChange = (property, updated) =>
-    handleUpdateProjects(property.id, (property.projects||[]).map(x => x.id === updated.id ? updated : x));
-  const handleRowDelete = (property, id) =>
-    handleUpdateProjects(property.id, (property.projects||[]).filter(x => x.id !== id));
-
-  return (
-    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
-      <PageHeader
-        title="Projects"
-        subtitle={openTotal === 0
-          ? "All clear — no open follow-ups."
-          : `${openTotal} open follow-up${openTotal===1?"":"s"} across ${properties.length} ${properties.length===1?"property":"properties"}.`}
-      />
-
-      {dueNow.length > 0 && (
-        <Card style={{marginBottom:24, borderColor: overdueCount > 0 ? C.amberBorder : C.border}} padding={0}>
-          <header style={{padding:"12px 16px", display:"flex", alignItems:"center", gap:10,
-            borderBottom:"1px solid "+C.border,
-            background: overdueCount > 0 ? C.amberSubtle : "transparent"}}>
-            <div style={{
-              width:24, height:24, borderRadius:C.r2,
-              background: overdueCount > 0 ? "#fff" : C.bgSubtle,
-              border:"1px solid "+(overdueCount > 0 ? C.amberBorder : C.border),
-              color: overdueCount > 0 ? C.amberDark : C.textSub,
-              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
-            }}>
-              <I.alert size={13} stroke={2.2}/>
-            </div>
-            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>Due now</div>
-            {overdueCount > 0 && <Badge label={`${overdueCount} overdue`} bg={C.redLight} c={C.redDark} dot/>}
-            <span style={{marginLeft:"auto", fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-              {dueNow.length} {dueNow.length===1?"item":"items"}
-            </span>
-          </header>
-          {dueNow.map(({pr, property}) => (
-            <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
-              propLabel={property.address} showProperty
-              onChange={updated => handleRowChange(property, updated)}
-              onDelete={() => handleRowDelete(property, pr.id)}
-              mobile={mobile} />
-          ))}
-        </Card>
-      )}
-
-      {/* Filter + search */}
-      <div style={{display:"flex", gap:10, marginBottom:18, flexWrap:"wrap"}}>
-        <div style={{display:"flex", gap:6}}>
-          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => (
-            <button key={id} onClick={()=>setFilterMode(id)}
-              {...btnStyle(filterMode===id?"primary":"secondary","sm")}>{label}</button>
-          ))}
-        </div>
-        <div style={{position:"relative", flex:1, minWidth:220}}>
-          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
-            color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
-            <I.search size={15}/>
-          </span>
-          <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Search follow-ups, contractors, details"
-            style={{...iS(mobile), paddingLeft:36}} />
-        </div>
-      </div>
-
-      {properties.map(p => (
-        <PropertySection key={p.id} property={p}
-          onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
-          mobile={mobile} filterMode={filterMode} search={search} />
-      ))}
+        mobile={mobile} filterMode={filterMode} search={search}
+        contractors={contractors} hideHeader />
     </div>
   );
 }
@@ -2868,9 +3229,21 @@ export default function App() {
       .dh-btn-ghost:hover:not(:disabled){background:${C.bgSubtle}!important;color:${C.text}!important;}
       .dh-card-hover{transition:border-color .15s,box-shadow .15s,transform .15s;}
       .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};transform:translateY(-1px);}
+      .dh-prop-card{transition:box-shadow .15s,transform .15s,border-color .15s;}
+      .dh-prop-card:hover{box-shadow:${C.sh3};}
+      @media (hover:hover){.dh-prop-card:hover{transform:translateY(-2px);}}
+      .dh-row{position:relative;}
+      .dh-row-actions{display:inline-flex;align-items:center;gap:2px;}
+      @media (hover:hover){.dh-row .dh-row-actions{opacity:0;transition:opacity .12s;}.dh-row:hover .dh-row-actions{opacity:1;}}
+      .dh-row-action{background:transparent;border:none;padding:6px;border-radius:6px;cursor:pointer;color:${C.textMuted};display:inline-flex;align-items:center;justify-content:center;transition:background .12s,color .12s;}
+      .dh-row-action:hover{background:${C.bgSubtle};color:${C.text};}
+      @keyframes dh-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+      .dh-pulse{animation:dh-pulse 2s ease-in-out infinite;}
       .dh-nav-item{transition:background-color .12s,color .12s;}
       .dh-nav-item:hover{background:rgba(255,255,255,.06);color:#fafafa;}
       .dh-tab-row::-webkit-scrollbar{display:none;}
+      .dh-chip-row{scrollbar-width:none;}
+      .dh-chip-row::-webkit-scrollbar{display:none;}
       ::-webkit-scrollbar{width:10px;height:10px;}
       ::-webkit-scrollbar-track{background:transparent;}
       ::-webkit-scrollbar-thumb{background:${C.border};border-radius:6px;border:2px solid ${C.bg};}
