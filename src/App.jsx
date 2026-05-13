@@ -1833,6 +1833,139 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
     setNoteOpen(false);
   };
 
+  const doneCircle = (
+    <button onClick={toggleDone} aria-label={isDone?"Mark open":"Mark done"}
+      style={{
+        width:18, height:18, borderRadius:"50%",
+        border:"1.5px solid "+(isDone ? C.green : C.borderHover),
+        background: isDone ? C.green : "transparent",
+        color:"white", padding:0, flexShrink:0,
+        display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+        transition:"background .12s, border-color .12s",
+      }}>
+      {isDone && <I.check size={11} stroke={3.5}/>}
+    </button>
+  );
+
+  const dueText = pr.dueDate ? formatDue(pr.dueDate) : null;
+  const dueStyle = {
+    fontSize:12,
+    color: isDone ? C.textMuted : isOverdue ? C.redDark : C.textSub,
+    fontFamily:F, fontVariantNumeric:"tabular-nums",
+    fontWeight: isOverdue && !isDone ? 600 : 500,
+    whiteSpace:"nowrap", flexShrink:0,
+  };
+
+  const noteBar = noteOpen && !expanded ? (
+    <div style={{padding:"8px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg,
+      display:"flex", gap:8, alignItems:"center"}}>
+      <I.messageSquare size={14} style={{color:C.textMuted, flexShrink:0}}/>
+      <input autoFocus value={noteText} onChange={e=>setNoteText(e.target.value)}
+        onKeyDown={e=>{
+          if (e.key === "Enter") submitInlineNote();
+          if (e.key === "Escape") { setNoteText(""); setNoteOpen(false); }
+        }}
+        placeholder={mobile ? "Quick note…" : "Quick note — Enter to save, Esc to cancel"}
+        style={{...iS(mobile), flex:1, minWidth:0}} />
+      {mobile ? (
+        <button onClick={submitInlineNote} disabled={!noteText.trim()}
+          {...btnStyle("primary","sm")}>Save</button>
+      ) : (
+        <button onClick={()=>{ setNoteText(""); setNoteOpen(false); }}
+          {...btnStyle("ghost","sm", {color:C.textMuted})}>Cancel</button>
+      )}
+    </div>
+  ) : null;
+
+  // ----- MOBILE LAYOUT: stacked 2-line row, no hover quick-actions -----
+  if (mobile) {
+    return (
+      <div className="dh-row" style={{borderBottom:"1px solid "+C.bgSubtle}}>
+        <div onClick={()=>{ setNoteOpen(false); setExpanded(x=>!x); }}
+          style={{
+            display:"flex", gap:10, padding:"10px 14px", alignItems:"flex-start",
+            cursor:"pointer", background: expanded ? C.bgSubtle : "transparent",
+          }}>
+          <div style={{paddingTop:2, flexShrink:0}}>{doneCircle}</div>
+          <div style={{flex:1, minWidth:0}}>
+            {/* Line 1: name + due */}
+            <div style={{display:"flex", gap:8, alignItems:"baseline", minWidth:0}}>
+              <div style={{
+                flex:1, minWidth:0, fontSize:14,
+                color: isDone ? C.textMuted : C.text, fontFamily:F,
+                textDecoration: isDone ? "line-through" : "none",
+                letterSpacing:"-0.005em", lineHeight:1.35,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+              }}>
+                {isHigh && !isDone && (
+                  <span title="High priority"
+                    style={{display:"inline-block", width:6, height:6, borderRadius:"50%",
+                      background:C.red, marginRight:6, verticalAlign:"middle"}}/>
+                )}
+                {pr.name || <span style={{color:C.textMuted, fontStyle:"italic"}}>Untitled</span>}
+              </div>
+              {dueText && <span style={dueStyle}>{dueText}</span>}
+            </div>
+            {/* Line 2: meta (pill + property + contractor + cost + photos) */}
+            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginTop:6, minWidth:0}}>
+              <TypePill type={typeOf(pr)} />
+              {showProperty && propLabel && (
+                <span onClick={onPropertyClick ? (e=>{e.stopPropagation(); onPropertyClick();}) : undefined}
+                  style={{
+                    fontSize:12, color:onPropertyClick ? C.textSub : C.textMuted, fontFamily:F,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                    minWidth:0, maxWidth:"100%",
+                    ...(onPropertyClick ? {textDecoration:"underline", textDecorationColor:C.border, textUnderlineOffset:2} : {}),
+                  }}>{propLabel}</span>
+              )}
+              {pr.contractor && (
+                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, whiteSpace:"nowrap"}}>
+                  {(showProperty && propLabel) ? "· " : ""}{pr.contractor}
+                </span>
+              )}
+              {pr.budget > 0 && (
+                <span style={{fontSize:12, color:"#3f3f46", fontFamily:F, fontWeight:500,
+                  fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>
+                  ${Math.round(pr.budget).toLocaleString()}
+                </span>
+              )}
+              {(pr.photos||[]).length > 0 && (
+                <span style={{display:"inline-flex", alignItems:"center", gap:3,
+                  color:C.textMuted, fontSize:11, fontFamily:F}}>
+                  <I.camera size={11}/>{pr.photos.length}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        {/* Touch-friendly action bar: only show when not expanded and not in note input mode */}
+        {!isDone && !expanded && !noteOpen && (
+          <div style={{display:"flex", justifyContent:"flex-end", gap:2, padding:"0 8px 8px 38px"}}>
+            <button onClick={(e)=>{e.stopPropagation(); snooze();}}
+              aria-label="Snooze 1 day" title="Snooze 1 day"
+              style={{background:"transparent", border:"none", padding:"6px 10px", borderRadius:6,
+                color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
+                display:"inline-flex", alignItems:"center", gap:4}}>
+              <I.clock size={13}/> Snooze
+            </button>
+            <button onClick={(e)=>{e.stopPropagation(); openNoteBar();}}
+              aria-label="Add note" title="Add note"
+              style={{background:"transparent", border:"none", padding:"6px 10px", borderRadius:6,
+                color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
+                display:"inline-flex", alignItems:"center", gap:4}}>
+              <I.messageSquare size={13}/> Note
+            </button>
+          </div>
+        )}
+        {noteBar}
+        {expanded && (
+          <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
+        )}
+      </div>
+    );
+  }
+
+  // ----- DESKTOP LAYOUT: single horizontal row with hover quick-actions -----
   return (
     <div className="dh-row" style={{borderBottom:"1px solid "+C.bgSubtle}}>
       <div onClick={()=>{ setNoteOpen(false); setExpanded(x=>!x); }}
@@ -1843,17 +1976,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
         }}
         onMouseEnter={e=>{ if (!expanded) e.currentTarget.style.background=C.bgSubtle; }}
         onMouseLeave={e=>{ if (!expanded) e.currentTarget.style.background="transparent"; }}>
-        <button onClick={toggleDone} aria-label={isDone?"Mark open":"Mark done"}
-          style={{
-            width:18, height:18, borderRadius:"50%",
-            border:"1.5px solid "+(isDone ? C.green : C.borderHover),
-            background: isDone ? C.green : "transparent",
-            color:"white", padding:0, flexShrink:0,
-            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
-            transition:"background .12s, border-color .12s",
-          }}>
-          {isDone && <I.check size={11} stroke={3.5}/>}
-        </button>
+        {doneCircle}
 
         <TypePill type={typeOf(pr)} />
 
@@ -1886,14 +2009,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
         </div>
 
         <div style={{display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-          {pr.dueDate && (
-            <span style={{
-              fontSize:12,
-              color: isDone ? C.textMuted : isOverdue ? C.redDark : C.textSub,
-              fontFamily:F, fontVariantNumeric:"tabular-nums",
-              fontWeight: isOverdue && !isDone ? 600 : 500,
-            }}>{formatDue(pr.dueDate)}</span>
-          )}
+          {dueText && <span style={dueStyle}>{dueText}</span>}
           {pr.budget > 0 && (
             <span style={{fontSize:12, color:"#3f3f46", fontFamily:F, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>
               ${Math.round(pr.budget).toLocaleString()}
@@ -1904,8 +2020,6 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
               <I.camera size={12}/>{pr.photos.length}
             </span>
           )}
-
-          {/* Quick actions — fade in on hover for non-done rows */}
           {!isDone && (
             <div className="dh-row-actions">
               <RowAction icon={<I.check size={14} stroke={2.2}/>}    label="Mark done"        onClick={toggleDone}/>
@@ -1913,30 +2027,12 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
               <RowAction icon={<I.messageSquare size={14}/>}          label="Add note"         onClick={openNoteBar}/>
             </div>
           )}
-
           <I.chevronDown size={14}
             style={{color:C.textMuted, transition:"transform .15s",
               transform: expanded ? "rotate(180deg)" : "none"}}/>
         </div>
       </div>
-
-      {/* Inline quick-note bar */}
-      {noteOpen && !expanded && (
-        <div style={{padding:"8px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg,
-          display:"flex", gap:8, alignItems:"center"}}>
-          <I.messageSquare size={14} style={{color:C.textMuted, flexShrink:0}}/>
-          <input autoFocus value={noteText} onChange={e=>setNoteText(e.target.value)}
-            onKeyDown={e=>{
-              if (e.key === "Enter") submitInlineNote();
-              if (e.key === "Escape") { setNoteText(""); setNoteOpen(false); }
-            }}
-            placeholder="Quick note — Enter to save, Esc to cancel"
-            style={{...iS(mobile), flex:1}} />
-          <button onClick={()=>{ setNoteText(""); setNoteOpen(false); }}
-            {...btnStyle("ghost","sm", {color:C.textMuted})}>Cancel</button>
-        </div>
-      )}
-
+      {noteBar}
       {expanded && (
         <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
       )}
@@ -2083,11 +2179,12 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
     <Card id={"prop-"+property.id} className="dh-prop-card"
       style={{marginBottom:14, borderLeft:`4px solid ${status.color}`}} padding={0}>
       {!hideHeader && (
-        <header style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
-          <div style={{minWidth:0}}>
-            <h3 style={{margin:0, fontSize:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
+        <header style={{padding:mobile?"12px 14px":"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
+          <div style={{minWidth:0, flex:1}}>
+            <h3 style={{margin:0, fontSize:mobile?16:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
-            <div style={{fontSize:13, color:"#71717a", fontFamily:F, marginTop:1}}>
+            <div style={{fontSize:mobile?12:13, color:"#71717a", fontFamily:F, marginTop:1,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {property.city}{property.state?`, ${property.state}`:""}
             </div>
           </div>
@@ -2252,13 +2349,13 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
 
       {dueNowTotal > 0 && (
         <Card style={{marginBottom:24}} padding={0}>
-          <DueNowSection title={`Overdue · ${overdue.length}`}    items={overdue}    bg="#FEF2F2" labelColor="#991b1b"
+          <DueNowSection title="Overdue"   items={overdue}    bg="#FEF2F2" labelColor="#991b1b"
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
           {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title={`Today · ${todayItems.length}`}    items={todayItems} bg="#FFFBEB" labelColor="#92400e"
+          <DueNowSection title="Today"     items={todayItems} bg="#FFFBEB" labelColor="#92400e"
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
           {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title={`This week · ${thisWeek.length}`}  items={thisWeek}   bg="#FAFAFA" labelColor="#3f3f46"
+          <DueNowSection title="This week" items={thisWeek}   bg="#FAFAFA" labelColor="#3f3f46"
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
         </Card>
       )}
