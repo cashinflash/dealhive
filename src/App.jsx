@@ -1415,14 +1415,21 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
 
   return (
     <div style={{paddingBottom:mobile?100:40}}>
-      {/* Sticky header */}
-      <div style={{background:"rgba(255,255,255,.92)", borderBottom:"1px solid "+C.border,
+      {/* Sticky header. Mobile keeps the glassy translucent look; desktop
+          uses a solid bg to avoid Safari's known backdrop-filter+sticky
+          scroll-stutter bug. */}
+      <div style={{
+        background: mobile ? "rgba(255,255,255,.92)" : "#ffffff",
+        borderBottom:"1px solid "+C.border,
         padding:mobile?"12px 16px":"14px 32px",
         position:"sticky",
         top: mobile ? "calc(env(safe-area-inset-top, 0px) + 54px)" : 56,
         zIndex:50,
-        backdropFilter:"saturate(180%) blur(10px)",
-        WebkitBackdropFilter:"saturate(180%) blur(10px)"}}>
+        ...(mobile ? {
+          backdropFilter:"saturate(180%) blur(10px)",
+          WebkitBackdropFilter:"saturate(180%) blur(10px)",
+        } : {}),
+      }}>
         <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
           <button onClick={onBack}
             style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
@@ -3258,10 +3265,9 @@ function DesktopTopBar({page, propAddress, toast}) {
     settings:"Settings", property:propAddress||"Property"
   };
   return (
-    <div style={{background:"rgba(255,255,255,.85)", borderBottom:"1px solid "+C.border,
+    <div style={{background:"#ffffff", borderBottom:"1px solid "+C.border,
       padding:"0 32px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between",
-      position:"sticky", top:0, zIndex:100,
-      backdropFilter:"saturate(180%) blur(10px)"}}>
+      position:"sticky", top:0, zIndex:100}}>
       <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
         {titles[page]||"DealHive"}
       </div>
@@ -3289,12 +3295,14 @@ export default function App() {
   const [authLoading,setAL] = useState(true);
   const mobile = useIsMobile();
 
-  // Body scroll lock — owned here, tied directly to showAdd. Even if the
-  // modal unmounts in some weird state, this effect always reconciles the
-  // overflow value on the next render, so the page can't get stuck.
+  // Body scroll lock — class-based. Toggling a class is far more robust
+  // than mutating body.style.overflow: classList.add/remove can't get
+  // stuck in a half-state under React Strict Mode, fast-clicked modal
+  // sequences, or Safari quirks. The .dh-scroll-locked rule is injected
+  // below alongside the rest of the global styles.
   useEffect(() => {
-    document.body.style.overflow = showAdd ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    document.body.classList.toggle("dh-scroll-locked", showAdd);
+    return () => document.body.classList.remove("dh-scroll-locked");
   }, [showAdd]);
 
   // Global styles
@@ -3306,7 +3314,10 @@ export default function App() {
     const style = document.createElement("style");
     style.textContent = `
       *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-      body{margin:0;overscroll-behavior:none;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
+      body{margin:0;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
+      /* Scroll lock used by the AddPropertyModal. Class-based so it can't
+         leave body.style.overflow stuck. */
+      body.dh-scroll-locked{overflow:hidden;}
       img{max-width:100%;height:auto;}
       input,select,textarea,button{font-family:inherit;}
       /* Prevent iOS from auto-zooming when focusing inputs — needs font-size >= 16px on the input. iS() already sets 16 on mobile, this is a safety net. */
@@ -3329,10 +3340,9 @@ export default function App() {
       .dh-btn-dark:hover:not(:disabled){background:${C.sidebarHover}!important;border-color:${C.sidebarHover}!important;}
       .dh-btn-ghost:hover:not(:disabled){background:${C.bgSubtle}!important;color:${C.text}!important;}
       .dh-card-hover{transition:border-color .15s,box-shadow .15s,transform .15s;}
-      .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};transform:translateY(-1px);}
+      .dh-card-hover:hover{border-color:${C.borderHover};box-shadow:${C.sh3};}
       .dh-prop-card{transition:box-shadow .15s,transform .15s,border-color .15s;}
       .dh-prop-card:hover{box-shadow:inset 4px 0 0 var(--prop-stripe,transparent), ${C.sh3}!important;}
-      @media (hover:hover){.dh-prop-card:hover{transform:translateY(-2px);}}
       .dh-row{position:relative;}
       .dh-row-actions{display:inline-flex;align-items:center;gap:2px;}
       @media (hover:hover){.dh-row .dh-row-actions{opacity:0;transition:opacity .12s;}.dh-row:hover .dh-row-actions{opacity:1;}}
