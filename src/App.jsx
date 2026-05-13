@@ -1357,8 +1357,11 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
       {/* Sticky header */}
       <div style={{background:"rgba(255,255,255,.92)", borderBottom:"1px solid "+C.border,
         padding:mobile?"12px 16px":"14px 32px",
-        position:"sticky", top:mobile?0:56, zIndex:50,
-        backdropFilter:"saturate(180%) blur(10px)"}}>
+        position:"sticky",
+        top: mobile ? "calc(env(safe-area-inset-top, 0px) + 54px)" : 56,
+        zIndex:50,
+        backdropFilter:"saturate(180%) blur(10px)",
+        WebkitBackdropFilter:"saturate(180%) blur(10px)"}}>
         <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
           <button onClick={onBack}
             style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
@@ -2514,6 +2517,20 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
   const [err,setErr]   = useState("");
   const u = (f,v) => setP(prev => ({...prev,[f]:v}));
 
+  // Lock body scroll while the modal is open so the page behind doesn't move.
+  useEffect(() => {
+    const orig = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = orig; };
+  }, []);
+
+  // Close on Escape.
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
   const runSearch = async () => {
     if (!p.address) { setErr("Enter an address first."); return; }
     setL(true); setErr("");
@@ -2525,11 +2542,17 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
   };
 
   const outerStyle = mobile
-    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500, display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)"}
-    : {position:"fixed", inset:0, background:"rgba(9,9,11,.45)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20, backdropFilter:"blur(4px)"};
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500, display:"flex", alignItems:"flex-end",
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.45)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92vh", overflowY:"auto", padding:"24px 20px 40px", boxShadow:C.sh4}
-    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:540, maxHeight:"88vh", overflowY:"auto", padding:28, boxShadow:C.sh4, border:"1px solid "+C.border};
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh", overflowY:"auto",
+       padding:"24px 20px calc(40px + env(safe-area-inset-bottom, 0px))",
+       paddingLeft:"max(20px, calc(20px + env(safe-area-inset-left, 0px)))",
+       paddingRight:"max(20px, calc(20px + env(safe-area-inset-right, 0px)))",
+       boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:540, maxHeight:"88dvh", overflowY:"auto", padding:28, boxShadow:C.sh4, border:"1px solid "+C.border};
 
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
@@ -2674,29 +2697,33 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
 function MobileNav({page, setPage, alertCount}) {
   const tabs = [
     {id:"dashboard",  Icon:I.home,           label:"Home"},
-    {id:"properties", Icon:I.building,       label:"Properties"},
+    {id:"properties", Icon:I.building,       label:"Props"},
     {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
     {id:"deal",       Icon:I.search,         label:"Analyze"},
     {id:"comps",      Icon:I.chart,          label:"Comps"},
     {id:"settings",   Icon:I.settings,       label:"More"},
   ];
   return (
-    <div style={{position:"fixed", bottom:0, left:0, right:0, background:C.card,
+    <div style={{position:"fixed", bottom:0, left:0, right:0, background:"rgba(255,255,255,.92)",
       borderTop:"1px solid "+C.border, zIndex:100,
-      paddingBottom:"env(safe-area-inset-bottom,8px)",
-      backdropFilter:"saturate(180%) blur(8px)"}}>
+      paddingBottom:"max(8px, env(safe-area-inset-bottom, 8px))",
+      paddingLeft:"env(safe-area-inset-left, 0px)",
+      paddingRight:"env(safe-area-inset-right, 0px)",
+      backdropFilter:"saturate(180%) blur(10px)",
+      WebkitBackdropFilter:"saturate(180%) blur(10px)"}}>
       <div style={{display:"flex", maxWidth:600, margin:"0 auto"}}>
         {tabs.map(t => {
           const active = page===t.id;
           return (
             <button key={t.id} onClick={()=>setPage(t.id)}
-              style={{flex:1, padding:"10px 4px 8px", border:"none", background:"none", cursor:"pointer",
+              style={{flex:1, minWidth:0, padding:"9px 2px 7px", border:"none", background:"none", cursor:"pointer",
                 display:"flex", flexDirection:"column", alignItems:"center", gap:3,
                 color:active ? C.green : C.textMuted,
                 WebkitTapHighlightColor:"transparent", position:"relative",
                 transition:"color .12s"}}>
               <t.Icon size={20} stroke={active?2.2:1.8}/>
-              <span style={{fontSize:10, fontWeight:active?700:500, fontFamily:F, letterSpacing:"-0.005em"}}>{t.label}</span>
+              <span style={{fontSize:10, fontWeight:active?700:500, fontFamily:F, letterSpacing:"-0.005em",
+                maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{t.label}</span>
               {t.id==="dashboard" && alertCount>0 && (
                 <span style={{position:"absolute", top:4, right:"calc(50% - 18px)",
                   background:C.red, color:"white", borderRadius:C.rFull,
@@ -2721,8 +2748,13 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
   };
   return (
     <div style={{background:"rgba(255,255,255,.85)", borderBottom:"1px solid "+C.border,
-      padding:"10px 16px", position:"sticky", top:0, zIndex:200,
+      padding:"10px 16px",
+      paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",
+      paddingLeft:"calc(16px + env(safe-area-inset-left, 0px))",
+      paddingRight:"calc(16px + env(safe-area-inset-right, 0px))",
+      position:"sticky", top:0, zIndex:200,
       backdropFilter:"saturate(180%) blur(10px)",
+      WebkitBackdropFilter:"saturate(180%) blur(10px)",
       display:"flex", alignItems:"center", gap:12, minHeight:54}}>
       {showBack ? (
         <button onClick={onBack}
@@ -2811,9 +2843,12 @@ export default function App() {
     document.head.appendChild(link);
     const style = document.createElement("style");
     style.textContent = `
-      *{box-sizing:border-box;}
-      body{margin:0;overscroll-behavior:none;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+      *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+      body{margin:0;overscroll-behavior:none;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
+      img{max-width:100%;height:auto;}
       input,select,textarea,button{font-family:inherit;}
+      /* Prevent iOS from auto-zooming when focusing inputs — needs font-size >= 16px on the input. iS() already sets 16 on mobile, this is a safety net. */
+      @media (max-width:767px){input,select,textarea{font-size:16px!important;}}
       input::placeholder,textarea::placeholder{color:${C.textMuted};}
       input,select,textarea{transition:border-color .15s,box-shadow .15s;}
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
