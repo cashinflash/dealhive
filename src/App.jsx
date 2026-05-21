@@ -3590,7 +3590,7 @@ function MobileNav({page, setPage, alertCount}) {
 }
 
 // -- Mobile Header -------------------------------------------------------------
-function MobileHeader({page, onBack, toast, daysLeft}) {
+function MobileHeader({page, onBack, toast}) {
   const showBack = page==="property";
   const titles = {
     dashboard:"Portfolio", properties:"Properties", projects:"Projects",
@@ -3608,30 +3608,28 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
       WebkitBackdropFilter:"saturate(180%) blur(10px)",
       display:"flex", alignItems:"center", gap:12, minHeight:54}}>
       {showBack ? (
-        <button onClick={onBack}
-          style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
-            width:34, height:34, cursor:"pointer", color:C.text,
-            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
-            boxShadow:C.sh1}}>
-          <I.arrowLeft size={16}/>
-        </button>
-      ) : (
-        <div style={{width:32, height:32, background:C.sidebar, borderRadius:C.r2, padding:4,
-          display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
-          <img src="/favicon.png" alt="DealHive" style={{width:"100%", height:"100%", objectFit:"contain", display:"block"}} />
-        </div>
-      )}
-      <div style={{flex:1, minWidth:0}}>
-        <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{titles[page]||"DealHive"}</div>
-        {daysLeft!==null && daysLeft<=TRIAL_DAYS && !showBack && (
-          <div style={{fontSize:11, color:daysLeft<=0?C.redDark:C.amberDark, fontFamily:F, fontWeight:500, marginTop:1}}>
-            {daysLeft<=0 ? "Trial expired" : daysLeft+"d trial left"}
+        <>
+          <button onClick={onBack}
+            style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
+              width:34, height:34, cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+              boxShadow:C.sh1}}>
+            <I.arrowLeft size={16}/>
+          </button>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{titles[page]||"DealHive"}</div>
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <>
+          <img src="/logo.png" alt="DealHive" style={{height:26, width:"auto", maxWidth:"60%",
+            objectFit:"contain", display:"block", flexShrink:0}} />
+          <div style={{flex:1, minWidth:0}} />
+        </>
+      )}
       {toast && (
-        <span style={{display:"inline-flex", alignItems:"center", gap:5,
+        <span style={{display:"inline-flex", alignItems:"center", gap:5, flexShrink:0,
           fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
           background:C.greenSubtle, border:"1px solid "+C.greenBorder,
           padding:"4px 9px", borderRadius:C.rFull}}>
@@ -3822,7 +3820,7 @@ export default function App() {
 
   // Mobile layout
   if (mobile) return (
-    <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", maxWidth:600, margin:"0 auto"}}>
+    <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"hidden"}}>
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft} />
       <TrialBanner daysLeft={daysLeft} />
       <ErrorBoundary>
