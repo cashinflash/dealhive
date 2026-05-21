@@ -266,7 +266,7 @@ const C = {
 };
 
 const iS = (mobile=false) => ({
-  width:"100%", border:"1px solid "+C.border, borderRadius:C.r2,
+  width:"100%", minWidth:0, border:"1px solid "+C.border, borderRadius:C.r2,
   padding: mobile ? "12px 14px" : "9px 12px",
   fontSize: mobile ? 16 : 14,
   outline:"none", background:C.card, boxSizing:"border-box",
@@ -2076,7 +2076,7 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
         <label style={labelStyle}>Type</label>
         <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
       </div>
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: mobile?10:12}}>
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))", gap: mobile?10:12}}>
         <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
         <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
         <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
