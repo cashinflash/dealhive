@@ -1105,10 +1105,16 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
     document.head.appendChild(l);
   }, []);
 
-  const totalCF    = properties.reduce((s,p) => s+calc(p).chosenCF, 0);
-  const totalVal   = properties.reduce((s,p) => s+(p.purchasePrice||0), 0);
-  const occupied   = properties.filter(p => p.occupied).length;
-  const monthlyRent= properties.reduce((s,p) => s+(p.rentAmount||0), 0);
+  const occProps    = properties.filter(p => p.occupied);
+  const occupied    = occProps.length;
+  const totalCF     = properties.reduce((s,p) => s+calc(p).chosenCF, 0);
+  const occCF       = occProps.reduce((s,p) => s+calc(p).chosenCF, 0);
+  const totalRent   = properties.reduce((s,p) => s+(p.rentAmount||0), 0);
+  const occRent     = occProps.reduce((s,p) => s+(p.rentAmount||0), 0);
+  // "Portfolio value" here = total out of pocket: purchase price + repairs only.
+  const outOfPocket = properties.reduce((s,p) => s+(p.purchasePrice||0)+(p.repairCosts||0), 0);
+  // Cash-flow figure without the "/mo" suffix (rendered separately, smaller).
+  const cfFig = (n) => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString(); };
   const alerts     = properties.filter(p => {
     const d = dU(p.leaseEnd);
     return p.tenantStatus==="Late" || (d!=null && d<=60 && d>=0);
@@ -1118,23 +1124,39 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
       <PageHeader
         title="Portfolio"
-        subtitle={properties.length===0 ? "Welcome — let's add your first property." : `${properties.length} ${properties.length===1?"property":"properties"} · ${$(totalVal)} portfolio value`}
+        subtitle={properties.length===0 ? "Welcome — let's add your first property." : `${properties.length} ${properties.length===1?"property":"properties"} · ${$(outOfPocket)} portfolio value`}
         action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
       />
 
       {/* KPI grid */}
-      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:28}}>
-        <Card style={{padding:18}}>
+      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:28, alignItems:"stretch"}}>
+        <Card style={{padding:18, display:"flex", flexDirection:"column"}}>
           <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Cash flow / mo</div>
-          <div style={{fontSize:30, fontWeight:700, color:cfC(totalCF), fontFamily:F, lineHeight:1.1, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums"}}>
-            {$mo(totalCF)}
+          <div style={{fontSize:26, fontWeight:700, color:cfC(occCF), fontFamily:F, lineHeight:1.15, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>
+            {cfFig(occCF)}<span style={{fontSize:13, fontWeight:500, color:C.textMuted, letterSpacing:0}}>/mo</span>
           </div>
           <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
-            Net across {properties.length} {properties.length===1?"property":"properties"}
+            From {occupied} occupied {occupied===1?"property":"properties"}
+          </div>
+          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Incl. vacant</span>
+            <span style={{fontSize:13, fontWeight:600, color:cfC(totalCF), fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$mo(totalCF)}</span>
+          </div>
+        </Card>
+        <Card style={{padding:18, display:"flex", flexDirection:"column"}}>
+          <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Rent collected / mo</div>
+          <div style={{fontSize:26, fontWeight:700, color:C.text, fontFamily:F, lineHeight:1.15, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>
+            {$(occRent)}
+          </div>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
+            From {occupied} occupied {occupied===1?"property":"properties"}
+          </div>
+          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Incl. vacant</span>
+            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(totalRent)}</span>
           </div>
         </Card>
         <StatCard label="Occupied" value={`${occupied}/${properties.length||0}`} sub={properties.length>0?Math.round(occupied/Math.max(properties.length,1)*100)+"% occupied":""} icon={<I.building size={16}/>}/>
-        <StatCard label="Rent collected / mo" value={$(monthlyRent)} sub="Gross rent" icon={<I.chart size={16}/>}/>
         <StatCard label="Alerts" value={alerts.length} color={alerts.length>0?C.amberDark:C.text} sub={alerts.length===0?"All clear":"Needs attention"} icon={<I.alert size={16}/>}/>
       </div>
 
