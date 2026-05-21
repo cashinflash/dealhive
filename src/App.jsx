@@ -206,19 +206,20 @@ function useIsWide() {
 // -- Design System -------------------------------------------------------------
 // Polished SaaS palette: zinc neutrals + restrained accents (Linear/Stripe-style).
 const C = {
-  // Brand / accent
-  green:        "#10b981",
-  greenHover:   "#059669",
-  greenDark:    "#047857",
-  greenLight:   "#dcfce7",
-  greenSubtle:  "#ecfdf5",
-  greenBorder:  "#bbf7d0",
-  greenMid:     "#059669",
+  // Brand / accent — DealHive orange (the `green*` keys are kept to avoid
+  // churning hundreds of call sites; they now hold the brand orange).
+  green:        "#E8731C",   // logo orange
+  greenHover:   "#CC5F12",
+  greenDark:    "#C2410C",   // orange-700, for text/icons on light
+  greenLight:   "#FFEDD5",   // orange-100 (badge bg)
+  greenSubtle:  "#FFF7ED",   // orange-50 (panel tint)
+  greenBorder:  "#FDBA74",   // orange-300
+  greenMid:     "#EA580C",
 
-  // Sidebar (deep neutral)
-  sidebar:      "#09090b",
-  sidebarHover: "#27272a",
-  sidebarText:  "#a1a1aa",
+  // Sidebar (logo navy)
+  sidebar:      "#1F2D3D",
+  sidebarHover: "#2C3E52",
+  sidebarText:  "#94A3B8",
 
   // Surfaces & borders (zinc)
   bg:           "#fafafa",
@@ -228,7 +229,7 @@ const C = {
   borderHover:  "#d4d4d8",
 
   // Text
-  text:         "#09090b",
+  text:         "#1F2D3D",   // logo navy for primary text (was near-black)
   textSub:      "#52525b",
   textMuted:    "#a1a1aa",
 
@@ -237,6 +238,8 @@ const C = {
   amber:        "#d97706", amberLight:"#fef3c7", amberDark:"#92400e", amberSubtle:"#fffbeb", amberBorder:"#fde68a",
   red:          "#dc2626", redLight:"#fee2e2", redDark:"#991b1b", redSubtle:"#fef2f2", redBorder:"#fecaca",
   purple:       "#7c3aed", purpleLight:"#ede9fe", purpleDark:"#5b21b6", purpleSubtle:"#f5f3ff", purpleBorder:"#ddd6fe",
+  // True positive-money green (cash flow stays green by financial convention)
+  cashPos:      "#059669",
 
   // Radii
   r1: 6, r2: 8, r3: 10, r4: 12, r5: 16, rFull: 9999,
@@ -246,7 +249,7 @@ const C = {
   sh2: "0 1px 3px 0 rgba(15,23,42,.06), 0 1px 2px -1px rgba(15,23,42,.04)",
   sh3: "0 4px 6px -1px rgba(15,23,42,.07), 0 2px 4px -2px rgba(15,23,42,.04)",
   sh4: "0 12px 20px -4px rgba(15,23,42,.10), 0 4px 8px -4px rgba(15,23,42,.05)",
-  ring: "0 0 0 3px rgba(16,185,129,.15)",
+  ring: "0 0 0 3px rgba(232,115,28,.18)",
 };
 
 const iS = (mobile=false) => ({
@@ -3478,15 +3481,9 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
     <div style={{width:230, background:C.sidebar, height:"100vh", position:"fixed",
       left:0, top:0, display:"flex", flexDirection:"column", zIndex:100,
       borderRight:"1px solid rgba(255,255,255,.06)"}}>
-      <div style={{padding:"20px 18px 14px"}}>
-        <div style={{display:"flex", alignItems:"center", gap:10}}>
-          <div style={{width:32, height:32, background:"#fff", borderRadius:C.r2, padding:3,
-            display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh1, flexShrink:0}}>
-            <img src="/favicon.png" alt="" style={{width:"100%", height:"100%", objectFit:"contain", display:"block"}} />
-          </div>
-          <div style={{fontSize:17, fontWeight:700, color:"#fafafa", fontFamily:F, letterSpacing:"-0.02em"}}>
-            DealHive
-          </div>
+      <div style={{padding:"18px 16px 14px"}}>
+        <div style={{background:"#fff", borderRadius:C.r3, padding:"11px 14px", boxShadow:C.sh1}}>
+          <img src="/logo.png" alt="DealHive" style={{display:"block", width:"100%", height:"auto", objectFit:"contain"}} />
         </div>
       </div>
       <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
@@ -3621,7 +3618,10 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
           <I.arrowLeft size={16}/>
         </button>
       ) : (
-        <img src="/favicon.png" alt="DealHive" style={{width:30, height:30, objectFit:"contain", flexShrink:0, display:"block"}} />
+        <div style={{width:32, height:32, background:C.sidebar, borderRadius:C.r2, padding:4,
+          display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+          <img src="/favicon.png" alt="DealHive" style={{width:"100%", height:"100%", objectFit:"contain", display:"block"}} />
+        </div>
       )}
       <div style={{flex:1, minWidth:0}}>
         <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
