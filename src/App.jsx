@@ -1637,6 +1637,31 @@ const formatNoteStamp = (d=new Date()) => d.toLocaleString("en-US", {
   month:"short", day:"numeric", hour:"numeric", minute:"2-digit", hour12:true,
 });
 
+// -- Call-note (notebook) date helpers -----------------------------------------
+// New notes store an ISO `ts`; legacy notes only have a formatted `date` string.
+const noteDate = (n) => {
+  if (n && n.ts) { const d = new Date(n.ts); return isNaN(d) ? null : d; }
+  return null; // legacy notes (no ts) get bucketed under "Earlier"
+};
+const dayKeyOf = (d) => d ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : "earlier";
+const dayLabelOf = (d) => {
+  if (!d) return "Earlier notes";
+  const today = startOfToday();
+  const that  = new Date(d); that.setHours(0,0,0,0);
+  const diff  = Math.round((that - today) / 86400000);
+  const md    = d.toLocaleDateString("en-US", {month:"long", day:"numeric"});
+  const wd    = d.toLocaleDateString("en-US", {weekday:"long"});
+  if (diff === 0)  return `Today · ${wd}, ${md}`;
+  if (diff === -1) return `Yesterday · ${md}`;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return sameYear ? `${wd}, ${md}` : `${md}, ${d.getFullYear()}`;
+};
+const noteTimeOf = (n) => {
+  const d = noteDate(n);
+  if (d) return d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
+  return n.date || ""; // legacy fallback shows whatever string we stored
+};
+
 // Add 1 day to an ISO date (or "today" if none), return YYYY-MM-DD.
 const nextDayIso = (iso) => {
   const base = iso ? new Date(iso + "T00:00:00") : startOfToday();
@@ -1719,38 +1744,116 @@ function PhotoUploader({photos=[], onChange}) {
 }
 
 // Newest-first call-note timeline + inline "Add a note…" input.
+// Notebook-style call notes. Opens to "today's page" — today's date is written
+// at the top automatically, with a writing area beneath it. Past calls are
+// grouped under their own dated headings below, newest day first.
 function CallNotesTimeline({pr, onChange, mobile}) {
   const [text, setText] = useState("");
-  // Combine legacy `details` (one-shot) with the timestamped `log`. Older first
-  // in storage, newest-first on display.
-  const notes = [
-    ...(pr.details ? [{date:"Earlier note", note: pr.details}] : []),
-    ...(pr.log || []),
-  ].slice().reverse();
+  const log = pr.log || [];
 
-  const submit = () => {
+  // Gather every note, tag each with its entry index (for stable keys/edits).
+  const all = [
+    ...(pr.details ? [{date:"", note: pr.details, _legacyDetails:true}] : []),
+    ...log.map((n, i) => ({...n, _idx:i})),
+  ];
+
+  // Bucket by calendar day.
+  const buckets = {};
+  all.forEach(n => {
+    const d = noteDate(n);
+    const key = dayKeyOf(d);
+    if (!buckets[key]) buckets[key] = {label: dayLabelOf(d), sortTs: d ? d.getTime() : -1, notes: []};
+    buckets[key].notes.push(n);
+  });
+
+  const todayKey   = dayKeyOf(new Date());
+  const todayLabel = dayLabelOf(new Date());
+  const todayNotes = (buckets[todayKey]?.notes || []).slice().reverse(); // newest first within today
+  // Past day sections (everything except today), newest day first.
+  const pastSections = Object.entries(buckets)
+    .filter(([k]) => k !== todayKey)
+    .sort((a,b) => b[1].sortTs - a[1].sortTs);
+
+  const save = () => {
     const v = text.trim();
     if (!v) return;
-    onChange({...pr, log: [...(pr.log||[]), {date: formatNoteStamp(), note: v}]});
+    const now = new Date();
+    onChange({...pr, log: [...log, {ts: now.toISOString(), note: v}]});
     setText("");
+  };
+
+  const paper = "#FFFDF5"; // warm notebook paper
+  const ruleColor = "#EAE6D8";
+
+  const NoteLine = ({n}) => {
+    const hasTime = !!noteDate(n);
+    const noteText = (
+      <span style={{flex:1, fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>{n.note}</span>
+    );
+    if (hasTime) {
+      return (
+        <div style={{display:"flex", gap:10, padding:"7px 0", borderTop:"1px solid "+ruleColor}}>
+          <span style={{flexShrink:0, width:60, fontSize:11, color:C.textMuted, fontFamily:F,
+            fontVariantNumeric:"tabular-nums", paddingTop:2}}>{noteTimeOf(n)}</span>
+          {noteText}
+        </div>
+      );
+    }
+    // Legacy note (no ts): stack the stored date string above the text.
+    return (
+      <div style={{padding:"7px 0", borderTop:"1px solid "+ruleColor}}>
+        {n.date && <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginBottom:2, fontVariantNumeric:"tabular-nums"}}>{n.date}</div>}
+        <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>{n.note}</div>
+      </div>
+    );
   };
 
   return (
     <div style={{marginBottom:14}}>
       <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Call notes</label>
-      <input value={text} onChange={e=>setText(e.target.value)}
-        onKeyDown={e=>{ if (e.key === "Enter") submit(); }}
-        placeholder="Add a note…  (Enter to save)"
-        style={{...iS(mobile), marginBottom: notes.length ? 10 : 0}} />
-      {notes.map((l, i) => (
-        <div key={i} style={{
-          borderLeft:"2px solid "+C.border, paddingLeft:12,
-          paddingTop:6, paddingBottom:6, marginBottom:4,
-        }}>
-          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{l.date}</div>
-          <div style={{fontSize:13, color:C.text, fontFamily:F, marginTop:2, lineHeight:1.5}}>{l.note}</div>
+      <div style={{
+        background:paper, border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+        boxShadow:"inset 1px 0 0 #F4C9A8, inset 2px 0 0 transparent",
+      }}>
+        {/* Today's page */}
+        <div style={{padding:mobile?"12px 14px 14px":"14px 16px 16px"}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
+            <span style={{width:6, height:6, borderRadius:"50%", background:C.green, flexShrink:0}}/>
+            <span style={{fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>
+              {todayLabel}
+            </span>
+          </div>
+          <textarea value={text} onChange={e=>setText(e.target.value)}
+            onKeyDown={e=>{ if ((e.metaKey||e.ctrlKey) && e.key==="Enter") save(); }}
+            placeholder="Start writing — what did you and the contractor go over?"
+            rows={text ? 3 : 2}
+            style={{
+              width:"100%", border:"none", outline:"none", resize:"vertical",
+              background:"transparent", fontFamily:F, fontSize:13.5, lineHeight:1.6,
+              color:C.text, padding:0, minHeight:42, boxSizing:"border-box",
+            }} />
+          {text.trim() && (
+            <div style={{display:"flex", justifyContent:"flex-end", marginTop:8}}>
+              <button onClick={save} {...btnStyle("primary","sm")}>Save to today</button>
+            </div>
+          )}
+          {todayNotes.length > 0 && (
+            <div style={{marginTop:text.trim()?12:8}}>
+              {todayNotes.map((n,i)=><NoteLine key={i} n={n}/>)}
+            </div>
+          )}
         </div>
-      ))}
+
+        {/* Past pages */}
+        {pastSections.map(([key, sec]) => (
+          <div key={key} style={{padding:mobile?"12px 14px 14px":"14px 16px 16px", borderTop:"1px solid "+ruleColor, background:"rgba(0,0,0,.012)"}}>
+            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase", marginBottom:6}}>
+              {sec.label}
+            </div>
+            {sec.notes.slice().reverse().map((n,i)=><NoteLine key={i} n={n}/>)}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
