@@ -3676,7 +3676,7 @@ function MobileHeader({page, onBack, toast}) {
         </>
       ) : (
         <>
-          <img src="/logo.png" alt="DealHive" style={{height:26, width:"auto", maxWidth:"60%",
+          <img src="/logo.png" alt="DealHive" style={{height:36, width:"auto", maxWidth:"66%",
             objectFit:"contain", display:"block", flexShrink:0}} />
           <div style={{flex:1, minWidth:0}} />
         </>
