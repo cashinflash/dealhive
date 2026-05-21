@@ -31,6 +31,20 @@ const TRIAL_DAYS     = 7;
 const VERSION        = "1.0.0";
 const DEFAULT_CLOSING = 10895;
 
+// -- API cost controls ---------------------------------------------------------
+// Each external property/comp "lookup" can fan out to several billable API
+// calls, so two levers keep cost predictable:
+//   1. A cache (per user, TTL'd) — repeating the same address is free.
+//   2. A monthly cap on fresh (cache-miss) lookups — bounds worst-case spend.
+// LOOKUP_CAP is the only knob most people need to tune.
+const LOOKUP_CAP    = 200;            // fresh billable lookups per user, per month
+const CACHE_TTL_MS  = 30 * 86400000;  // cached results stay fresh for 30 days
+const CACHE_MAX     = 50;             // most recent entries kept; older ones pruned
+const monthKey      = () => new Date().toISOString().slice(0, 7);   // "2026-05"
+const lookupKey     = (...parts) =>
+  parts.map(p => String(p == null ? "" : p).toLowerCase().replace(/\s+/g, " ").trim()).join("|");
+const LOOKUP_CAP_MSG = `You've used all ${LOOKUP_CAP} property lookups for this month. They reset on the 1st — re-opening addresses you've already looked up is always free.`;
+
 // -- Firebase Auth -------------------------------------------------------------
 const fbSignUp = async (email, password) => {
   const r = await fetch(`${FB_AUTH_URL}/accounts:signUp?key=${FB_API_KEY}`, {
@@ -2856,7 +2870,7 @@ function ExpensesTab({p, set, mobile}) {
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile}) {
+function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup}) {
   const [d, setD]       = useState(() => newDeal());
   const [loading, setL] = useState(false);
   const [err, setErr]   = useState("");
@@ -2866,10 +2880,11 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
     if (!d.address) { setErr("Enter an address first."); return; }
     setL(true); setErr("");
     try {
-      const data = await attomFetch(d.address, d.city, d.state, d.zip);
+      const key = lookupKey("attom", d.address, d.city, d.state, d.zip);
+      const data = await apiLookup(key, () => attomFetch(d.address, d.city, d.state, d.zip));
       setD(prev => applyAttom(prev, data, renoRates));
-    } catch {
-      setErr("Search failed. Check the address and try again.");
+    } catch (e) {
+      setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check the address and try again.");
     }
     setL(false);
   };
@@ -3076,7 +3091,7 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 }
 
 // -- Lease Comps ---------------------------------------------------------------
-function LeaseComps({rentcastKey, onSaveKey, mobile}) {
+function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   const [address,setAddress] = useState("");
   const [location,setLocation] = useState(null);
   const [beds,setBeds]         = useState(3);
@@ -3091,9 +3106,14 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
     setAddress(loc.fullAddress||loc.address); setLocation(loc);
     if (!rentcastKey) return;
     try {
-      const q = encodeURIComponent(loc.fullAddress||loc.address);
-      const r = await fetch("https://api.rentcast.io/v1/properties?address="+q, {headers:{"X-Api-Key":rentcastKey}});
-      const d = await r.json();
+      const addr = loc.fullAddress||loc.address;
+      // Bedroom auto-detect — cached so repeats are free, and not counted
+      // against the monthly cap (it's a convenience, not a real lookup).
+      const d = await apiLookup(lookupKey("rc-prop", addr), async () => {
+        const q = encodeURIComponent(addr);
+        const r = await fetch("https://api.rentcast.io/v1/properties?address="+q, {headers:{"X-Api-Key":rentcastKey}});
+        return r.json();
+      }, {count:false});
       if (d?.[0]?.bedrooms) { setBeds(d[0].bedrooms); setAuto(true); }
     } catch {}
   };
@@ -3103,18 +3123,22 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
     if (!address)     { setErr("Enter an address first."); return; }
     setL(true); setErr(""); setComps(null);
     try {
-      const q = encodeURIComponent(address);
-      const h = {"X-Api-Key":rentcastKey};
-      const r  = await fetch("https://api.rentcast.io/v1/avm/rent/long-term?address="+q+"&bedrooms="+beds, {headers:h});
-      const d  = await r.json();
-      let listings = [];
-      try {
-        const r2 = await fetch("https://api.rentcast.io/v1/listings/rental/long-term?address="+q+"&bedrooms="+beds+"&radius=1&limit=12&status=Active", {headers:h});
-        const d2 = await r2.json();
-        listings = Array.isArray(d2) ? d2 : (d2?.listings||[]);
-      } catch {}
-      setComps({estimate:d, listings});
-    } catch { setErr("Search failed. Check your API key and address."); }
+      // One comp search = the estimate + the listings, billed as a single lookup.
+      const result = await apiLookup(lookupKey("rc-comp", address, beds), async () => {
+        const q = encodeURIComponent(address);
+        const h = {"X-Api-Key":rentcastKey};
+        const r  = await fetch("https://api.rentcast.io/v1/avm/rent/long-term?address="+q+"&bedrooms="+beds, {headers:h});
+        const d  = await r.json();
+        let listings = [];
+        try {
+          const r2 = await fetch("https://api.rentcast.io/v1/listings/rental/long-term?address="+q+"&bedrooms="+beds+"&radius=1&limit=12&status=Active", {headers:h});
+          const d2 = await r2.json();
+          listings = Array.isArray(d2) ? d2 : (d2?.listings||[]);
+        } catch {}
+        return {estimate:d, listings};
+      });
+      setComps(result);
+    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check your API key and address."); }
     setL(false);
   };
 
@@ -3286,7 +3310,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail}) {
+function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0}) {
   const [llcTxt,setLlcTxt] = useState(llcs.join("\n"));
   const [rates,setRates]   = useState({...renoRates});
   const [saved,setSaved]   = useState(false);
@@ -3343,6 +3367,29 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail}) {
           </div>
         </div>
       </SectionBlock>
+      <SectionBlock title="Property lookups" color={C.green}>
+        {(() => {
+          const pct = Math.min(100, Math.round((lookupsUsed / LOOKUP_CAP) * 100));
+          const barColor = lookupsUsed >= LOOKUP_CAP ? C.red : lookupsUsed >= LOOKUP_CAP*0.8 ? C.amber : C.green;
+          return (
+            <>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8}}>
+                <span style={{fontSize:13, color:C.text, fontFamily:F, fontWeight:600}}>Used this month</span>
+                <span style={{fontSize:13, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                  {lookupsUsed} / {LOOKUP_CAP}
+                </span>
+              </div>
+              <div style={{height:8, borderRadius:9999, background:C.bgSubtle, overflow:"hidden"}}>
+                <div style={{height:"100%", width:pct+"%", background:barColor, borderRadius:9999, transition:"width .25s"}}/>
+              </div>
+              <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"10px 0 0", lineHeight:1.5}}>
+                Each new address you analyze counts as one lookup. Re-opening an address you've already
+                pulled is free. Resets on the 1st of each month.
+              </p>
+            </>
+          );
+        })()}
+      </SectionBlock>
       <SectionBlock title="Repair cost rates" color={C.green}>
         <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"0 0 12px", lineHeight:1.5}}>
           Used by the repair estimator. Adjust to your local market.
@@ -3376,7 +3423,7 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail}) {
 }
 
 // -- Add Property Modal --------------------------------------------------------
-function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
+function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup}) {
   const [p,setP]       = useState(() => newProp());
   const [loading,setL] = useState(false);
   const [err,setErr]   = useState("");
@@ -3394,9 +3441,10 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile}) {
     if (!p.address) { setErr("Enter an address first."); return; }
     setL(true); setErr("");
     try {
-      const data = await attomFetch(p.address, p.city, p.state, p.zip);
+      const key = lookupKey("attom", p.address, p.city, p.state, p.zip);
+      const data = await apiLookup(key, () => attomFetch(p.address, p.city, p.state, p.zip));
       setP(prev => applyAttom(prev, data, renoRates));
-    } catch { setErr("Search failed."); }
+    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed."); }
     setL(false);
   };
 
@@ -3773,6 +3821,44 @@ export default function App() {
     setToast("Saved OK"); setTimeout(()=>setToast(""), 1600);
   }, [user]);
 
+  // Quiet persist — used for cache/usage bookkeeping so it doesn't flash a
+  // "Saved OK" toast on every API lookup.
+  const persistQuiet = useCallback((next) => {
+    setData(next);
+    if (user) saveData(user.localId, user.idToken, next);
+  }, [user]);
+
+  // Lookups used this calendar month (resets automatically when the month rolls).
+  const lookupsUsed = (data && data.usage && data.usage.month === monthKey())
+    ? (data.usage.count || 0) : 0;
+
+  // Central cached + capped lookup. `fetcher` runs only on a cache miss, and a
+  // miss counts against the monthly cap (unless count:false). Throws a CAP error
+  // when the cap is hit so the caller can show a friendly message.
+  const apiLookup = useCallback(async (key, fetcher, { count = true } = {}) => {
+    const cache = (data && data.apiCache) || {};
+    const hit = cache[key];
+    if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.payload;
+
+    const month = monthKey();
+    const used = (data && data.usage && data.usage.month === month) ? (data.usage.count || 0) : 0;
+    if (count && used >= LOOKUP_CAP) { const e = new Error("LOOKUP_CAP"); e.code = "CAP"; throw e; }
+
+    const payload = await fetcher();
+
+    let entries = Object.entries({ ...cache, [key]: { ts: Date.now(), payload } });
+    if (entries.length > CACHE_MAX) {
+      entries.sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+      entries = entries.slice(0, CACHE_MAX);
+    }
+    persistQuiet({
+      ...data,
+      apiCache: Object.fromEntries(entries),
+      usage: count ? { month, count: used + 1 } : (data.usage || null),
+    });
+    return payload;
+  }, [data, persistQuiet]);
+
   // Loading screen
   if (authLoading) return (
     <div style={{minHeight:"100vh", background:C.bg,
@@ -3816,6 +3902,7 @@ export default function App() {
   const sharedProps = {
     renoRates: data.renoRates || SEED.renoRates,
     mobile,
+    apiLookup,
   };
 
   // Mobile layout
@@ -3836,11 +3923,11 @@ export default function App() {
         ) : page==="deal" ? (
           <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
         ) : page==="comps" ? (
-          <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} />
+          <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
         ) : page==="settings" ? (
           <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
             onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} />
+            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} />
         ) : null}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} />
@@ -3869,11 +3956,11 @@ export default function App() {
             ) : page==="deal" ? (
               <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
             ) : page==="comps" ? (
-              <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} />
+              <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
             ) : page==="settings" ? (
               <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
                 onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} />
+                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} />
             ) : null}
           </ErrorBoundary>
         </div>
