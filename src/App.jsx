@@ -25,8 +25,7 @@ const FB_API_KEY     = "AIzaSyBHyb_dgcwSMvHYJ3CNfjy0dB2xWTU222U";
 const FB_AUTH_URL    = "https://identitytoolkit.googleapis.com/v1";
 const FB_DB_URL      = "https://darallc-default-rtdb.firebaseio.com";
 const GOOGLE_API_KEY = "AIzaSyAYrJOulIBpfDZIgC50IXSgbXET05VqOC8";
-const ATTOM_API_KEY  = "b6c4b22c6bd0c366f37068f3a41621b1";
-const ATTOM_BASE     = "https://api.gateway.attomdata.com/propertyapi/v1.0.0";
+const RC_BASE        = "https://api.rentcast.io/v1";
 const TRIAL_DAYS     = 7;
 const VERSION        = "1.0.0";
 const DEFAULT_CLOSING = 10895;
@@ -347,50 +346,62 @@ function AddressInput({value, onChange, onSelect, placeholder="Search address...
   );
 }
 
-// -- ATTOM ---------------------------------------------------------------------
-const attomFetch = async (addr, city, state, zip) => {
-  const a1 = encodeURIComponent(addr);
-  const a2 = encodeURIComponent(city+" "+state+" "+zip);
-  const h  = {"apikey":ATTOM_API_KEY, "Accept":"application/json"};
+// -- RentCast property data ----------------------------------------------------
+// One provider for everything: property record, value estimate (AVM) and
+// long-term rent estimate. Each call is wrapped by the caller in apiLookup()
+// for caching + the monthly cap.
+const rentcastFetch = async (addr, city, state, zip, key) => {
+  const full = [addr, [city, state].filter(Boolean).join(" "), zip].filter(Boolean).join(", ");
+  const q = encodeURIComponent(full);
+  const h = {"X-Api-Key": key};
   const out = {};
-  try { const r=await fetch(ATTOM_BASE+"/allevents/detail?address1="+a1+"&address2="+a2,{headers:h}); const d=await r.json(); if(d?.property?.[0]) out.property=d.property[0]; } catch {}
-  try { const r=await fetch(ATTOM_BASE+"/avm/detail?address1="+a1+"&address2="+a2,{headers:h}); const d=await r.json(); if(d?.property?.[0]?.avm) out.avm=d.property[0].avm; } catch {}
-  try { const r=await fetch(ATTOM_BASE+"/valuation/rentalavm?address1="+a1+"&address2="+a2,{headers:h}); const d=await r.json(); if(d?.property?.[0]) out.rental=d.property[0]; } catch {}
+  try { const r=await fetch(`${RC_BASE}/properties?address=${q}`, {headers:h}); const d=await r.json(); if(Array.isArray(d) && d[0]) out.property=d[0]; } catch {}
+  try { const r=await fetch(`${RC_BASE}/avm/value?address=${q}`, {headers:h}); const d=await r.json(); if(d && (d.price || d.priceRangeLow)) out.value=d; } catch {}
+  try { const r=await fetch(`${RC_BASE}/avm/rent/long-term?address=${q}`, {headers:h}); const d=await r.json(); if(d && d.rent) out.rent=d; } catch {}
   return out;
 };
 
-const applyAttom = (prev, data, rates) => {
-  const p   = data.property || {};
-  const bld = p.building || {};
-  const loc = p.location  || {};
-  const asr = p.assessment || {};
-  const tax    = asr.tax?.taxamt || 0;
-  const taxVal = asr.assessed?.assdttlvalue || 0;
-  const sqft   = bld.size?.universalsize || bld.size?.livingsize || prev.sqft || 0;
-  const avm    = data.avm || {};
-  const med    = avm.amount?.value || prev.homeValueMedian || 0;
-  const lo     = avm.amount?.low   || Math.round(med * 0.9);
-  const hi     = avm.amount?.high  || Math.round(med * 1.1);
-  const rental = data.rental || {};
-  const rentEst     = rental.avm?.rentalvalue    || prev.rentEstimate || 0;
-  const rentEstLow  = rental.avm?.rentallowvalue  || Math.round(rentEst * 0.9);
-  const rentEstHigh = rental.avm?.rentalhighvalue || Math.round(rentEst * 1.1);
+// Did a RentCast pull return anything usable?
+const rcHasData = data => !!(data && (data.property || data.value || data.rent));
+
+// Latest entry in RentCast's year-keyed maps (taxAssessments, propertyTaxes).
+const rcLatestYear = obj => {
+  if (!obj || typeof obj !== "object") return null;
+  const years = Object.keys(obj).sort();
+  return years.length ? obj[years[years.length - 1]] : null;
+};
+
+const applyRentcast = (prev, data, rates) => {
+  const p      = data.property || {};
+  const val    = data.value || {};
+  const rent   = data.rent || {};
+  const assess = rcLatestYear(p.taxAssessments) || {};
+  const taxRec = rcLatestYear(p.propertyTaxes) || {};
+  const taxVal = assess.value || prev.taxValue || 0;
+  const annual = taxRec.total || 0;
+  const sqft   = p.squareFootage || prev.sqft || 0;
+  const med    = val.price || prev.homeValueMedian || 0;
+  const lo     = val.priceRangeLow  || (med ? Math.round(med * 0.9) : prev.homeValueLow);
+  const hi     = val.priceRangeHigh || (med ? Math.round(med * 1.1) : prev.homeValueHigh);
+  const rentEst     = rent.rent || prev.rentEstimate || 0;
+  const rentEstLow  = rent.rentRangeLow  || (rentEst ? Math.round(rentEst * 0.9) : prev.rentEstLow);
+  const rentEstHigh = rent.rentRangeHigh || (rentEst ? Math.round(rentEst * 1.1) : prev.rentEstHigh);
   const r = rates || {light:7, medium:13, full:45};
   return {
     ...prev,
-    beds:      bld.rooms?.beds           || prev.beds,
-    baths:     bld.rooms?.bathstotal     || prev.baths,
+    beds:      p.bedrooms     || prev.beds,
+    baths:     p.bathrooms    || prev.baths,
     sqft,
-    yearBuilt: bld.summary?.yearbuilt    || prev.yearBuilt,
+    yearBuilt: p.yearBuilt    || prev.yearBuilt,
     taxValue:  taxVal,
-    parcelId:  p.identifier?.apn         || prev.parcelId,
-    lat:       parseFloat(loc.latitude)  || prev.lat,
-    lng:       parseFloat(loc.longitude) || prev.lng,
-    type:      p.summary?.proptype       || prev.type,
-    expPropTax: tax ? Math.round(tax/12) : (taxVal ? Math.round(taxVal*0.024/12) : prev.expPropTax),
+    parcelId:  p.assessorID   || prev.parcelId,
+    lat:       p.latitude  || val.latitude  || rent.latitude  || prev.lat,
+    lng:       p.longitude || val.longitude || rent.longitude || prev.lng,
+    type:      p.propertyType || prev.type,
+    expPropTax: annual ? Math.round(annual/12) : (taxVal ? Math.round(taxVal*0.024/12) : prev.expPropTax),
     homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
     flipSalePrice: hi || prev.flipSalePrice,
-    brrrCashOut:   Math.round(med * 0.8),
+    brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
     repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
     repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
     repairFull:    sqft ? Math.round(sqft * r.full)   : prev.repairFull,
@@ -2870,7 +2881,7 @@ function ExpensesTab({p, set, mobile}) {
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup}) {
+function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey}) {
   const [d, setD]       = useState(() => newDeal());
   const [loading, setL] = useState(false);
   const [err, setErr]   = useState("");
@@ -2878,11 +2889,13 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 
   const runSearch = async () => {
     if (!d.address) { setErr("Enter an address first."); return; }
+    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Lease Comps page."); return; }
     setL(true); setErr("");
     try {
-      const key = lookupKey("attom", d.address, d.city, d.state, d.zip);
-      const data = await apiLookup(key, () => attomFetch(d.address, d.city, d.state, d.zip));
-      setD(prev => applyAttom(prev, data, renoRates));
+      const key = lookupKey("rc-detail", d.address, d.city, d.state, d.zip);
+      const data = await apiLookup(key, () => rentcastFetch(d.address, d.city, d.state, d.zip, rentcastKey));
+      if (!rcHasData(data)) setErr("No property data found for that address. Try adding city, state and ZIP.");
+      else setD(prev => applyRentcast(prev, data, renoRates));
     } catch (e) {
       setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check the address and try again.");
     }
@@ -3310,7 +3323,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0}) {
+function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0, rentcastKey=""}) {
   const [llcTxt,setLlcTxt] = useState(llcs.join("\n"));
   const [rates,setRates]   = useState({...renoRates});
   const [saved,setSaved]   = useState(false);
@@ -3338,31 +3351,21 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
           <button onClick={onSignOut} {...btnStyle("secondary","md")}>Sign out</button>
         </div>
       </SectionBlock>
-      <SectionBlock title="Data providers" color={C.green}>
-        <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"12px 14px", marginBottom:10,
+      <SectionBlock title="Data provider" color={C.green}>
+        <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"12px 14px",
           display:"flex", alignItems:"flex-start", gap:10}}>
           <div style={{width:28, height:28, borderRadius:C.r2, background:"#fff",
             border:"1px solid "+C.greenBorder, color:C.greenDark, flexShrink:0,
             display:"flex", alignItems:"center", justifyContent:"center"}}><I.check size={15}/></div>
           <div style={{flex:1, minWidth:0}}>
-            <div style={{display:"flex", alignItems:"center", gap:8}}>
-              <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>ATTOM Data</div>
-              <Badge label="Connected" bg={C.greenLight} c={C.greenDark} dot/>
+            <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+              <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>RentCast</div>
+              {rentcastKey
+                ? <Badge label="Connected" bg={C.greenLight} c={C.greenDark} dot/>
+                : <Badge label="Add your key" bg={C.amberSubtle} c={C.amberDark} dot/>}
             </div>
             <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
-              Property data, tax records, home values and rental estimates · 158M+ U.S. properties.
-            </div>
-          </div>
-        </div>
-        <div style={{background:C.blueSubtle, border:"1px solid "+C.blueBorder, borderRadius:C.r3, padding:"12px 14px",
-          display:"flex", alignItems:"flex-start", gap:10}}>
-          <div style={{width:28, height:28, borderRadius:C.r2, background:"#fff",
-            border:"1px solid "+C.blueBorder, color:C.blueDark, flexShrink:0,
-            display:"flex", alignItems:"center", justifyContent:"center"}}><I.chart size={15}/></div>
-          <div style={{flex:1, minWidth:0}}>
-            <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>Rentcast (free)</div>
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
-              Lease comps. Add your key on the Lease Comps page. Free tier: 50 searches / month.
+              Powers everything — property details, tax records, home values, rent estimates and lease comps · 140M+ U.S. properties. Add your key on the Lease Comps page.
             </div>
           </div>
         </div>
@@ -3423,7 +3426,7 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
 }
 
 // -- Add Property Modal --------------------------------------------------------
-function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup}) {
+function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, rentcastKey}) {
   const [p,setP]       = useState(() => newProp());
   const [loading,setL] = useState(false);
   const [err,setErr]   = useState("");
@@ -3439,11 +3442,13 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup}) 
 
   const runSearch = async () => {
     if (!p.address) { setErr("Enter an address first."); return; }
+    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Lease Comps page."); return; }
     setL(true); setErr("");
     try {
-      const key = lookupKey("attom", p.address, p.city, p.state, p.zip);
-      const data = await apiLookup(key, () => attomFetch(p.address, p.city, p.state, p.zip));
-      setP(prev => applyAttom(prev, data, renoRates));
+      const key = lookupKey("rc-detail", p.address, p.city, p.state, p.zip);
+      const data = await apiLookup(key, () => rentcastFetch(p.address, p.city, p.state, p.zip, rentcastKey));
+      if (!rcHasData(data)) setErr("No property data found for that address. Try adding city, state and ZIP.");
+      else setP(prev => applyRentcast(prev, data, renoRates));
     } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed."); }
     setL(false);
   };
@@ -3903,6 +3908,7 @@ export default function App() {
     renoRates: data.renoRates || SEED.renoRates,
     mobile,
     apiLookup,
+    rentcastKey: data.rentcastKey || "",
   };
 
   // Mobile layout
@@ -3927,7 +3933,7 @@ export default function App() {
         ) : page==="settings" ? (
           <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
             onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} />
+            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""} />
         ) : null}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} />
@@ -3960,7 +3966,7 @@ export default function App() {
             ) : page==="settings" ? (
               <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
                 onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} />
+                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""} />
             ) : null}
           </ErrorBoundary>
         </div>
