@@ -1411,7 +1411,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   const [tab, setTab] = useState("overview");
   const m = calc(prop);
   const u = (f,v) => onChange({...prop, [f]:v});
-  const tabs = [["overview","Overview"],["calculator","Calculator"],["tenant","Tenant"],["projects","Projects"],["notes","Notes"]];
+  const tabs = [["overview","Overview"],["calculator","Calculator"],["tenant","Tenant"],["projects","Projects"],["expenses","Expenses"],["notes","Notes"]];
 
   return (
     <div style={{paddingBottom:mobile?100:40}}>
@@ -1514,6 +1514,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
+        {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="notes"      && (
           <SectionBlock title="Notes" color={C.text}>
             <textarea value={prop.notes||""} onChange={e=>u("notes",e.target.value)}
@@ -1669,6 +1670,36 @@ const nextDayIso = (iso) => {
   const y = base.getFullYear(), m = String(base.getMonth()+1).padStart(2,"0"), d = String(base.getDate()).padStart(2,"0");
   return `${y}-${m}-${d}`;
 };
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
+
+// Render **bold** markdown inline (used in call notes).
+const renderRich = (text) => {
+  if (!text) return null;
+  return String(text).split(/(\*\*[^*\n]+\*\*)/g).map((p, i) =>
+    /^\*\*[^*\n]+\*\*$/.test(p)
+      ? <strong key={i} style={{fontWeight:700}}>{p.slice(2, -2)}</strong>
+      : p
+  );
+};
+
+// Wrap the current selection of a textarea (by ref) in ** ** for bold.
+const wrapSelectionBold = (taRef, value, setValue) => {
+  const ta = taRef.current;
+  if (!ta) { setValue((value||"") + "****"); return; }
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const sel = value.slice(s, e);
+  const inner = sel || "bold text";
+  const next = value.slice(0, s) + "**" + inner + "**" + value.slice(e);
+  setValue(next);
+  requestAnimationFrame(() => {
+    ta.focus();
+    const pos = s + 2;
+    ta.setSelectionRange(pos, pos + inner.length);
+  });
+};
 
 // Resize an uploaded image to maxWidth and return a JPEG data URL.
 const resizeImageToDataUrl = (file, maxWidth=800, quality=0.82) => new Promise((resolve, reject) => {
@@ -1743,6 +1774,48 @@ function PhotoUploader({photos=[], onChange}) {
   );
 }
 
+// PDF / document attachments. Stored as base64 data URLs on the follow-up.
+const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4MB cap (data lives in the Firebase blob)
+function FileUploader({files=[], onChange, mobile}) {
+  const [err, setErr] = useState("");
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) { setErr(`"${file.name}" is over 4 MB — too large to attach.`); return; }
+    setErr("");
+    const reader = new FileReader();
+    reader.onload = (ev) => onChange([...(files||[]), {name:file.name, dataUrl:ev.target.result}]);
+    reader.readAsDataURL(file);
+  };
+  return (
+    <div style={{marginBottom:14}}>
+      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Documents (PDF)</label>
+      {files.map((f, i) => (
+        <div key={i} style={{display:"flex", alignItems:"center", gap:10, padding:"8px 10px",
+          background:C.card, border:"1px solid "+C.border, borderRadius:C.r2, marginBottom:6}}>
+          <div style={{width:26, height:26, borderRadius:C.r1, background:C.redSubtle, color:C.redDark,
+            display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:9, fontWeight:700, fontFamily:F}}>PDF</div>
+          <a href={f.dataUrl} target="_blank" rel="noreferrer" download={f.name}
+            style={{flex:1, minWidth:0, fontSize:13, color:C.text, fontFamily:F, fontWeight:500,
+              textDecoration:"none", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {f.name}
+          </a>
+          <a href={f.dataUrl} target="_blank" rel="noreferrer"
+            {...btnStyle("ghost","sm", {color:C.textSub, padding:"4px 8px"})}><I.externalLink size={13}/></a>
+          <button onClick={()=>onChange(files.filter((_,j)=>j!==i))} aria-label="Remove file"
+            {...btnStyle("ghost","sm", {color:C.textMuted, padding:"4px 7px"})}><I.trash size={13}/></button>
+        </div>
+      ))}
+      <label {...btnStyle("secondary","sm")} style={{...btnStyle("secondary","sm").style, cursor:"pointer"}}>
+        <I.plus size={13}/> Attach PDF
+        <input type="file" accept="application/pdf" onChange={handleFile} style={{display:"none"}} />
+      </label>
+      {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:6}}>{err}</div>}
+    </div>
+  );
+}
+
 // Newest-first call-note timeline + inline "Add a note…" input.
 // Notebook-style call notes. Opens to "today's page" — today's date is written
 // at the top automatically, with a writing area beneath it. Past calls are
@@ -1751,6 +1824,8 @@ function CallNotesTimeline({pr, onChange, mobile}) {
   const [text, setText]       = useState("");   // today's compose box
   const [editKey, setEditKey] = useState(null); // which saved note is open for editing
   const [editVal, setEditVal] = useState("");
+  const composeRef = useRef(null);
+  const editRef    = useRef(null);
 
   const log = pr.log || [];
   const keyOf = (ref) => ref.type === "details" ? "details" : `log-${ref.idx}`;
@@ -1814,11 +1889,12 @@ function CallNotesTimeline({pr, onChange, mobile}) {
   const noteFont = {fontFamily:F, fontSize:14, color:C.text};
 
   // A single saved note — click to edit in place.
-  const NoteEntry = ({n}) => {
+  // Plain render-fn (not a component) so editing textareas don't remount on keystroke.
+  const renderNote = (n) => {
     const editing = editKey === keyOf(n.ref);
     const stamp = noteTimeOf(n);
     return (
-      <div style={{paddingTop:6}}>
+      <div key={keyOf(n.ref)} style={{paddingTop:6}}>
         <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", minHeight:16}}>
           <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
             {stamp || "Note"}
@@ -1832,21 +1908,28 @@ function CallNotesTimeline({pr, onChange, mobile}) {
           )}
         </div>
         {editing ? (
-          <textarea value={editVal} autoFocus
-            onChange={e=>setEditVal(e.target.value)}
-            onBlur={()=>commitEdit(n.ref)}
-            onKeyDown={e=>{
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(n.ref); }
-              if (e.key === "Escape") { setEditKey(null); setEditVal(""); }
-            }}
-            style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
-              resize:"vertical", padding:0, minHeight:LINE_H, display:"block"}} />
+          <div>
+            <textarea ref={editRef} value={editVal} autoFocus
+              onChange={e=>setEditVal(e.target.value)}
+              onKeyDown={e=>{
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(n.ref); }
+                if (e.key === "Escape") { setEditKey(null); setEditVal(""); }
+              }}
+              style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
+                resize:"vertical", padding:0, minHeight:LINE_H, display:"block"}} />
+            <div style={{display:"flex", gap:6, marginTop:6, alignItems:"center"}}>
+              <button type="button" onMouseDown={e=>{e.preventDefault(); wrapSelectionBold(editRef, editVal, setEditVal);}}
+                title="Bold (or wrap text in **)" style={boldBtnStyle}>B</button>
+              <span style={{flex:1}} />
+              <button onClick={()=>commitEdit(n.ref)} {...btnStyle("primary","sm")}>Save</button>
+            </div>
+          </div>
         ) : (
           <div onClick={()=>startEdit(n)}
             title="Tap to edit"
             style={{...lined, ...noteFont, whiteSpace:"pre-wrap", cursor:"text",
               minHeight:LINE_H, wordBreak:"break-word"}}>
-            {n.note}
+            {renderRich(n.note)}
           </div>
         )}
       </div>
@@ -1854,12 +1937,18 @@ function CallNotesTimeline({pr, onChange, mobile}) {
   };
 
   const sectionPad = mobile ? "12px 16px 14px 16px" : "14px 18px 16px 18px";
+  const boldBtnStyle = {
+    width:26, height:26, borderRadius:C.r1, border:"1px solid "+C.border,
+    background:C.card, color:C.text, fontFamily:"Georgia, serif", fontWeight:700,
+    fontSize:13, cursor:"pointer", lineHeight:1, flexShrink:0,
+    display:"inline-flex", alignItems:"center", justifyContent:"center",
+  };
 
   return (
     <div style={{marginBottom:14}}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6}}>
         <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Call notes</label>
-        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit</span>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit · **bold**</span>
       </div>
       <div style={{
         borderRadius:C.r3, border:"1px solid "+C.border, overflow:"hidden",
@@ -1873,21 +1962,22 @@ function CallNotesTimeline({pr, onChange, mobile}) {
               {todayLabel}
             </span>
           </div>
-          <textarea value={text} onChange={e=>setText(e.target.value)}
+          <textarea ref={composeRef} value={text} onChange={e=>setText(e.target.value)}
             onKeyDown={e=>{ if ((e.metaKey||e.ctrlKey) && e.key==="Enter") saveNew(); }}
             placeholder="Start writing…"
             rows={3}
             style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
               resize:"vertical", padding:0, minHeight:LINE_H*3, display:"block",
               color:C.text}} />
-          {text.trim() && (
-            <div style={{display:"flex", justifyContent:"flex-end", marginTop:10}}>
-              <button onClick={saveNew} {...btnStyle("primary","sm")}>Save to today</button>
-            </div>
-          )}
+          <div style={{display:"flex", gap:8, marginTop:10, alignItems:"center"}}>
+            <button type="button" onMouseDown={e=>{e.preventDefault(); wrapSelectionBold(composeRef, text, setText);}}
+              title="Bold the selected text" style={boldBtnStyle}>B</button>
+            <span style={{flex:1}} />
+            {text.trim() && <button onClick={saveNew} {...btnStyle("primary","sm")}>Save to today</button>}
+          </div>
           {todayNotes.length > 0 && (
             <div style={{marginTop:10, borderTop:"1px solid "+C.border, paddingTop:2}}>
-              {todayNotes.map((n,i)=><NoteEntry key={keyOf(n.ref)} n={n}/>)}
+              {todayNotes.map(n=>renderNote(n))}
             </div>
           )}
         </div>
@@ -1898,7 +1988,7 @@ function CallNotesTimeline({pr, onChange, mobile}) {
             <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase", marginBottom:8}}>
               {sec.label}
             </div>
-            {sec.notes.slice().reverse().map((n,i)=><NoteEntry key={keyOf(n.ref)} n={n}/>)}
+            {sec.notes.slice().reverse().map(n=>renderNote(n))}
           </div>
         ))}
       </div>
@@ -1906,8 +1996,21 @@ function CallNotesTimeline({pr, onChange, mobile}) {
   );
 }
 
-function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[]}) {
+function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAddExpense, isExpensed}) {
   const u = (f, v) => onChange({...pr, [f]:v});
+  const addExpense = () => {
+    if (!onAddExpense) return;
+    onAddExpense({
+      id: "ex" + Date.now(),
+      description: pr.name || "Follow-up",
+      amount: pr.budget || 0,
+      date: pr.dueDate || todayIso(),
+      category: typeOf(pr),
+      contractor: pr.contractor || "",
+      fromFollowup: pr.id,
+      createdAt: new Date().toISOString(),
+    });
+  };
   return (
     <div style={{padding:mobile?"6px 14px 14px":"6px 16px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg}}>
       {/* Row 1: Description (wide) + Type */}
@@ -1932,6 +2035,31 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[]}) {
       </div>
       <CallNotesTimeline pr={pr} onChange={onChange} mobile={mobile} />
       <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
+      <FileUploader files={pr.files||[]} onChange={v=>u("files",v)} mobile={mobile} />
+
+      {/* Add to property Expenses */}
+      {onAddExpense && (
+        <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px", marginBottom:12,
+          background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2}}>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F}}>Record this as an expense</div>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
+              {pr.budget>0 ? `${$(pr.budget)} → Expenses tab` : "Add a cost first, then log it to Expenses"}
+            </div>
+          </div>
+          {isExpensed ? (
+            <span style={{display:"inline-flex", alignItems:"center", gap:5, fontSize:12, fontWeight:600,
+              color:C.greenDark, fontFamily:F, flexShrink:0}}>
+              <I.check size={14} stroke={2.5}/> In expenses
+            </span>
+          ) : (
+            <button onClick={addExpense} disabled={!(pr.budget>0)} {...btnStyle("primary","sm")}>
+              <I.plus size={13}/> Add as expense
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={{display:"flex", justifyContent:"flex-end"}}>
         <button onClick={onDelete}
           style={{background:"none", border:"none", padding:"4px 8px",
@@ -1966,7 +2094,7 @@ function RowAction({icon, label, onClick, color}) {
 }
 
 function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick,
-                      onChange, onDelete, mobile, contractors=[]}) {
+                      onChange, onDelete, mobile, contractors=[], onAddExpense, isExpensed}) {
   const [expanded, setExpanded] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -2100,7 +2228,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
             edit view — tapping the row anywhere expands it. Keeps the
             collapsed row visually clean. */}
         {expanded && (
-          <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
+          <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} onAddExpense={onAddExpense} isExpensed={isExpensed} />
         )}
       </div>
     );
@@ -2175,7 +2303,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
       </div>
       {noteBar}
       {expanded && (
-        <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} />
+        <FollowupExpanded pr={pr} onChange={onChange} onDelete={onDelete} mobile={mobile} contractors={contractors} onAddExpense={onAddExpense} isExpensed={isExpensed} />
       )}
     </div>
   );
@@ -2282,7 +2410,8 @@ const propertyStatus = (property) => {
   return {kind:"open", color:C.borderHover, openCount:open.length, overdueCount:0};
 };
 
-function PropertySection({property, onUpdateProjects, mobile, filterMode, search, contractor, contractors=[], hideHeader=false}) {
+function PropertySection({property, onUpdateProjects, mobile, filterMode, search, contractor, contractors=[], hideHeader=false, onAddExpense}) {
+  const expensedIds = new Set((property.expenses||[]).map(e => e.fromFollowup).filter(Boolean));
   const projects = property.projects || [];
   const filtered = projects.filter(pr => {
     if (filterMode === "open" && pr.status === "Complete") return false;
@@ -2360,7 +2489,8 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
       ) : (
         sorted.map(pr => (
           <FollowupRow key={pr.id} pr={pr} contractors={contractors}
-            onChange={updateOne} onDelete={()=>deleteOne(pr.id)} mobile={mobile} />
+            onChange={updateOne} onDelete={()=>deleteOne(pr.id)} mobile={mobile}
+            onAddExpense={onAddExpense} isExpensed={expensedIds.has(pr.id)} />
         ))
       )}
       <QuickAddForm onAdd={addOne} mobile={mobile} contractors={contractors} />
@@ -2382,7 +2512,7 @@ function ContractorChip({label, active, onClick}) {
   );
 }
 
-function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChange, onRowDelete, mobile, contractors}) {
+function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
   if (!items.length) return null;
   return (
     <div style={{background: bg}}>
@@ -2401,6 +2531,8 @@ function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChan
           onPropertyClick={() => onPropertyClick(property.id)}
           onChange={updated => onRowChange(property, updated)}
           onDelete={() => onRowDelete(property, pr.id)}
+          onAddExpense={exp => onAddExpense(property, exp)}
+          isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
           mobile={mobile} contractors={contractors} />
       ))}
     </div>
@@ -2461,6 +2593,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
     handleUpdateProjects(property.id, (property.projects||[]).map(x => x.id === updated.id ? updated : x));
   const handleRowDelete = (property, id) =>
     handleUpdateProjects(property.id, (property.projects||[]).filter(x => x.id !== id));
+  const handleAddExpense = (property, exp) =>
+    onUpdateProperty({...property, expenses: [...(property.expenses||[]), exp]});
   const scrollToProperty = (id) => {
     const el = document.getElementById("prop-" + id);
     if (el) el.scrollIntoView({behavior:"smooth", block:"start"});
@@ -2503,13 +2637,13 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       {dueNowTotal > 0 && (
         <Card style={{marginBottom:24}} padding={0}>
           <DueNowSection title="Overdue"   items={overdue}    bg="#FEF2F2" labelColor="#991b1b"
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
           {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
           <DueNowSection title="Today"     items={todayItems} bg="#FFFBEB" labelColor="#92400e"
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
           {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
           <DueNowSection title="This week" items={thisWeek}   bg="#FAFAFA" labelColor="#3f3f46"
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} mobile={mobile} contractors={contractors}/>
+            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
         </Card>
       )}
 
@@ -2548,6 +2682,7 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         {properties.map(p => (
           <PropertySection key={p.id} property={p}
             onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
+            onAddExpense={exp => handleAddExpense(p, exp)}
             mobile={mobile} filterMode={filterMode} search={search}
             contractor={contractor} contractors={contractors} />
         ))}
@@ -2563,6 +2698,7 @@ function PropertyProjectsTab({p, set, mobile}) {
   const [search, setSearch]         = useState("");
 
   const onUpdateProjects = (projects) => set({...p, projects});
+  const onAddExpense = (exp) => set({...p, expenses: [...(p.expenses||[]), exp]});
 
   // Just this property's contractors for the datalist.
   const contractors = Array.from(new Set(
@@ -2594,9 +2730,133 @@ function PropertyProjectsTab({p, set, mobile}) {
             style={{...iS(mobile), paddingLeft:36}} />
         </div>
       </div>
-      <PropertySection property={p} onUpdateProjects={onUpdateProjects}
+      <PropertySection property={p} onUpdateProjects={onUpdateProjects} onAddExpense={onAddExpense}
         mobile={mobile} filterMode={filterMode} search={search}
         contractors={contractors} hideHeader />
+    </div>
+  );
+}
+
+// -- Expenses tab (per property) -----------------------------------------------
+function ExpensesTab({p, set, mobile}) {
+  const expenses = p.expenses || [];
+  const total = expenses.reduce((s,e)=>s+(Number(e.amount)||0), 0);
+  const sorted = [...expenses].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+
+  const blank = () => ({description:"", amount:"", date:todayIso(), category:"other", contractor:""});
+  const [adding, setAdding] = useState(false);
+  const [form, setForm]     = useState(blank);
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState(blank);
+  const uf = (f,v) => setForm(x=>({...x,[f]:v}));
+  const ue = (f,v) => setEditForm(x=>({...x,[f]:v}));
+
+  const commitAdd = () => {
+    if (!form.description.trim()) return;
+    set({...p, expenses:[...expenses, {
+      id:"ex"+Date.now(), description:form.description.trim(),
+      amount:parseFloat(form.amount)||0, date:form.date||todayIso(),
+      category:form.category, contractor:form.contractor.trim(),
+      createdAt:new Date().toISOString(),
+    }]});
+    setForm(blank()); setAdding(false);
+  };
+  const startEdit = (e) => { setEditId(e.id); setEditForm({
+    description:e.description||"", amount:String(e.amount||""), date:e.date||todayIso(),
+    category:e.category||"other", contractor:e.contractor||"",
+  }); };
+  const commitEdit = () => {
+    set({...p, expenses:expenses.map(e=>e.id===editId?{
+      ...e, description:editForm.description.trim(), amount:parseFloat(editForm.amount)||0,
+      date:editForm.date, category:editForm.category, contractor:editForm.contractor.trim(),
+    }:e)});
+    setEditId(null);
+  };
+  const del = (id) => { set({...p, expenses:expenses.filter(e=>e.id!==id)}); setEditId(null); };
+
+  // Plain render-fn (not a component) so inputs don't remount/lose focus on keystroke.
+  const renderExpenseForm = (vals, setV, onSave, onCancel, saveLabel) => (
+    <div>
+      <InputField label="Description" type="text" val={vals.description} set={v=>setV("description",v)} mobile={mobile} />
+      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"1fr 1fr 1fr", gap:10}}>
+        <InputField label="Amount" val={vals.amount} set={v=>setV("amount",v)} pre="$" mobile={mobile} />
+        <DateField label="Date" value={vals.date} onChange={v=>setV("date",v)} mobile={mobile} />
+        <InputField label="Contractor" type="text" val={vals.contractor} set={v=>setV("contractor",v)} mobile={mobile} />
+      </div>
+      <div style={{marginBottom:12}}>
+        <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Category</label>
+        <TypePicker value={vals.category} onChange={v=>setV("category",v)} />
+      </div>
+      <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+        <button onClick={onCancel} {...btnStyle("ghost","sm")}>Cancel</button>
+        <button onClick={onSave} disabled={!vals.description.trim()} {...btnStyle("primary","sm")}>{saveLabel}</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Total */}
+      <Card style={{padding:18, marginBottom:14}}>
+        <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Total expenses</div>
+        <div style={{fontSize:28, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.025em",
+          fontVariantNumeric:"tabular-nums", marginTop:4}}>{$(total)}</div>
+        <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:4}}>
+          {expenses.length} {expenses.length===1?"item":"items"} logged
+        </div>
+      </Card>
+
+      {/* List */}
+      {sorted.length === 0 ? (
+        <EmptyState icon={<I.chart size={20}/>} title="No expenses yet"
+          body="Log expenses here, or hit “Add as expense” on any follow-up in the Projects tab." />
+      ) : (
+        <Card padding={0} style={{marginBottom:14}}>
+          {sorted.map((e,i) => {
+            const t = TYPE_PALETTE[e.category] || TYPE_PALETTE.other;
+            const editing = editId === e.id;
+            return (
+              <div key={e.id} style={{borderTop: i? "1px solid "+C.bgSubtle : "none", padding:editing?"14px 16px":"0"}}>
+                {editing ? (
+                  renderExpenseForm(editForm, ue, commitEdit, ()=>setEditId(null), "Save")
+                ) : (
+                  <div onClick={()=>startEdit(e)}
+                    style={{display:"flex", alignItems:"center", gap:12, padding:"12px 16px", cursor:"pointer"}}>
+                    <div style={{minWidth:0, flex:1}}>
+                      <div style={{fontSize:14, fontWeight:500, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{e.description}</div>
+                      <div style={{display:"flex", gap:8, alignItems:"center", marginTop:5, flexWrap:"wrap"}}>
+                        <TypePill type={e.category||"other"} />
+                        <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                          {e.date ? new Date(e.date+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}
+                        </span>
+                        {e.contractor && <span style={{fontSize:12, color:C.textMuted, fontFamily:F}}>· {e.contractor}</span>}
+                        {e.fromFollowup && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>· from follow-up</span>}
+                      </div>
+                    </div>
+                    <div style={{fontSize:15, fontWeight:600, color:"#3f3f46", fontFamily:F, fontVariantNumeric:"tabular-nums", flexShrink:0}}>
+                      {$(e.amount)}
+                    </div>
+                    <button onClick={ev=>{ev.stopPropagation(); del(e.id);}} aria-label="Delete expense"
+                      {...btnStyle("ghost","sm", {color:C.textMuted, padding:"5px 6px"})}><I.trash size={14}/></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* Add */}
+      {adding ? (
+        <SectionBlock title="New expense" color={C.green}>
+          {renderExpenseForm(form, uf, commitAdd, ()=>{setForm(blank()); setAdding(false);}, "Add expense")}
+        </SectionBlock>
+      ) : (
+        <button onClick={()=>setAdding(true)} {...btnStyle("secondary","md", {width:"100%"})}>
+          <I.plus size={14}/> Add expense
+        </button>
+      )}
     </div>
   );
 }
