@@ -731,16 +731,7 @@ function AuthPage({onAuth}) {
     }}>
       <div style={{width:"100%", maxWidth:400}}>
         <div style={{textAlign:"center", marginBottom:28}}>
-          <div style={{display:"inline-flex", alignItems:"center", gap:10, marginBottom:6}}>
-            <div style={{
-              width:36, height:36, background:C.green, borderRadius:C.r3,
-              display:"flex", alignItems:"center", justifyContent:"center",
-              color:"white", boxShadow:C.sh2,
-            }}><I.bee size={20}/></div>
-            <div style={{fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-              DealHive
-            </div>
-          </div>
+          <img src="/logo.png" alt="DealHive" style={{height:48, width:"auto", maxWidth:"82%", objectFit:"contain", marginBottom:10}} />
           <div style={{fontSize:13, color:C.textSub, fontFamily:F}}>Real estate investing, organized.</div>
         </div>
         <Card style={{padding:30}}>
@@ -3489,9 +3480,9 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
       borderRight:"1px solid rgba(255,255,255,.06)"}}>
       <div style={{padding:"20px 18px 14px"}}>
         <div style={{display:"flex", alignItems:"center", gap:10}}>
-          <div style={{width:30, height:30, background:C.green, borderRadius:C.r2,
-            display:"flex", alignItems:"center", justifyContent:"center", color:"white", boxShadow:C.sh1}}>
-            <I.bee size={17}/>
+          <div style={{width:32, height:32, background:"#fff", borderRadius:C.r2, padding:3,
+            display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh1, flexShrink:0}}>
+            <img src="/favicon.png" alt="" style={{width:"100%", height:"100%", objectFit:"contain", display:"block"}} />
           </div>
           <div style={{fontSize:17, fontWeight:700, color:"#fafafa", fontFamily:F, letterSpacing:"-0.02em"}}>
             DealHive
@@ -3630,15 +3621,7 @@ function MobileHeader({page, onBack, toast, daysLeft}) {
           <I.arrowLeft size={16}/>
         </button>
       ) : (
-        <div style={{display:"flex", alignItems:"center", gap:8, flexShrink:0}}>
-          <div style={{width:28, height:28, background:C.green, borderRadius:C.r2,
-            display:"flex", alignItems:"center", justifyContent:"center", color:"white", boxShadow:C.sh1}}>
-            <I.bee size={16}/>
-          </div>
-          <span style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-            DealHive
-          </span>
-        </div>
+        <img src="/favicon.png" alt="DealHive" style={{width:30, height:30, objectFit:"contain", flexShrink:0, display:"block"}} />
       )}
       <div style={{flex:1, minWidth:0}}>
         <div style={{fontWeight:600, fontSize:14, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
@@ -3797,12 +3780,8 @@ export default function App() {
   // Loading screen
   if (authLoading) return (
     <div style={{minHeight:"100vh", background:C.bg,
-      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:14}}>
-      <div style={{
-        width:44, height:44, background:C.green, borderRadius:C.r3, color:"white",
-        display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2,
-      }}><I.bee size={26}/></div>
-      <div style={{fontSize:22, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>DealHive</div>
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16}}>
+      <img src="/logo.png" alt="DealHive" style={{height:46, width:"auto", maxWidth:"70%", objectFit:"contain"}} />
       <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>Loading your portfolio…</div>
     </div>
   );
