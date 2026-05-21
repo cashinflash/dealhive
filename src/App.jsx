@@ -1965,9 +1965,12 @@ function CallNotesTimeline({pr, onChange, mobile}) {
 
   return (
     <div style={{marginBottom:14}}>
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6}}>
-        <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Call notes</label>
-        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit · **bold**</span>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <div style={{width:3, height:13, background:C.green, borderRadius:2}} />
+          <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>Call notes</span>
+        </div>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit</span>
       </div>
       <div style={{
         borderRadius:C.r3, border:"1px solid "+C.border, overflow:"hidden",
@@ -1988,11 +1991,15 @@ function CallNotesTimeline({pr, onChange, mobile}) {
             style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
               resize:"vertical", padding:0, minHeight:LINE_H*3, display:"block",
               color:C.text}} />
-          <div style={{display:"flex", gap:8, marginTop:10, alignItems:"center"}}>
+          <div style={{display:"flex", gap:10, marginTop:8, alignItems:"center", paddingTop:10, borderTop:"1px solid "+RULE}}>
             <button type="button" onMouseDown={e=>{e.preventDefault(); wrapSelectionBold(composeRef, text, setText);}}
               title="Bold the selected text" style={boldBtnStyle}>B</button>
+            {!mobile && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Select text, then tap B to bold</span>}
             <span style={{flex:1}} />
-            {text.trim() && <button onClick={saveNew} {...btnStyle("primary","sm")}>Save to today</button>}
+            <button onClick={saveNew} disabled={!text.trim()}
+              {...btnStyle("primary","sm", text.trim()?{}:{opacity:.45, cursor:"not-allowed"})}>
+              <I.plus size={12}/> Add note
+            </button>
           </div>
           {todayNotes.length > 0 && (
             <div style={{marginTop:10, borderTop:"1px solid "+C.border, paddingTop:2}}>
@@ -2030,40 +2037,52 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
       createdAt: new Date().toISOString(),
     });
   };
+  const sectionLabel = (text) => (
+    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:12}}>
+      <div style={{width:3, height:13, background:C.green, borderRadius:2}} />
+      <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>{text}</span>
+    </div>
+  );
+  const divider = <div style={{height:1, background:C.border, margin: mobile ? "18px 0" : "20px 0"}} />;
+  const labelStyle = {fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F};
+
   return (
-    <div style={{padding:mobile?"6px 14px 14px":"6px 16px 14px", background:C.bgSubtle, borderTop:"1px solid "+C.bg}}>
-      {/* Row 1: Description (wide) + Type */}
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "2fr 1fr", gap:10, marginBottom:4}}>
-        <InputField label="Description" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
-        <div style={{marginBottom:14}}>
-          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Type</label>
-          <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
-        </div>
+    <div style={{padding: mobile ? "16px 14px 16px" : "20px 22px 18px", background:C.card, borderTop:"1px solid "+C.border}}>
+      {sectionLabel("Details")}
+      <InputField label="What needs doing" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
+      <div style={{marginBottom:14}}>
+        <label style={labelStyle}>Type</label>
+        <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
       </div>
-      {/* Row 2: Due / Cost / Priority / Contractor */}
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap:10}}>
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: mobile?10:12}}>
         <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
         <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
         <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
           options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
         <div style={{marginBottom:14}}>
-          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Contractor</label>
+          <label style={labelStyle}>Contractor</label>
           <input value={pr.contractor||""} onChange={e=>u("contractor", e.target.value)}
             list="dh-contractors" placeholder="Name" style={iS(mobile)} />
         </div>
       </div>
+
+      {divider}
+
       <CallNotesTimeline pr={pr} onChange={onChange} mobile={mobile} />
+
+      {divider}
+
+      {sectionLabel("Attachments")}
       <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
       <FileUploader files={pr.files||[]} onChange={v=>u("files",v)} mobile={mobile} />
 
-      {/* Add to property Expenses */}
       {onAddExpense && (
-        <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px", marginBottom:12,
-          background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, padding:"12px 14px", marginTop:4, marginBottom:14,
+          background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3}}>
           <div style={{flex:1, minWidth:0}}>
             <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F}}>Record this as an expense</div>
             <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
-              {pr.budget>0 ? `${$(pr.budget)} → Expenses tab` : "Add a cost first, then log it to Expenses"}
+              {pr.budget>0 ? `${$(pr.budget)} → Expenses tab` : "Add a cost above, then log it to Expenses"}
             </div>
           </div>
           {isExpensed ? (
@@ -2072,24 +2091,22 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
               <I.check size={14} stroke={2.5}/> In expenses
             </span>
           ) : (
-            <button onClick={addExpense} disabled={!(pr.budget>0)} {...btnStyle("primary","sm")}>
+            <button onClick={addExpense} disabled={!(pr.budget>0)}
+              {...btnStyle("primary","sm", (pr.budget>0)?{}:{opacity:.45, cursor:"not-allowed"})}>
               <I.plus size={13}/> Add as expense
             </button>
           )}
         </div>
       )}
 
-      <div style={{display:"flex", justifyContent:"flex-end"}}>
+      <div style={{display:"flex", justifyContent:"flex-end", borderTop:"1px solid "+C.border, paddingTop:12, marginTop:4}}>
         <button onClick={onDelete}
-          style={{background:"none", border:"none", padding:"4px 8px",
-            color:C.textMuted, fontFamily:F, fontSize:12, cursor:"pointer",
-            display:"inline-flex", alignItems:"center", gap:5,
-            textDecoration:"underline", textDecorationColor:C.border,
-            textUnderlineOffset:2,
-          }}
-          onMouseEnter={e=>{e.currentTarget.style.color=C.redDark;}}
-          onMouseLeave={e=>{e.currentTarget.style.color=C.textMuted;}}>
-          <I.trash size={11}/> Delete follow-up
+          style={{background:"none", border:"none", padding:"6px 10px", borderRadius:C.r1,
+            color:C.textMuted, fontFamily:F, fontSize:12, fontWeight:500, cursor:"pointer",
+            display:"inline-flex", alignItems:"center", gap:6, transition:"color .12s, background .12s"}}
+          onMouseEnter={e=>{e.currentTarget.style.color=C.redDark; e.currentTarget.style.background=C.redSubtle;}}
+          onMouseLeave={e=>{e.currentTarget.style.color=C.textMuted; e.currentTarget.style.background="none";}}>
+          <I.trash size={12}/> Delete follow-up
         </button>
       </div>
       {contractors.length > 0 && (
