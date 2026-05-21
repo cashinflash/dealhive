@@ -1748,13 +1748,17 @@ function PhotoUploader({photos=[], onChange}) {
 // at the top automatically, with a writing area beneath it. Past calls are
 // grouped under their own dated headings below, newest day first.
 function CallNotesTimeline({pr, onChange, mobile}) {
-  const [text, setText] = useState("");
-  const log = pr.log || [];
+  const [text, setText]       = useState("");   // today's compose box
+  const [editKey, setEditKey] = useState(null); // which saved note is open for editing
+  const [editVal, setEditVal] = useState("");
 
-  // Gather every note, tag each with its entry index (for stable keys/edits).
+  const log = pr.log || [];
+  const keyOf = (ref) => ref.type === "details" ? "details" : `log-${ref.idx}`;
+
+  // Every note, tagged with an edit ref.
   const all = [
-    ...(pr.details ? [{date:"", note: pr.details, _legacyDetails:true}] : []),
-    ...log.map((n, i) => ({...n, _idx:i})),
+    ...(pr.details ? [{date:"", note: pr.details, ref:{type:"details"}}] : []),
+    ...log.map((n, i) => ({...n, ref:{type:"log", idx:i}})),
   ];
 
   // Bucket by calendar day.
@@ -1765,92 +1769,136 @@ function CallNotesTimeline({pr, onChange, mobile}) {
     if (!buckets[key]) buckets[key] = {label: dayLabelOf(d), sortTs: d ? d.getTime() : -1, notes: []};
     buckets[key].notes.push(n);
   });
-
   const todayKey   = dayKeyOf(new Date());
   const todayLabel = dayLabelOf(new Date());
-  const todayNotes = (buckets[todayKey]?.notes || []).slice().reverse(); // newest first within today
-  // Past day sections (everything except today), newest day first.
+  const todayNotes = (buckets[todayKey]?.notes || []).slice().reverse();
   const pastSections = Object.entries(buckets)
     .filter(([k]) => k !== todayKey)
     .sort((a,b) => b[1].sortTs - a[1].sortTs);
 
-  const save = () => {
+  const saveNew = () => {
     const v = text.trim();
     if (!v) return;
-    const now = new Date();
-    onChange({...pr, log: [...log, {ts: now.toISOString(), note: v}]});
+    onChange({...pr, log: [...log, {ts: new Date().toISOString(), note: v}]});
     setText("");
   };
-
-  const paper = "#FFFDF5"; // warm notebook paper
-  const ruleColor = "#EAE6D8";
-
-  const NoteLine = ({n}) => {
-    const hasTime = !!noteDate(n);
-    const noteText = (
-      <span style={{flex:1, fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>{n.note}</span>
-    );
-    if (hasTime) {
-      return (
-        <div style={{display:"flex", gap:10, padding:"7px 0", borderTop:"1px solid "+ruleColor}}>
-          <span style={{flexShrink:0, width:60, fontSize:11, color:C.textMuted, fontFamily:F,
-            fontVariantNumeric:"tabular-nums", paddingTop:2}}>{noteTimeOf(n)}</span>
-          {noteText}
-        </div>
-      );
+  const commitEdit = (ref) => {
+    const v = editVal.trim();
+    if (ref.type === "details") {
+      onChange({...pr, details: v});
+    } else if (!v) {
+      onChange({...pr, log: log.filter((_, i) => i !== ref.idx)});
+    } else {
+      onChange({...pr, log: log.map((n, i) => i === ref.idx ? {...n, note: v} : n)});
     }
-    // Legacy note (no ts): stack the stored date string above the text.
+    setEditKey(null); setEditVal("");
+  };
+  const deleteNote = (ref) => {
+    if (ref.type === "details") onChange({...pr, details: ""});
+    else onChange({...pr, log: log.filter((_, i) => i !== ref.idx)});
+    setEditKey(null); setEditVal("");
+  };
+  const startEdit = (n) => { setEditKey(keyOf(n.ref)); setEditVal(n.note); };
+
+  // --- Notepad styling ---
+  const LINE_H = 28;
+  const PAPER  = "#FFFEFB";
+  const RULE   = "#D9E2EC";          // soft blue-gray ruled line
+  const MARGIN = "#EFC9C9";          // pink margin line
+  const lined = {
+    lineHeight: `${LINE_H}px`,
+    backgroundImage: `repeating-linear-gradient(transparent, transparent ${LINE_H-1}px, ${RULE} ${LINE_H-1}px, ${RULE} ${LINE_H}px)`,
+    backgroundAttachment: "local",
+    backgroundColor: "transparent",
+  };
+  const noteFont = {fontFamily:F, fontSize:14, color:C.text};
+
+  // A single saved note — click to edit in place.
+  const NoteEntry = ({n}) => {
+    const editing = editKey === keyOf(n.ref);
+    const stamp = noteTimeOf(n);
     return (
-      <div style={{padding:"7px 0", borderTop:"1px solid "+ruleColor}}>
-        {n.date && <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginBottom:2, fontVariantNumeric:"tabular-nums"}}>{n.date}</div>}
-        <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>{n.note}</div>
+      <div style={{paddingTop:6}}>
+        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", minHeight:16}}>
+          <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+            {stamp || "Note"}
+          </span>
+          {editing && (
+            <button onClick={()=>deleteNote(n.ref)}
+              style={{background:"none", border:"none", padding:0, cursor:"pointer",
+                color:C.textMuted, fontFamily:F, fontSize:11, display:"inline-flex", alignItems:"center", gap:4}}>
+              <I.trash size={11}/> Delete
+            </button>
+          )}
+        </div>
+        {editing ? (
+          <textarea value={editVal} autoFocus
+            onChange={e=>setEditVal(e.target.value)}
+            onBlur={()=>commitEdit(n.ref)}
+            onKeyDown={e=>{
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(n.ref); }
+              if (e.key === "Escape") { setEditKey(null); setEditVal(""); }
+            }}
+            style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
+              resize:"vertical", padding:0, minHeight:LINE_H, display:"block"}} />
+        ) : (
+          <div onClick={()=>startEdit(n)}
+            title="Tap to edit"
+            style={{...lined, ...noteFont, whiteSpace:"pre-wrap", cursor:"text",
+              minHeight:LINE_H, wordBreak:"break-word"}}>
+            {n.note}
+          </div>
+        )}
       </div>
     );
   };
 
+  const sectionPad = mobile ? "12px 16px 14px 16px" : "14px 18px 16px 18px";
+
   return (
     <div style={{marginBottom:14}}>
-      <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Call notes</label>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6}}>
+        <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Call notes</label>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit</span>
+      </div>
       <div style={{
-        background:paper, border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
-        boxShadow:"inset 1px 0 0 #F4C9A8, inset 2px 0 0 transparent",
+        borderRadius:C.r3, border:"1px solid "+C.border, overflow:"hidden",
+        background:PAPER, boxShadow:"inset 3px 0 0 "+MARGIN,
       }}>
         {/* Today's page */}
-        <div style={{padding:mobile?"12px 14px 14px":"14px 16px 16px"}}>
-          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
-            <span style={{width:6, height:6, borderRadius:"50%", background:C.green, flexShrink:0}}/>
-            <span style={{fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>
+        <div style={{padding:sectionPad}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:10}}>
+            <span style={{width:7, height:7, borderRadius:"50%", background:C.green, flexShrink:0}}/>
+            <span style={{fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
               {todayLabel}
             </span>
           </div>
           <textarea value={text} onChange={e=>setText(e.target.value)}
-            onKeyDown={e=>{ if ((e.metaKey||e.ctrlKey) && e.key==="Enter") save(); }}
-            placeholder="Start writing — what did you and the contractor go over?"
-            rows={text ? 3 : 2}
-            style={{
-              width:"100%", border:"none", outline:"none", resize:"vertical",
-              background:"transparent", fontFamily:F, fontSize:13.5, lineHeight:1.6,
-              color:C.text, padding:0, minHeight:42, boxSizing:"border-box",
-            }} />
+            onKeyDown={e=>{ if ((e.metaKey||e.ctrlKey) && e.key==="Enter") saveNew(); }}
+            placeholder="Start writing…"
+            rows={3}
+            style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
+              resize:"vertical", padding:0, minHeight:LINE_H*3, display:"block",
+              color:C.text}} />
           {text.trim() && (
-            <div style={{display:"flex", justifyContent:"flex-end", marginTop:8}}>
-              <button onClick={save} {...btnStyle("primary","sm")}>Save to today</button>
+            <div style={{display:"flex", justifyContent:"flex-end", marginTop:10}}>
+              <button onClick={saveNew} {...btnStyle("primary","sm")}>Save to today</button>
             </div>
           )}
           {todayNotes.length > 0 && (
-            <div style={{marginTop:text.trim()?12:8}}>
-              {todayNotes.map((n,i)=><NoteLine key={i} n={n}/>)}
+            <div style={{marginTop:10, borderTop:"1px solid "+C.border, paddingTop:2}}>
+              {todayNotes.map((n,i)=><NoteEntry key={keyOf(n.ref)} n={n}/>)}
             </div>
           )}
         </div>
 
         {/* Past pages */}
         {pastSections.map(([key, sec]) => (
-          <div key={key} style={{padding:mobile?"12px 14px 14px":"14px 16px 16px", borderTop:"1px solid "+ruleColor, background:"rgba(0,0,0,.012)"}}>
-            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase", marginBottom:6}}>
+          <div key={key} style={{padding:sectionPad, borderTop:"1px solid "+C.border, background:"rgba(15,23,42,.015)"}}>
+            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase", marginBottom:8}}>
               {sec.label}
             </div>
-            {sec.notes.slice().reverse().map((n,i)=><NoteLine key={i} n={n}/>)}
+            {sec.notes.slice().reverse().map((n,i)=><NoteEntry key={keyOf(n.ref)} n={n}/>)}
           </div>
         ))}
       </div>
