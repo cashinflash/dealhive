@@ -3481,8 +3481,8 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
     <div style={{width:230, background:C.sidebar, height:"100vh", position:"fixed",
       left:0, top:0, display:"flex", flexDirection:"column", zIndex:100,
       borderRight:"1px solid rgba(255,255,255,.06)"}}>
-      <div style={{background:"#fff", padding:"18px 20px 16px", display:"flex", alignItems:"center", justifyContent:"center", borderBottom:"2px solid "+C.green}}>
-        <img src="/logo.png" alt="DealHive" style={{display:"block", width:"100%", maxWidth:190, height:"auto", objectFit:"contain"}} />
+      <div style={{background:"#fff", padding:"11px 20px 10px", display:"flex", alignItems:"center", justifyContent:"center", borderBottom:"2px solid "+C.green}}>
+        <img src="/logo.png" alt="DealHive" style={{display:"block", width:"100%", maxWidth:165, height:"auto", objectFit:"contain"}} />
       </div>
       <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
         {NAV_ITEMS.map(item => {
