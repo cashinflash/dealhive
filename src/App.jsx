@@ -1524,11 +1524,28 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
 }
 
 // -- Property Detail -----------------------------------------------------------
-function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile}) {
+function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile, apiLookup, rentcastKey}) {
   const [tab, setTab] = useState("overview");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshErr, setRefreshErr] = useState("");
   const m = calc(prop);
   const u = (f,v) => onChange({...prop, [f]:v});
   const tabs = [["overview","Overview"],["calculator","Calculator"],["tenant","Tenant"],["projects","Projects"],["expenses","Expenses"],["notes","Notes"]];
+
+  // Re-pull public records for an existing property. applyRentcast only
+  // overwrites public-record + valuation fields, so the user's ownership,
+  // lockbox, purchase price, rent, tenant, projects and expenses are kept.
+  const refreshData = async () => {
+    if (!rentcastKey) { setRefreshErr("Add your RentCast API key on the Lease Comps page first."); return; }
+    setRefreshing(true); setRefreshErr("");
+    try {
+      const key = lookupKey("rc-detail", prop.address, prop.city, prop.state, prop.zip);
+      const d = await apiLookup(key, () => rentcastFetch(prop.address, prop.city, prop.state, prop.zip, rentcastKey));
+      if (rcHasData(d)) onChange(applyRentcast(prop, d, renoRates));
+      else setRefreshErr("No public records found for this address.");
+    } catch (e) { setRefreshErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Refresh failed."); }
+    setRefreshing(false);
+  };
 
   return (
     <div style={{paddingBottom:mobile?100:40}}>
@@ -1605,7 +1622,16 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {tab==="overview" && (
           <div>
             <StreetViewImg lat={prop.lat} lng={prop.lng} address={prop.address} height={220} />
-            <SectionBlock title="Property details" color={C.text}>
+            <SectionBlock title="Property details" color={C.text} right={
+              <button onClick={refreshData} disabled={refreshing} {...btnStyle("secondary","sm")}>
+                <I.search size={12}/> {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            }>
+              {refreshErr && (
+                <div style={{display:"flex", gap:6, alignItems:"center", color:C.redDark, fontSize:12, marginBottom:12, fontFamily:F}}>
+                  <I.alert size={13}/> {refreshErr}
+                </div>
+              )}
               <div style={{display:"grid", gridTemplateColumns:mobile?"minmax(0,1fr) minmax(0,1fr)":"repeat(3, minmax(0,1fr))", gap:mobile?10:14}}>
                 <InputField label="Type" type="text" val={prop.type||""} set={v=>u("type",v)} mobile={mobile} />
                 <InputField label="Beds" val={prop.beds||0} set={v=>u("beds",v)} mobile={mobile} />
