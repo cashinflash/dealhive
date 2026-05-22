@@ -1115,6 +1115,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
   // financed deals count down payment + repairs + closing; cash deals count
   // purchase + repairs.
   const occOOP = occProps.reduce((s,p) => s+calc(p).chosenOOP, 0);
+  const allOOP = properties.reduce((s,p) => s+calc(p).chosenOOP, 0);
   // Cash-flow figure without the "/mo" suffix (rendered separately, smaller).
   const cfFig = (n) => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString(); };
   const alerts     = properties.filter(p => {
@@ -1128,7 +1129,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
         title="Portfolio"
         subtitle={properties.length===0
           ? "Welcome — let's add your first property."
-          : `${occupied} occupied · ${$(occOOP)} out of pocket · ${$(occRent)}/mo rent · ${$mo(occCF)} cash flow`}
+          : `${properties.length} ${properties.length===1?"property":"properties"} in your portfolio`}
         action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
       />
 
@@ -1160,8 +1161,32 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
             <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(totalRent)}</span>
           </div>
         </Card>
-        <StatCard label="Occupied" value={`${occupied}/${properties.length||0}`} sub={properties.length>0?Math.round(occupied/Math.max(properties.length,1)*100)+"% occupied":""} icon={<I.building size={16}/>}/>
-        <StatCard label="Alerts" value={alerts.length} color={alerts.length>0?C.amberDark:C.text} sub={alerts.length===0?"All clear":"Needs attention"} icon={<I.alert size={16}/>}/>
+        <Card style={{padding:18, display:"flex", flexDirection:"column"}}>
+          <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Occupied units</div>
+          <div style={{fontSize:26, fontWeight:700, color:C.text, fontFamily:F, lineHeight:1.15, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>
+            {occupied}<span style={{fontSize:14, fontWeight:500, color:C.textMuted, letterSpacing:0}}> of {properties.length}</span>
+          </div>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
+            {properties.length>0 ? Math.round(occupied/Math.max(properties.length,1)*100)+"% occupied" : "—"}
+          </div>
+          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Out of pocket</span>
+            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(occOOP)}</span>
+          </div>
+        </Card>
+        <Card style={{padding:18, display:"flex", flexDirection:"column"}}>
+          <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Total units</div>
+          <div style={{fontSize:26, fontWeight:700, color:C.text, fontFamily:F, lineHeight:1.15, letterSpacing:"-0.025em", marginTop:6, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>
+            {properties.length}
+          </div>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
+            {occupied} occupied · {Math.max(properties.length-occupied,0)} vacant
+          </div>
+          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Out of pocket</span>
+            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(allOOP)}</span>
+          </div>
+        </Card>
       </div>
 
       {/* Alerts */}
