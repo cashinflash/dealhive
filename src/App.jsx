@@ -1111,8 +1111,8 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
   const occCF       = occProps.reduce((s,p) => s+calc(p).chosenCF, 0);
   const totalRent   = properties.reduce((s,p) => s+(p.rentAmount||0), 0);
   const occRent     = occProps.reduce((s,p) => s+(p.rentAmount||0), 0);
-  // "Portfolio value" here = total out of pocket: purchase price + repairs only.
-  const outOfPocket = properties.reduce((s,p) => s+(p.purchasePrice||0)+(p.repairCosts||0), 0);
+  // Out of pocket (purchase price + repairs) for occupied properties only.
+  const occOOP = occProps.reduce((s,p) => s+(p.purchasePrice||0)+(p.repairCosts||0), 0);
   // Cash-flow figure without the "/mo" suffix (rendered separately, smaller).
   const cfFig = (n) => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString(); };
   const alerts     = properties.filter(p => {
@@ -1124,7 +1124,9 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
       <PageHeader
         title="Portfolio"
-        subtitle={properties.length===0 ? "Welcome — let's add your first property." : `${properties.length} ${properties.length===1?"property":"properties"} · ${$(outOfPocket)} portfolio value`}
+        subtitle={properties.length===0
+          ? "Welcome — let's add your first property."
+          : `${occupied} occupied · ${$(occOOP)} out of pocket · ${$(occRent)}/mo rent · ${$mo(occCF)} cash flow`}
         action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
       />
 
