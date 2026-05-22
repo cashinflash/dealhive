@@ -1111,8 +1111,10 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
   const occCF       = occProps.reduce((s,p) => s+calc(p).chosenCF, 0);
   const totalRent   = properties.reduce((s,p) => s+(p.rentAmount||0), 0);
   const occRent     = occProps.reduce((s,p) => s+(p.rentAmount||0), 0);
-  // Out of pocket (purchase price + repairs) for occupied properties only.
-  const occOOP = occProps.reduce((s,p) => s+(p.purchasePrice||0)+(p.repairCosts||0), 0);
+  // Out of pocket for occupied properties, per each property's chosen strategy:
+  // financed deals count down payment + repairs + closing; cash deals count
+  // purchase + repairs.
+  const occOOP = occProps.reduce((s,p) => s+calc(p).chosenOOP, 0);
   // Cash-flow figure without the "/mo" suffix (rendered separately, smaller).
   const cfFig = (n) => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString(); };
   const alerts     = properties.filter(p => {
