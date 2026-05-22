@@ -589,11 +589,29 @@ function DataRow({label, value, color}) {
 
 // FIXED: clear field on focus so typing replaces 0
 function InputField({label, val, set, type="number", suf, pre, note, mobile=false}) {
-  const handleFocus = e => {
-    if (type === "number" && (e.target.value === "0" || e.target.value === "0.00")) {
-      e.target.select();
-    }
+  const isNum = type === "number";
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  // While editing a number field we show a raw, freely-editable string (so it
+  // can be cleared with backspace); when idle we show it with thousands commas.
+  const display = !isNum
+    ? (val ?? "")
+    : focused
+      ? draft
+      : (val === "" || val == null ? "" : Number(val).toLocaleString());
+
+  const onFocus = () => {
+    if (isNum) setDraft(val && Number(val) !== 0 ? String(val) : "");
+    setFocused(true);
   };
+  const onChange = e => {
+    if (!isNum) { set(e.target.value); return; }
+    const raw = e.target.value.replace(/[^0-9.]/g, "");
+    setDraft(raw);
+    set(raw === "" ? 0 : (parseFloat(raw) || 0));
+  };
+
   return (
     <div style={{marginBottom:14}}>
       <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
@@ -610,16 +628,17 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
             pointerEvents:"none",
           }}>{pre}</span>
         )}
-        <input type={type} value={val}
-          inputMode={type==="number" ? "decimal" : undefined}
-          onFocus={handleFocus}
-          onChange={e => set(type==="number" ? parseFloat(e.target.value)||0 : e.target.value)}
+        <input type={isNum ? "text" : type} value={display}
+          inputMode={isNum ? "decimal" : undefined}
+          onFocus={onFocus}
+          onBlur={()=>setFocused(false)}
+          onChange={onChange}
           className="dh-input"
           style={{
             ...iS(mobile), flex:1,
             paddingLeft: pre ? (mobile?32:28) : (mobile?14:12),
             paddingRight: suf ? (mobile?38:32) : (mobile?14:12),
-            fontVariantNumeric: type==="number" ? "tabular-nums" : "normal",
+            fontVariantNumeric: isNum ? "tabular-nums" : "normal",
           }} />
         {suf && (
           <span style={{
