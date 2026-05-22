@@ -1532,6 +1532,9 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   const u = (f,v) => onChange({...prop, [f]:v});
   const tabs = [["overview","Overview"],["calculator","Calculator"],["tenant","Tenant"],["projects","Projects"],["expenses","Expenses"],["notes","Notes"]];
 
+  // Open each property scrolled to the very top, not wherever the list was.
+  useEffect(() => { window.scrollTo(0, 0); }, [prop.id]);
+
   // Re-pull public records for an existing property. applyRentcast only
   // overwrites public-record + valuation fields, so the user's ownership,
   // lockbox, purchase price, rent, tenant, projects and expenses are kept.
