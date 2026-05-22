@@ -1000,7 +1000,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
           <InputField label="Repair costs" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile} />
           <InputField label="Monthly rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
-          <InputField label="Vacancy rate" val={p.vacancyRate||5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
+          <InputField label="Vacancy rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
           {(p.vacancyRate||0) > 0 && <DataRow label="Effective rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
           <DataRow label="Cash flow / mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
           <DataRow label="Out of pocket" value={$(m.cashOOP)} />
@@ -1043,7 +1043,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
             borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
             Buy with cash → rehab → cash-out refi → keep as rental.
           </div>
-          <InputField label="Cash-out refi amount" val={p.brrrCashOut||Math.round((p.homeValueMedian||0)*0.8)}
+          <InputField label="Cash-out refi amount" val={p.brrrCashOut ?? Math.round((p.homeValueMedian||0)*0.8)}
             set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of median" mobile={mobile} />
           <DataRow label="80% of median (suggested)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.textMuted} />
           <DataRow label="Est. mortgage / mo" value={$mo(m.brrrMtg)} />
@@ -1058,7 +1058,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
             ARV pre-filled from your high home value.
           </div>
           <InputField label="Sale price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Agent fee" val={p.agentFeePct||6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
+          <InputField label="Agent fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
           <DataRow label="Total into deal" value={$(m.cashOOP)} />
           <DataRow label="Agent fee" value={$(m.agentFee)} />
           <DataRow label="Net profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
