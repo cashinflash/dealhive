@@ -71,6 +71,18 @@ const fbResetPassword = async (email) => {
   });
   const d = await r.json(); if(d.error) throw new Error(d.error.message); return d;
 };
+// Exchange a refresh token for a fresh ID token. Firebase ID tokens expire
+// after ~1 hour; without refreshing, cloud reads/writes start failing and the
+// app silently falls back to this-device-only storage (breaks cross-device sync).
+const fbRefresh = async (refreshToken) => {
+  const r = await fetch(`https://securetoken.googleapis.com/v1/token?key=${FB_API_KEY}`, {
+    method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body:`grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken||"")}`,
+  });
+  const d = await r.json();
+  if (d.error || !d.id_token) throw new Error((d.error && d.error.message) || "Token refresh failed");
+  return { idToken: d.id_token, refreshToken: d.refresh_token };
+};
 
 // -- Firebase DB ---------------------------------------------------------------
 const dbPath   = uid => `${FB_DB_URL}/users/${uid}/data.json`;
@@ -78,10 +90,15 @@ const metaPath = uid => `${FB_DB_URL}/users/${uid}/meta.json`;
 
 const saveData = async (uid, token, d) => {
   try {
-    await fetch(`${dbPath(uid)}?auth=${token}`, {
+    const r = await fetch(`${dbPath(uid)}?auth=${token}`, {
       method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d)
     });
-  } catch { try { localStorage.setItem(`dh_${uid}`, JSON.stringify(d)); } catch {} }
+    if (r.ok) return true;            // saved to the cloud — synced across devices
+  } catch {}
+  // Cloud save failed (offline, or expired token): keep a local backup so the
+  // change isn't lost. The caller refreshes the token and retries.
+  try { localStorage.setItem(`dh_${uid}`, JSON.stringify(d)); } catch {}
+  return false;
 };
 const loadData = async (uid, token) => {
   try {
@@ -3904,6 +3921,30 @@ export default function App() {
   const [authLoading,setAL] = useState(true);
   const mobile = useIsMobile();
 
+  // Always-current user for async cloud calls (avoids stale-closure tokens).
+  const userRef = useRef(null);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  // Refresh the Firebase ID token so cloud sync keeps working (tokens expire
+  // ~hourly). Returns the updated user (with fresh token) or null on failure.
+  const refreshSession = useCallback(async () => {
+    const u = userRef.current;
+    if (!u || !u.refreshToken) return null;
+    try {
+      const t = await fbRefresh(u.refreshToken);
+      const next = { ...u, idToken: t.idToken, refreshToken: t.refreshToken || u.refreshToken };
+      userRef.current = next; setUser(next); saveAuth(next);
+      return next;
+    } catch { return null; }
+  }, []);
+
+  // Proactively refresh the token while signed in, well before it expires.
+  useEffect(() => {
+    if (!user) return;
+    const id = setInterval(() => { refreshSession(); }, 50 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [user && user.localId, refreshSession]);
+
   // Body scroll lock — class-based. Toggling a class is far more robust
   // than mutating body.style.overflow: classList.add/remove can't get
   // stuck in a half-state under React Strict Mode, fast-clicked modal
@@ -3977,7 +4018,12 @@ export default function App() {
   }, []);
 
   const handleAuth = async (u, isNew=false, silent=false) => {
-    setUser(u); saveAuth(u);
+    // A restored session's stored token is usually expired — refresh it first
+    // so we read the cloud copy (synced from other devices), not local-only.
+    if (silent && u.refreshToken) {
+      try { const t = await fbRefresh(u.refreshToken); u = { ...u, idToken: t.idToken, refreshToken: t.refreshToken || u.refreshToken }; } catch {}
+    }
+    setUser(u); saveAuth(u); userRef.current = u;
     let meta = await loadMeta(u.localId, u.idToken);
     if (!meta || isNew) {
       meta = {createdAt:new Date().toISOString(), trialStart:new Date().toISOString()};
@@ -3993,18 +4039,27 @@ export default function App() {
 
   const handleSignOut = () => { clearAuth(); setUser(null); setData(null); setPage("dashboard"); setPropId(null); };
 
+  // Save to the cloud; if it fails (likely an expired token), refresh and retry
+  // once so the change still syncs instead of going local-only.
+  const saveCloud = useCallback(async (next) => {
+    const u = userRef.current;
+    if (!u) return;
+    const ok = await saveData(u.localId, u.idToken, next);
+    if (!ok) { const nu = await refreshSession(); if (nu) saveData(nu.localId, nu.idToken, next); }
+  }, [refreshSession]);
+
   const persist = useCallback((next) => {
     setData(next);
-    if (user) saveData(user.localId, user.idToken, next);
+    saveCloud(next);
     setToast("Saved OK"); setTimeout(()=>setToast(""), 1600);
-  }, [user]);
+  }, [saveCloud]);
 
   // Quiet persist — used for cache/usage bookkeeping so it doesn't flash a
   // "Saved OK" toast on every API lookup.
   const persistQuiet = useCallback((next) => {
     setData(next);
-    if (user) saveData(user.localId, user.idToken, next);
-  }, [user]);
+    saveCloud(next);
+  }, [saveCloud]);
 
   // Lookups used this calendar month (resets automatically when the month rolls).
   const lookupsUsed = (data && data.usage && data.usage.month === monthKey())
