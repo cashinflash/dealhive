@@ -3952,7 +3952,7 @@ export default function App() {
 
   // Mobile layout
   if (mobile) return (
-    <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"hidden"}}>
+    <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"clip"}}>
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft} />
       <TrialBanner daysLeft={daysLeft} />
       <ErrorBoundary>
