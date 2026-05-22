@@ -31,6 +31,8 @@ const VERSION        = "1.0.0";
 const DEFAULT_CLOSING = 10895;
 // Ohio effective property-tax rate (~2.33%/yr). Monthly = taxValue * rate / 12.
 const OH_TAX_RATE = 0.0233;
+// Ohio assessed value is 35% of market value by law; market = assessed / 0.35.
+const OH_ASSESS_RATIO = 0.35;
 const isOhio = obj => String((obj && obj.state) || "").trim().toUpperCase() === "OH";
 
 // -- API cost controls ---------------------------------------------------------
@@ -380,7 +382,12 @@ const applyRentcast = (prev, data, rates) => {
   const rent   = data.rent || {};
   const assess = rcLatestYear(p.taxAssessments) || {};
   const taxRec = rcLatestYear(p.propertyTaxes) || {};
-  const taxVal = assess.value || prev.taxValue || 0;
+  const assessedVal = assess.value || 0;
+  // Ohio: the Tax value field should hold the market value (what tax is based
+  // on), and assessed value is 35% of market — so market = assessed / 0.35.
+  const taxVal = (isOhio(prev) && assessedVal)
+    ? Math.round(assessedVal / OH_ASSESS_RATIO)
+    : (assessedVal || prev.taxValue || 0);
   const annual = taxRec.total || 0;
   const sqft   = p.squareFootage || prev.sqft || 0;
   const med    = val.price || prev.homeValueMedian || 0;
