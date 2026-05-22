@@ -1606,16 +1606,21 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
           <div>
             <StreetViewImg lat={prop.lat} lng={prop.lng} address={prop.address} height={220} />
             <SectionBlock title="Property details" color={C.text}>
-              <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:18}}>
-                {[["Type",prop.type],["Beds / baths",prop.beds+"bd · "+prop.baths+"ba"],
-                  ["Sq ft",(prop.sqft||0).toLocaleString()],["Year built",prop.yearBuilt||"—"],
-                  ["Tax value",$(prop.taxValue)],["Lockbox",prop.lockboxCode||"—"],
-                  ["Parcel ID",prop.parcelId||"—"],["LLC",prop.llc]].map(([l,v]) => (
-                  <div key={l}>
-                    <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
-                    <div style={{fontSize:14, fontWeight:500, color:C.text, fontFamily:F, marginTop:4, letterSpacing:"-0.005em", fontVariantNumeric:"tabular-nums"}}>{v}</div>
-                  </div>
-                ))}
+              <div style={{display:"grid", gridTemplateColumns:mobile?"minmax(0,1fr) minmax(0,1fr)":"repeat(3, minmax(0,1fr))", gap:mobile?10:14}}>
+                <InputField label="Type" type="text" val={prop.type||""} set={v=>u("type",v)} mobile={mobile} />
+                <InputField label="Beds" val={prop.beds||0} set={v=>u("beds",v)} mobile={mobile} />
+                <InputField label="Baths" val={prop.baths||0} set={v=>u("baths",v)} mobile={mobile} />
+                <InputField label="Sq ft" val={prop.sqft||0} set={v=>u("sqft",v)} mobile={mobile} />
+                <InputField label="Year built" type="text" val={prop.yearBuilt||""} set={v=>u("yearBuilt",v)} mobile={mobile} />
+                <InputField label="Tax value" val={prop.taxValue||0} set={v=>u("taxValue",v)} pre="$" mobile={mobile} />
+                <InputField label="Lockbox" type="text" val={prop.lockboxCode||""} set={v=>u("lockboxCode",v)} mobile={mobile} />
+                <InputField label="Parcel ID" type="text" val={prop.parcelId||""} set={v=>u("parcelId",v)} mobile={mobile} />
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Ownership</label>
+                  <input value={prop.llc||""} onChange={e=>u("llc",e.target.value)} list="dh-llcs"
+                    placeholder="Which LLC owns this?" style={iS(mobile)} />
+                  <datalist id="dh-llcs">{(llcs||[]).map(l => <option key={l} value={l}/>)}</datalist>
+                </div>
               </div>
             </SectionBlock>
             <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:10, marginBottom:14}}>
@@ -3621,7 +3626,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
             <I.alert size={14}/> {err}
           </div>
         )}
-        <SelectField label="LLC owner" value={p.llc} onChange={v=>u("llc",v)} options={llcs} mobile={mobile}/>
+        <SelectField label="Ownership" value={p.llc} onChange={v=>u("llc",v)} options={llcs} mobile={mobile}/>
         <InputField label="Purchase price" val={p.purchasePrice||0} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
         <InputField label="Expected rent" val={p.rentAmount||0} set={v=>u("rentAmount",v)} pre="$" suf="/mo"
           note={p.rentEstimate>0?"Est. "+$(p.rentEstimate)+"/mo":""} mobile={mobile} />
