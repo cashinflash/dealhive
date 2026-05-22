@@ -15,9 +15,13 @@ body,
   width: 100%;
   margin: 0;
   padding: 0;
-  /* Hard lock against any accidental horizontal scrolling. The app shell
-     extends edge-to-edge, so we should never see sideways drift. */
+  /* Hard lock against any accidental horizontal scrolling. Use `clip`
+     rather than `hidden` so none of these become a scroll container —
+     a scroll-container ancestor would break `position: sticky` on the
+     mobile header. `hidden` stays as the fallback for browsers without
+     overflow: clip. */
   overflow-x: hidden;
+  overflow-x: clip;
   overscroll-behavior-x: none;
 }
 
