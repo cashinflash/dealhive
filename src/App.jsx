@@ -1116,12 +1116,37 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
   // purchase + repairs.
   const occOOP = occProps.reduce((s,p) => s+calc(p).chosenOOP, 0);
   const allOOP = properties.reduce((s,p) => s+calc(p).chosenOOP, 0);
+  // chosenOOP already bundles repairs in; split them out so each card can show
+  // Out of pocket (acquisition: purchase for cash, down + closing for finance)
+  // + Repairs = Total, without double-counting.
+  const occRepairs = occProps.reduce((s,p) => s+(p.repairCosts||0), 0);
+  const allRepairs = properties.reduce((s,p) => s+(p.repairCosts||0), 0);
+  const occAcq = occOOP - occRepairs;
+  const allAcq = allOOP - allRepairs;
   // Cash-flow figure without the "/mo" suffix (rendered separately, smaller).
   const cfFig = (n) => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString(); };
   const alerts     = properties.filter(p => {
     const d = dU(p.leaseEnd);
     return p.tenantStatus==="Late" || (d!=null && d<=60 && d>=0);
   });
+
+  // Out of pocket + repairs = total, shown at the bottom of the unit cards.
+  const oopBreakdown = (acq, repairs, total) => (
+    <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, marginBottom:5}}>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Out of pocket</span>
+        <span style={{fontSize:12, fontWeight:500, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(acq)}</span>
+      </div>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, marginBottom:7}}>
+        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>+ Repairs</span>
+        <span style={{fontSize:12, fontWeight:500, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(repairs)}</span>
+      </div>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, paddingTop:7, borderTop:"1px solid "+C.border}}>
+        <span style={{fontSize:12, fontWeight:700, color:C.text, fontFamily:F}}>Total</span>
+        <span style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(total)}</span>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
@@ -1169,10 +1194,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
           <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
             {properties.length>0 ? Math.round(occupied/Math.max(properties.length,1)*100)+"% occupied" : "—"}
           </div>
-          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
-            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Out of pocket</span>
-            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(occOOP)}</span>
-          </div>
+          {oopBreakdown(occAcq, occRepairs, occOOP)}
         </Card>
         <Card style={{padding:18, display:"flex", flexDirection:"column"}}>
           <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Total units</div>
@@ -1182,10 +1204,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
           <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:6}}>
             {occupied} occupied · {Math.max(properties.length-occupied,0)} vacant
           </div>
-          <div style={{marginTop:"auto", paddingTop:12, borderTop:"1px solid "+C.border, display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8}}>
-            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Out of pocket</span>
-            <span style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(allOOP)}</span>
-          </div>
+          {oopBreakdown(allAcq, allRepairs, allOOP)}
         </Card>
       </div>
 
