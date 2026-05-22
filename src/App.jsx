@@ -166,7 +166,7 @@ const svUrl   = (lat,lng,w=800,h=400) => "https://maps.googleapis.com/maps/api/s
 
 const newProp = (base={}) => ({
   id:"p"+Date.now(), address:"", city:"", state:"", zip:"", lat:null, lng:null,
-  llc:"My LLC", type:"Single Family", beds:3, baths:1, sqft:0, yearBuilt:2000,
+  llc:"", type:"", beds:0, baths:0, sqft:0, yearBuilt:0,
   purchasePrice:0, repairCosts:0, rentAmount:0, taxValue:0, parcelId:"",
   homeValueLow:0, homeValueMedian:0, homeValueHigh:0,
   repairLight:0, repairMedium:0, repairFull:0,
@@ -1558,7 +1558,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
           <div style={{flex:1, minWidth:0}}>
             <div style={{fontWeight:600, fontSize:mobile?15:17, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{prop.address}</div>
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{prop.city}, {prop.state} · {prop.llc}</div>
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{prop.city}, {prop.state}{prop.llc ? " · "+prop.llc : ""}</div>
           </div>
           <div style={{display:"flex", gap:8}}>
             <a href={"https://www.zillow.com/homes/"+encodeURIComponent(prop.address+" "+prop.city)+"_rb/"}
@@ -3560,18 +3560,19 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  const runSearch = async () => {
-    if (!p.address) { setErr("Enter an address first."); return; }
+  const pullData = async (addr, city, state, zip) => {
+    if (!addr) { setErr("Enter an address first."); return; }
     if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Lease Comps page."); return; }
     setL(true); setErr("");
     try {
-      const key = lookupKey("rc-detail", p.address, p.city, p.state, p.zip);
-      const data = await apiLookup(key, () => rentcastFetch(p.address, p.city, p.state, p.zip, rentcastKey));
-      if (!rcHasData(data)) setErr("No property data found for that address. Try adding city, state and ZIP.");
+      const key = lookupKey("rc-detail", addr, city, state, zip);
+      const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rentcastKey));
+      if (!rcHasData(data)) setErr("No public records found for that address yet — you can fill the details in manually.");
       else setP(prev => applyRentcast(prev, data, renoRates));
-    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed."); }
+    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Auto-fill failed."); }
     setL(false);
   };
+  const runSearch = () => pullData(p.address, p.city, p.state, p.zip);
 
   const outerStyle = mobile
     ? {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500, display:"flex", alignItems:"flex-end",
@@ -3604,7 +3605,10 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
         <div style={{marginBottom:14}}>
           <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Address</label>
           <AddressInput value={p.address} onChange={v=>u("address",v)}
-            onSelect={loc=>setP(prev=>({...prev,address:loc.address,city:loc.city,state:loc.state,zip:loc.zip,lat:loc.lat,lng:loc.lng}))}
+            onSelect={loc=>{
+              setP(prev=>({...prev,address:loc.address,city:loc.city,state:loc.state,zip:loc.zip,lat:loc.lat,lng:loc.lng}));
+              pullData(loc.address, loc.city, loc.state, loc.zip);
+            }}
             placeholder="Start typing an address…"
             mobile={mobile} />
         </div>
@@ -3626,7 +3630,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
             <I.alert size={14}/> {err}
           </div>
         )}
-        <SelectField label="Ownership" value={p.llc} onChange={v=>u("llc",v)} options={llcs} mobile={mobile}/>
+        <SelectField label="Ownership" value={p.llc} onChange={v=>u("llc",v)} options={[["","Choose an LLC…"], ...llcs]} mobile={mobile}/>
         <InputField label="Purchase price" val={p.purchasePrice||0} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
         <InputField label="Expected rent" val={p.rentAmount||0} set={v=>u("rentAmount",v)} pre="$" suf="/mo"
           note={p.rentEstimate>0?"Est. "+$(p.rentEstimate)+"/mo":""} mobile={mobile} />
