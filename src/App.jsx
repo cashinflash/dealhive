@@ -29,6 +29,9 @@ const RC_BASE        = "https://api.rentcast.io/v1";
 const TRIAL_DAYS     = 7;
 const VERSION        = "1.0.0";
 const DEFAULT_CLOSING = 10895;
+// Ohio effective property-tax rate (~2.33%/yr). Monthly = taxValue * rate / 12.
+const OH_TAX_RATE = 0.0233;
+const isOhio = obj => String((obj && obj.state) || "").trim().toUpperCase() === "OH";
 
 // -- API cost controls ---------------------------------------------------------
 // Each external property/comp "lookup" can fan out to several billable API
@@ -398,7 +401,9 @@ const applyRentcast = (prev, data, rates) => {
     lat:       p.latitude  || val.latitude  || rent.latitude  || prev.lat,
     lng:       p.longitude || val.longitude || rent.longitude || prev.lng,
     type:      p.propertyType || prev.type,
-    expPropTax: annual ? Math.round(annual/12) : (taxVal ? Math.round(taxVal*0.024/12) : prev.expPropTax),
+    expPropTax: (isOhio(prev) && taxVal) ? Math.round(taxVal*OH_TAX_RATE/12)
+              : annual ? Math.round(annual/12)
+              : (taxVal ? Math.round(taxVal*0.024/12) : prev.expPropTax),
     homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
     flipSalePrice: hi || prev.flipSalePrice,
     brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
@@ -941,6 +946,14 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
+
+  // Ohio: auto-fill the monthly property tax from the tax value (≈2.33%/yr ÷ 12).
+  useEffect(() => {
+    if (isOhio(p) && (p.taxValue||0) > 0) {
+      const monthly = Math.round((p.taxValue||0) * OH_TAX_RATE / 12);
+      if (p.expPropTax !== monthly) set({...p, expPropTax: monthly});
+    }
+  }, [p.state, p.taxValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
