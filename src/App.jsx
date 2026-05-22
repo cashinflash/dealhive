@@ -937,16 +937,17 @@ function AppreciationProjector({homeValue, purchasePrice, mobile}) {
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
 
   return (
     <div>
-      {/* Strategy toggle */}
+      {/* Strategy tabs — sticky on mobile so the cash/finance switch stays in view */}
       <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
-        background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
+        background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
+        ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
         {[["cash","All cash"],["finance","Financed"]].map(([id,label]) => {
           const active = s===id;
           return (
@@ -995,8 +996,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
-        {/* All Cash */}
-        <SectionBlock title="All cash" color={s==="cash"?C.amber:C.borderHover}>
+        {/* All cash — shown on the All cash tab only */}
+        {s==="cash" && (
+        <SectionBlock title="All cash" color={C.amber}>
           <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
           <InputField label="Repair costs" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile} />
           <InputField label="Monthly rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
@@ -1007,9 +1009,11 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <DataRow label="Cash-on-cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
           <DataRow label="Cap rate" value={pct(m.cashCap)} />
         </SectionBlock>
+        )}
 
-        {/* Finance */}
-        <SectionBlock title="Financed" color={s==="finance"?C.green:C.borderHover}>
+        {/* Financed — shown on the Financed tab only */}
+        {s==="finance" && (
+        <SectionBlock title="Financed" color={C.green}>
           <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
           <InputField label="Down payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
           <InputField label="Interest rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
@@ -1025,8 +1029,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <DataRow label="Cap rate" value={pct(m.finCap)} />
           <DataRow label="Years to payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
         </SectionBlock>
+        )}
 
-        {/* Expenses */}
+        {/* Monthly expenses — shown on both tabs (shared data) */}
         <SectionBlock title="Monthly expenses" color={C.green}>
           <InputField label="Property tax / mo" val={p.expPropTax} set={v=>u("expPropTax",v)} pre="$" mobile={mobile} />
           <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
@@ -1037,7 +1042,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <DataRow label="Yearly rent" value={$((p.rentAmount||0)*12)} />
         </SectionBlock>
 
-        {/* BRRR */}
+        {/* BRRRR — All cash tab only */}
+        {s==="cash" && (
         <SectionBlock title="BRRRR estimate" color={C.purple} collapsible defaultOpen={false}>
           <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
             borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
@@ -1050,8 +1056,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <DataRow label="BRRRR cash flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
           <DataRow label="Cash recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
         </SectionBlock>
+        )}
 
-        {/* Fix & Flip */}
+        {/* Fix & flip — All cash tab only */}
+        {s==="cash" && (
         <SectionBlock title="Fix & flip" color={C.amber} collapsible defaultOpen={false}>
           <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
             borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
@@ -1064,8 +1072,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile}) {
           <DataRow label="Net profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
           <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
         </SectionBlock>
+        )}
 
-        {/* Repair Estimator */}
+        {/* Repair Estimator — shown on both tabs */}
         <SectionBlock title="Repair estimator" color={C.borderHover}>
           {p.sqft>0 && (
             <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
@@ -1619,7 +1628,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
             </div>
           </div>
         )}
-        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} />}
+        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
@@ -3079,7 +3088,7 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
       )}
 
       {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} />
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
       {/* Recommendation */}
       {d.purchasePrice > 0 && (() => {
