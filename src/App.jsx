@@ -3289,7 +3289,73 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
   );
 }
 
-// -- Lease Comps ---------------------------------------------------------------
+// Small Leaflet map for the Comps page — shows the searched property plus
+// each comp so the user can see how far away each is. Color-coded per mode
+// (orange for rent, blue for sale). Loads Leaflet on demand if it isn't
+// already on the page.
+function CompsMap({ center, comps, mode, mobile }) {
+  const ref  = useRef(null);
+  const inst = useRef(null);
+  const [ready, setReady] = useState(!!window.L);
+
+  useEffect(() => {
+    if (window.L) { setReady(true); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    s.onload = () => setReady(true);
+    document.head.appendChild(s);
+    const l = document.createElement("link");
+    l.rel  = "stylesheet";
+    l.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(l);
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !ref.current || !center) return;
+    if (inst.current) { inst.current.remove(); inst.current = null; }
+    const L = window.L;
+    const accent = mode === "rent" ? "#E8731C" : "#2563eb";
+    const map = L.map(ref.current, { zoomControl:true, scrollWheelZoom:false }).setView([center.lat, center.lng], 14);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution:"(c) OpenStreetMap" }).addTo(map);
+
+    const subjectIcon = L.divIcon({
+      className:"dh-comp-subject",
+      html:`<div style="width:18px;height:18px;border-radius:50%;background:${accent};border:3px solid white;box-shadow:0 0 0 2px ${accent};"></div>`,
+      iconSize:[18,18], iconAnchor:[9,9],
+    });
+    L.marker([center.lat, center.lng], { icon:subjectIcon, zIndexOffset:1000 }).addTo(map).bindPopup("<b>Your search</b>");
+
+    const compIcon = L.divIcon({
+      className:"dh-comp-marker",
+      html:`<div style="width:12px;height:12px;border-radius:50%;background:white;border:2.5px solid ${accent};box-shadow:0 1px 3px rgba(0,0,0,.25);"></div>`,
+      iconSize:[12,12], iconAnchor:[6,6],
+    });
+
+    const bounds = [[center.lat, center.lng]];
+    (comps||[]).forEach(c => {
+      if (!c.latitude || !c.longitude) return;
+      const m = L.marker([c.latitude, c.longitude], { icon:compIcon }).addTo(map);
+      const priceNum = c.price || c.rent || 0;
+      const priceLabel = mode === "rent" ? "$"+priceNum.toLocaleString()+"/mo" : "$"+priceNum.toLocaleString();
+      const dist = c.distance != null ? " &middot; "+Number(c.distance).toFixed(2)+" mi" : "";
+      const addr = (c.formattedAddress||c.address||"").replace(/</g,"&lt;");
+      m.bindPopup(`<strong>${priceLabel}</strong>${dist}<br/>${addr}`);
+      bounds.push([c.latitude, c.longitude]);
+    });
+    if (bounds.length > 1) map.fitBounds(bounds, { padding:[30,30], maxZoom:15 });
+
+    inst.current = map;
+    return () => { if (inst.current) { inst.current.remove(); inst.current = null; } };
+  }, [ready, center, comps, mode]);
+
+  return (
+    <div style={{marginBottom:20, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border, background:C.bgSubtle}}>
+      <div ref={ref} style={{ height: mobile ? 220 : 300, width:"100%" }} />
+    </div>
+  );
+}
+
+// -- Comps ---------------------------------------------------------------------
 function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   const [address,setAddress] = useState("");
   const [location,setLocation] = useState(null);
@@ -3465,6 +3531,11 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
               </div>
             </Card>
           )}
+          {(location || rentComps.estimate?.latitude) && (
+            <CompsMap mobile={mobile} mode="rent"
+              center={location ? {lat:location.lat, lng:location.lng} : {lat:rentComps.estimate.latitude, lng:rentComps.estimate.longitude}}
+              comps={rentComps.listings||[]} />
+          )}
           {rentComps.listings?.length > 0 ? (
             <div>
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
@@ -3561,6 +3632,11 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                 {saleComps.comparables?.length > 0 && <> · Based on {saleComps.comparables.length} recent sales</>}
               </div>
             </Card>
+          )}
+          {(location || saleComps.latitude) && (
+            <CompsMap mobile={mobile} mode="sale"
+              center={location ? {lat:location.lat, lng:location.lng} : {lat:saleComps.latitude, lng:saleComps.longitude}}
+              comps={saleComps.comparables||[]} />
           )}
           {saleComps.comparables?.length > 0 ? (
             <div>
