@@ -3295,8 +3295,10 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   const [location,setLocation] = useState(null);
   const [beds,setBeds]         = useState(3);
   const [autoDetected,setAuto] = useState(false);
+  const [mode,setMode]         = useState("rent");        // "rent" | "sale"
   const [loading,setL]         = useState(false);
-  const [comps,setComps]       = useState(null);
+  const [rentComps,setRentComps] = useState(null);
+  const [saleComps,setSaleComps] = useState(null);
   const [err,setErr]           = useState("");
   const [showKeyInput,setShowKey] = useState(!rentcastKey);
   const [keyInput,setKeyInput] = useState(rentcastKey||"");
@@ -3317,40 +3319,44 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
     } catch {}
   };
 
+  // Run only the active mode's search — the user picks one or the other, so
+  // we don't fan out to all endpoints.
   const search = async () => {
     if (!rentcastKey) { setErr("Add your free Rentcast API key first."); return; }
     if (!address)     { setErr("Enter an address first."); return; }
-    setL(true); setErr(""); setComps(null);
+    setL(true); setErr("");
     try {
-      // One comp search = rent estimate + active rental listings + sale value
-      // estimate (which includes recent sale comparables), billed as a single
-      // lookup so the cap counts it once.
-      const result = await apiLookup(lookupKey("rc-comp", address, beds), async () => {
-        const q = encodeURIComponent(address);
-        const h = {"X-Api-Key":rentcastKey};
-        const r  = await fetch("https://api.rentcast.io/v1/avm/rent/long-term?address="+q+"&bedrooms="+beds, {headers:h});
-        const d  = await r.json();
-        let listings = [];
-        try {
-          const r2 = await fetch("https://api.rentcast.io/v1/listings/rental/long-term?address="+q+"&bedrooms="+beds+"&radius=1&limit=12&status=Active", {headers:h});
-          const d2 = await r2.json();
-          listings = Array.isArray(d2) ? d2 : (d2?.listings||[]);
-        } catch {}
-        let value = null;
-        try {
-          const r3 = await fetch("https://api.rentcast.io/v1/avm/value?address="+q+"&bedrooms="+beds, {headers:h});
-          const d3 = await r3.json();
-          if (d3 && (d3.price || d3.priceRangeLow)) value = d3;
-        } catch {}
-        return {estimate:d, listings, value};
-      });
-      setComps(result);
+      const q = encodeURIComponent(address);
+      const h = {"X-Api-Key":rentcastKey};
+      if (mode === "rent") {
+        // Rent estimate + active rental listings, billed as one lookup.
+        const result = await apiLookup(lookupKey("rc-rent-comp", address, beds), async () => {
+          const r  = await fetch("https://api.rentcast.io/v1/avm/rent/long-term?address="+q+"&bedrooms="+beds, {headers:h});
+          const d  = await r.json();
+          let listings = [];
+          try {
+            const r2 = await fetch("https://api.rentcast.io/v1/listings/rental/long-term?address="+q+"&bedrooms="+beds+"&radius=1&limit=12&status=Active", {headers:h});
+            const d2 = await r2.json();
+            listings = Array.isArray(d2) ? d2 : (d2?.listings||[]);
+          } catch {}
+          return {estimate:d, listings};
+        });
+        setRentComps(result);
+      } else {
+        // Sale value estimate + recent sale comparables.
+        const result = await apiLookup(lookupKey("rc-sale-comp", address, beds), async () => {
+          const r = await fetch("https://api.rentcast.io/v1/avm/value?address="+q+"&bedrooms="+beds, {headers:h});
+          const d = await r.json();
+          return (d && (d.price || d.priceRangeLow)) ? d : {};
+        });
+        setSaleComps(result);
+      }
     } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check your API key and address."); }
     setL(false);
   };
 
-  const avg = comps?.listings?.length
-    ? Math.round(comps.listings.reduce((s,l)=>s+(l.price||l.rent||0),0)/comps.listings.length)
+  const avg = rentComps?.listings?.length
+    ? Math.round(rentComps.listings.reduce((s,l)=>s+(l.price||l.rent||0),0)/rentComps.listings.length)
     : 0;
 
   return (
@@ -3383,10 +3389,31 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
       )}
 
       <SectionBlock title="Search comps" color={C.green}>
+        {/* Rent vs Sale tabs — only the active mode's search runs */}
+        <div style={{display:"flex", gap:0, marginBottom:14, padding:4,
+          background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
+          {[["rent","Rent comps"],["sale","Sale comps"]].map(([id,label]) => {
+            const active = mode===id;
+            return (
+              <button key={id} type="button" onClick={()=>{setMode(id); setErr("");}}
+                style={{
+                  flex:1, padding:"7px 14px", borderRadius:C.r1, border:"none",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active?600:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                  letterSpacing:"-0.005em",
+                  boxShadow: active ? C.sh1 : "none",
+                  transition:"background .15s, color .15s, box-shadow .15s",
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
         <div style={{marginBottom:14}}>
           <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Address</label>
           <AddressInput value={address} onChange={setAddress} onSelect={handleSelect}
-            placeholder="Enter an address to find nearby rentals…" mobile={mobile} />
+            placeholder={mode==="rent" ? "Enter an address to find nearby rentals…" : "Enter an address to find recent sales…"} mobile={mobile} />
         </div>
         <div style={{marginBottom:14}}>
           <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
@@ -3400,7 +3427,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
         <div style={{display:"flex", gap:8, alignItems:"center"}}>
           <button onClick={search} disabled={loading}
             {...btnStyle("primary","md", {flex:1})}>
-            {loading ? "Searching…" : <><I.search size={14}/> Run search</>}
+            {loading ? "Searching…" : <><I.search size={14}/> Find {mode==="rent" ? "rent" : "sale"} comps</>}
           </button>
           {rentcastKey && (
             <button onClick={()=>setShowKey(!showKeyInput)} {...btnStyle("secondary","md")}>
@@ -3417,36 +3444,37 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 
       {location && <StreetViewImg lat={location.lat} lng={location.lng} address={address} height={180} />}
 
-      {comps && (
+      {/* Rent comps results */}
+      {mode === "rent" && rentComps && (
         <div>
-          {comps.estimate?.rent && (
+          {rentComps.estimate?.rent && (
             <Card style={{padding:24, marginBottom:20, marginTop:6,
               background:"linear-gradient(180deg, #fff 0%, "+C.greenSubtle+" 100%)",
               borderColor:C.greenBorder}}>
               <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
                 <span style={{fontSize:11, fontWeight:600, color:C.greenDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
-                  Market estimate · {beds} bed
+                  Market rent estimate · {beds} bed
                 </span>
               </div>
               <div style={{fontSize:42, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.03em", lineHeight:1, fontVariantNumeric:"tabular-nums"}}>
-                {$(comps.estimate.rent)}<span style={{fontSize:18, color:C.textSub, fontWeight:500}}>/mo</span>
+                {$(rentComps.estimate.rent)}<span style={{fontSize:18, color:C.textSub, fontWeight:500}}>/mo</span>
               </div>
               <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:8, fontVariantNumeric:"tabular-nums"}}>
-                Range {$(comps.estimate.rentRangeLow)} – {$(comps.estimate.rentRangeHigh)}/mo
-                {avg > 0 && <> · Avg of {comps.listings.length} listings: <b style={{color:C.text, fontWeight:600}}>{$(avg)}</b></>}
+                Range {$(rentComps.estimate.rentRangeLow)} – {$(rentComps.estimate.rentRangeHigh)}/mo
+                {avg > 0 && <> · Avg of {rentComps.listings.length} listings: <b style={{color:C.text, fontWeight:600}}>{$(avg)}</b></>}
               </div>
             </Card>
           )}
-          {comps.listings?.length > 0 ? (
+          {rentComps.listings?.length > 0 ? (
             <div>
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
                 <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
                   Active listings
                 </div>
-                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{comps.listings.length} found</span>
+                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{rentComps.listings.length} found</span>
               </div>
               <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
-                {comps.listings.map((l,i) => {
+                {rentComps.listings.map((l,i) => {
                   const rent = l.price||l.rent||0;
                   const img  = l.photoUrl||(l.photos?.[0]?.url)||null;
                   return (
@@ -3510,10 +3538,14 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
               body="Try a wider search area or different bedroom count. The market estimate above is still valid."
             />
           )}
+        </div>
+      )}
 
-          {/* Sale value estimate */}
-          {comps.value?.price > 0 && (
-            <Card style={{padding:24, marginTop:24, marginBottom:20,
+      {/* Sale comps results */}
+      {mode === "sale" && saleComps && (
+        <div>
+          {saleComps.price > 0 && (
+            <Card style={{padding:24, marginBottom:20, marginTop:6,
               background:"linear-gradient(180deg, #fff 0%, "+C.blueSubtle+" 100%)",
               borderColor:C.blueBorder}}>
               <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
@@ -3522,26 +3554,24 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                 </span>
               </div>
               <div style={{fontSize:42, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.03em", lineHeight:1, fontVariantNumeric:"tabular-nums"}}>
-                {$(comps.value.price)}
+                {$(saleComps.price)}
               </div>
               <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:8, fontVariantNumeric:"tabular-nums"}}>
-                Range {$(comps.value.priceRangeLow)} – {$(comps.value.priceRangeHigh)}
-                {comps.value.comparables?.length > 0 && <> · Based on {comps.value.comparables.length} recent sales</>}
+                Range {$(saleComps.priceRangeLow)} – {$(saleComps.priceRangeHigh)}
+                {saleComps.comparables?.length > 0 && <> · Based on {saleComps.comparables.length} recent sales</>}
               </div>
             </Card>
           )}
-
-          {/* Sale comps grid */}
-          {comps.value?.comparables?.length > 0 && (
+          {saleComps.comparables?.length > 0 ? (
             <div>
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
                 <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
                   Sale comps
                 </div>
-                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{comps.value.comparables.length} found</span>
+                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{saleComps.comparables.length} found</span>
               </div>
               <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
-                {comps.value.comparables.map((c,i) => {
+                {saleComps.comparables.map((c,i) => {
                   const soldDate = c.removedDate || c.lastSeenDate || c.listedDate;
                   return (
                     <Card key={c.id||i} hover padding={0}>
@@ -3595,6 +3625,12 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                 })}
               </div>
             </div>
+          ) : (
+            <EmptyState
+              icon={<I.search size={20}/>}
+              title="No recent sales nearby"
+              body="Try a wider area or different bedroom count."
+            />
           )}
         </div>
       )}
