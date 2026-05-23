@@ -3545,7 +3545,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                 <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{rentComps.listings.length} found</span>
               </div>
               <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
-                {rentComps.listings.map((l,i) => {
+                {rentComps.listings.slice().sort((a,b)=>(a.distance??1e9)-(b.distance??1e9)).map((l,i) => {
                   const rent = l.price||l.rent||0;
                   const img  = l.photoUrl||(l.photos?.[0]?.url)||null;
                   return (
@@ -3647,7 +3647,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                 <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{saleComps.comparables.length} found</span>
               </div>
               <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
-                {saleComps.comparables.map((c,i) => {
+                {saleComps.comparables.slice().sort((a,b)=>(a.distance??1e9)-(b.distance??1e9)).map((c,i) => {
                   const soldDate = c.removedDate || c.lastSeenDate || c.listedDate;
                   return (
                     <Card key={c.id||i} hover padding={0}>
