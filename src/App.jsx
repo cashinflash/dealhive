@@ -1576,7 +1576,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   // overwrites public-record + valuation fields, so the user's ownership,
   // lockbox, purchase price, rent, tenant, projects and expenses are kept.
   const refreshData = async () => {
-    if (!rentcastKey) { setRefreshErr("Add your RentCast API key on the Lease Comps page first."); return; }
+    if (!rentcastKey) { setRefreshErr("Add your RentCast API key on the Comps page first."); return; }
     setRefreshing(true); setRefreshErr("");
     try {
       const key = lookupKey("rc-detail", prop.address, prop.city, prop.state, prop.zip);
@@ -3075,7 +3075,7 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 
   const runSearch = async () => {
     if (!d.address) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Lease Comps page."); return; }
+    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Comps page."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", d.address, d.city, d.state, d.zip);
@@ -3322,7 +3322,9 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
     if (!address)     { setErr("Enter an address first."); return; }
     setL(true); setErr(""); setComps(null);
     try {
-      // One comp search = the estimate + the listings, billed as a single lookup.
+      // One comp search = rent estimate + active rental listings + sale value
+      // estimate (which includes recent sale comparables), billed as a single
+      // lookup so the cap counts it once.
       const result = await apiLookup(lookupKey("rc-comp", address, beds), async () => {
         const q = encodeURIComponent(address);
         const h = {"X-Api-Key":rentcastKey};
@@ -3334,7 +3336,13 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
           const d2 = await r2.json();
           listings = Array.isArray(d2) ? d2 : (d2?.listings||[]);
         } catch {}
-        return {estimate:d, listings};
+        let value = null;
+        try {
+          const r3 = await fetch("https://api.rentcast.io/v1/avm/value?address="+q+"&bedrooms="+beds, {headers:h});
+          const d3 = await r3.json();
+          if (d3 && (d3.price || d3.priceRangeLow)) value = d3;
+        } catch {}
+        return {estimate:d, listings, value};
       });
       setComps(result);
     } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check your API key and address."); }
@@ -3347,7 +3355,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
-      <PageHeader title="Lease Comps" subtitle="Real rental comps for any address" />
+      <PageHeader title="Comps" subtitle="Real rental and sale comps for any address" />
 
       {(!rentcastKey || showKeyInput) && (
         <Card style={{padding:18, marginBottom:18, borderColor:C.amberBorder, background:C.amberSubtle}}>
@@ -3502,6 +3510,92 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
               body="Try a wider search area or different bedroom count. The market estimate above is still valid."
             />
           )}
+
+          {/* Sale value estimate */}
+          {comps.value?.price > 0 && (
+            <Card style={{padding:24, marginTop:24, marginBottom:20,
+              background:"linear-gradient(180deg, #fff 0%, "+C.blueSubtle+" 100%)",
+              borderColor:C.blueBorder}}>
+              <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:8}}>
+                <span style={{fontSize:11, fontWeight:600, color:C.blueDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+                  Estimated sale value · {beds} bed
+                </span>
+              </div>
+              <div style={{fontSize:42, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.03em", lineHeight:1, fontVariantNumeric:"tabular-nums"}}>
+                {$(comps.value.price)}
+              </div>
+              <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:8, fontVariantNumeric:"tabular-nums"}}>
+                Range {$(comps.value.priceRangeLow)} – {$(comps.value.priceRangeHigh)}
+                {comps.value.comparables?.length > 0 && <> · Based on {comps.value.comparables.length} recent sales</>}
+              </div>
+            </Card>
+          )}
+
+          {/* Sale comps grid */}
+          {comps.value?.comparables?.length > 0 && (
+            <div>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14}}>
+                <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
+                  Sale comps
+                </div>
+                <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{comps.value.comparables.length} found</span>
+              </div>
+              <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"repeat(auto-fill,minmax(280px,1fr))", gap:14}}>
+                {comps.value.comparables.map((c,i) => {
+                  const soldDate = c.removedDate || c.lastSeenDate || c.listedDate;
+                  return (
+                    <Card key={c.id||i} hover padding={0}>
+                      <div style={{height:170, background:C.bgSubtle, position:"relative"}}>
+                        {(c.latitude && c.longitude)
+                          ? <img src={svUrl(c.latitude,c.longitude,800,340)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
+                          : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
+                              <I.building size={28}/>
+                            </div>}
+                        <div style={{position:"absolute", top:10, right:10}}>
+                          <Badge label="Sold" bg={C.blueLight} c={C.blueDark} dot/>
+                        </div>
+                        {c.distance != null && (
+                          <div style={{position:"absolute", bottom:10, left:10,
+                            background:"rgba(9,9,11,.7)", color:"white",
+                            padding:"3px 8px", borderRadius:C.rFull,
+                            fontSize:11, fontFamily:F, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>
+                            {Number(c.distance).toFixed(1)} mi
+                          </div>
+                        )}
+                      </div>
+                      <div style={{padding:14}}>
+                        <div style={{fontWeight:700, fontSize:22, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>
+                          {$(c.price||0)}
+                        </div>
+                        <div style={{fontSize:13, color:C.text, fontWeight:500, marginTop:4, fontFamily:F, letterSpacing:"-0.005em",
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                          {c.formattedAddress || c.address}
+                        </div>
+                        <div style={{display:"flex", gap:14, marginTop:10, flexWrap:"wrap", fontVariantNumeric:"tabular-nums"}}>
+                          {c.bedrooms     && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{c.bedrooms} bd</span>}
+                          {c.bathrooms    && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{c.bathrooms} ba</span>}
+                          {c.squareFootage && <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{c.squareFootage.toLocaleString()} sqft</span>}
+                          {c.yearBuilt    && <span style={{fontSize:12, color:C.textMuted, fontFamily:F}}>Built {c.yearBuilt}</span>}
+                        </div>
+                        {soldDate && (
+                          <div style={{fontSize:11, color:C.textMuted, marginTop:10, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                            Sold {new Date(soldDate).toLocaleDateString()}
+                          </div>
+                        )}
+                        {c.latitude && c.longitude && (
+                          <a href={"https://www.google.com/maps?q="+c.latitude+","+c.longitude}
+                            target="_blank" rel="noreferrer"
+                            {...btnStyle("secondary","sm", {marginTop:12, width:"100%"})}>
+                            <I.pin size={12}/> Open in Maps
+                          </a>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3551,7 +3645,7 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
                 : <Badge label="Add your key" bg={C.amberSubtle} c={C.amberDark} dot/>}
             </div>
             <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
-              Powers everything — property details, tax records, home values, rent estimates and lease comps · 140M+ U.S. properties. Add your key on the Lease Comps page.
+              Powers everything — property details, tax records, home values, rent estimates, sale comps and lease comps · 140M+ U.S. properties. Add your key on the Comps page.
             </div>
           </div>
         </div>
@@ -3628,7 +3722,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 
   const pullData = async (addr, city, state, zip) => {
     if (!addr) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Lease Comps page."); return; }
+    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Comps page."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", addr, city, state, zip);
@@ -3715,7 +3809,7 @@ const NAV_ITEMS = [
   {id:"properties", Icon:I.building,       label:"Properties"},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
   {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
-  {id:"comps",      Icon:I.chart,          label:"Lease Comps"},
+  {id:"comps",      Icon:I.chart,          label:"Comps"},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
@@ -3837,7 +3931,7 @@ function MobileHeader({page, onBack, toast}) {
   const showBack = page==="property";
   const titles = {
     dashboard:"Portfolio", properties:"Properties", projects:"Projects",
-    deal:"Deal Analyzer", comps:"Lease Comps",
+    deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:"Property"
   };
   return (
@@ -3887,7 +3981,7 @@ function MobileHeader({page, onBack, toast}) {
 function DesktopTopBar({page, propAddress, toast}) {
   const titles = {
     dashboard:"Dashboard", properties:"Properties", projects:"Projects",
-    deal:"Deal Analyzer", comps:"Lease Comps",
+    deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:propAddress||"Property"
   };
   return (
