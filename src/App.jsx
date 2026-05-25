@@ -1821,36 +1821,6 @@ const formatDue = (iso) => {
   return d.toLocaleDateString(undefined, sameYear ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
 };
 
-// MMM D, h:mm a — for the call-note timeline timestamps.
-const formatNoteStamp = (d=new Date()) => d.toLocaleString("en-US", {
-  month:"short", day:"numeric", hour:"numeric", minute:"2-digit", hour12:true,
-});
-
-// -- Call-note (notebook) date helpers -----------------------------------------
-// New notes store an ISO `ts`; legacy notes only have a formatted `date` string.
-const noteDate = (n) => {
-  if (n && n.ts) { const d = new Date(n.ts); return isNaN(d) ? null : d; }
-  return null; // legacy notes (no ts) get bucketed under "Earlier"
-};
-const dayKeyOf = (d) => d ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : "earlier";
-const dayLabelOf = (d) => {
-  if (!d) return "Earlier notes";
-  const today = startOfToday();
-  const that  = new Date(d); that.setHours(0,0,0,0);
-  const diff  = Math.round((that - today) / 86400000);
-  const md    = d.toLocaleDateString("en-US", {month:"long", day:"numeric"});
-  const wd    = d.toLocaleDateString("en-US", {weekday:"long"});
-  if (diff === 0)  return `Today · ${wd}, ${md}`;
-  if (diff === -1) return `Yesterday · ${md}`;
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  return sameYear ? `${wd}, ${md}` : `${md}, ${d.getFullYear()}`;
-};
-const noteTimeOf = (n) => {
-  const d = noteDate(n);
-  if (d) return d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
-  return n.date || ""; // legacy fallback shows whatever string we stored
-};
-
 // Add 1 day to an ISO date (or "today" if none), return YYYY-MM-DD.
 const nextDayIso = (iso) => {
   const base = iso ? new Date(iso + "T00:00:00") : startOfToday();
@@ -1863,30 +1833,128 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 };
 
-// Render **bold** markdown inline (used in call notes).
-const renderRich = (text) => {
-  if (!text) return null;
-  return String(text).split(/(\*\*[^*\n]+\*\*)/g).map((p, i) =>
-    /^\*\*[^*\n]+\*\*$/.test(p)
-      ? <strong key={i} style={{fontWeight:700}}>{p.slice(2, -2)}</strong>
-      : p
-  );
+// -- Activity timeline helpers -------------------------------------------------
+// Day divider label: "Today" / "Yesterday" / "Monday" / "May 21" / "May 21, 2024".
+const dayHeader = (d) => {
+  if (!d) return "Earlier";
+  const today = startOfToday();
+  const that  = new Date(d); that.setHours(0,0,0,0);
+  const diff  = Math.round((that - today) / 86400000);
+  if (diff === 0)  return "Today";
+  if (diff === -1) return "Yesterday";
+  if (diff > -7 && diff < 0) return d.toLocaleDateString("en-US", {weekday:"long"});
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString("en-US", sameYear ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
 };
 
-// Wrap the current selection of a textarea (by ref) in ** ** for bold.
-const wrapSelectionBold = (taRef, value, setValue) => {
+// "2:14 PM" — used as the per-entry timestamp on the right of each item.
+const timeOf = (d) => d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
+
+// Append system events to pr.log when tracked fields change. Currently logs
+// status flips (Open ↔ Done) and due-date moves. Other field edits pass through
+// silently — they're considered live metadata, not narrative-worthy.
+const withEvents = (pr, changes) => {
+  const events = [];
+  const ts = new Date().toISOString();
+  if (changes.status !== undefined) {
+    const before = pr.status || "In Progress";
+    if (changes.status !== before) events.push({ts, kind:"event", event:"status", from:before, to:changes.status});
+  }
+  if (changes.dueDate !== undefined && (changes.dueDate || "") !== (pr.dueDate || "")) {
+    events.push({ts, kind:"event", event:"due", from: pr.dueDate || "", to: changes.dueDate || ""});
+  }
+  return events.length
+    ? {...pr, ...changes, log: [...(pr.log || []), ...events]}
+    : {...pr, ...changes};
+};
+
+// Normalize a follow-up's notes + events into a flat, dated entries list.
+// Supports three historical shapes for backward compat:
+//   - {ts, kind:"note", body}        (canonical)
+//   - {ts, kind:"event", event,…}    (canonical)
+//   - {ts, note}                     (older notes, no kind)
+//   - {date:"May 21, 2:14 PM", note} (oldest notes, no ts → "Earlier" bucket)
+// pr.details (legacy single description) is surfaced as the first entry.
+const buildTimeline = (pr) => {
+  const out = [];
+  if (pr.details) out.push({key:"details", kind:"note", body:pr.details, date:null, isDetails:true});
+  (pr.log || []).forEach((n, i) => {
+    const d = n.ts ? new Date(n.ts) : null;
+    if (n.kind === "event") {
+      out.push({key:`log-${i}`, kind:"event", event:n.event, from:n.from, to:n.to, date:d, idx:i});
+    } else {
+      out.push({key:`log-${i}`, kind:"note", body: n.body || n.note || "", date:d, idx:i});
+    }
+  });
+  return out;
+};
+
+// Group timeline entries by calendar day, newest day first, newest entry first within a day.
+const groupTimelineByDay = (entries) => {
+  const buckets = new Map();
+  for (const e of entries) {
+    const key = e.date
+      ? `${e.date.getFullYear()}-${e.date.getMonth()}-${e.date.getDate()}`
+      : "earlier";
+    if (!buckets.has(key)) buckets.set(key, {date:e.date, entries:[]});
+    buckets.get(key).entries.push(e);
+  }
+  const arr = [...buckets.values()];
+  arr.sort((a, b) => (b.date ? b.date.getTime() : -1) - (a.date ? a.date.getTime() : -1));
+  arr.forEach(b => b.entries.sort((a, b) => (b.date ? b.date.getTime() : -1) - (a.date ? a.date.getTime() : -1)));
+  return arr;
+};
+
+// Inline rich text: **bold**, *italic*, `code`, plus auto-linked http(s) URLs.
+const renderRich = (text) => {
+  if (!text) return null;
+  const out = [];
+  String(text).split("\n").forEach((line, li) => {
+    if (li > 0) out.push(<br key={`br-${li}`} />);
+    const re = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|https?:\/\/[^\s)]+)/g;
+    let last = 0, m, idx = 0;
+    while ((m = re.exec(line)) !== null) {
+      if (m.index > last) out.push(line.slice(last, m.index));
+      const tok = m[0], k = `${li}-${idx++}`;
+      if (tok.startsWith("**"))      out.push(<strong key={k} style={{fontWeight:700}}>{tok.slice(2,-2)}</strong>);
+      else if (tok.startsWith("`"))  out.push(<code   key={k} style={{fontFamily:'"JetBrains Mono", ui-monospace, monospace', fontSize:"0.92em", background:C.bgSubtle, padding:"1px 5px", borderRadius:4}}>{tok.slice(1,-1)}</code>);
+      else if (tok.startsWith("*"))  out.push(<em     key={k} style={{fontStyle:"italic"}}>{tok.slice(1,-1)}</em>);
+      else                           out.push(<a      key={k} href={tok} target="_blank" rel="noreferrer" style={{color:C.blue, textDecoration:"none", borderBottom:"1px solid "+C.blueBorder}}>{tok}</a>);
+      last = m.index + tok.length;
+    }
+    if (last < line.length) out.push(line.slice(last));
+  });
+  return out;
+};
+
+// Wrap the textarea's current selection with `prefix`/`suffix` for bold/italic/code.
+const wrapSelection = (taRef, value, setValue, prefix, suffix=prefix, placeholder="") => {
   const ta = taRef.current;
-  if (!ta) { setValue((value||"") + "****"); return; }
+  if (!ta) { setValue((value||"") + prefix + placeholder + suffix); return; }
   const s = ta.selectionStart, e = ta.selectionEnd;
   const sel = value.slice(s, e);
-  const inner = sel || "bold text";
-  const next = value.slice(0, s) + "**" + inner + "**" + value.slice(e);
-  setValue(next);
+  const inner = sel || placeholder;
+  setValue(value.slice(0, s) + prefix + inner + suffix + value.slice(e));
   requestAnimationFrame(() => {
     ta.focus();
-    const pos = s + 2;
+    const pos = s + prefix.length;
     ta.setSelectionRange(pos, pos + inner.length);
   });
+};
+
+// Human description of a system event for inline rendering in the timeline.
+const describeEvent = (e) => {
+  if (e.event === "status") {
+    return e.to === "Complete"
+      ? {label:"Marked done", tone:"success"}
+      : {label:"Reopened",    tone:"muted"};
+  }
+  if (e.event === "due") {
+    if (!e.from && e.to) return {label:"Due " + formatDue(e.to),           tone:"muted"};
+    if (e.from && !e.to) return {label:"Due date cleared",                  tone:"muted"};
+    return                     {label:"Due moved to " + formatDue(e.to),    tone:"muted"};
+  }
+  return {label:"Updated", tone:"muted"};
 };
 
 // Resize an uploaded image to maxWidth and return a JPEG data URL.
@@ -2004,95 +2072,88 @@ function FileUploader({files=[], onChange, mobile}) {
   );
 }
 
-// Newest-first call-note timeline + inline "Add a note…" input.
-// Notebook-style call notes. Opens to "today's page" — today's date is written
-// at the top automatically, with a writing area beneath it. Past calls are
-// grouped under their own dated headings below, newest day first.
-function CallNotesTimeline({pr, onChange, mobile}) {
-  const [text, setText]       = useState("");   // today's compose box
-  const [editKey, setEditKey] = useState(null); // which saved note is open for editing
-  const [editVal, setEditVal] = useState("");
+// Activity timeline: clean Linear-style feed of notes + system events.
+// Composer pinned at top, day dividers inline, newest-first ordering.
+// `pr.log` entries are either {ts, kind:"note", body} or
+// {ts, kind:"event", event, from, to}. Legacy {ts, note} and pr.details are
+// also rendered via buildTimeline().
+function ActivityTimeline({pr, onChange, mobile}) {
+  const [draft, setDraft]       = useState("");
+  const [editKey, setEditKey]   = useState(null);
+  const [editVal, setEditVal]   = useState("");
   const composeRef = useRef(null);
   const editRef    = useRef(null);
 
-  const log = pr.log || [];
-  const keyOf = (ref) => ref.type === "details" ? "details" : `log-${ref.idx}`;
+  const days = groupTimelineByDay(buildTimeline(pr));
+  const isEmpty = days.length === 0 || (days.length === 1 && days[0].entries.length === 0);
 
-  // Every note, tagged with an edit ref.
-  const all = [
-    ...(pr.details ? [{date:"", note: pr.details, ref:{type:"details"}}] : []),
-    ...log.map((n, i) => ({...n, ref:{type:"log", idx:i}})),
-  ];
-
-  // Bucket by calendar day.
-  const buckets = {};
-  all.forEach(n => {
-    const d = noteDate(n);
-    const key = dayKeyOf(d);
-    if (!buckets[key]) buckets[key] = {label: dayLabelOf(d), sortTs: d ? d.getTime() : -1, notes: []};
-    buckets[key].notes.push(n);
-  });
-  const todayKey   = dayKeyOf(new Date());
-  const todayLabel = dayLabelOf(new Date());
-  const todayNotes = (buckets[todayKey]?.notes || []).slice().reverse();
-  const pastSections = Object.entries(buckets)
-    .filter(([k]) => k !== todayKey)
-    .sort((a,b) => b[1].sortTs - a[1].sortTs);
-
-  const saveNew = () => {
-    const v = text.trim();
+  const addNote = () => {
+    const v = draft.trim();
     if (!v) return;
-    onChange({...pr, log: [...log, {ts: new Date().toISOString(), note: v}]});
-    setText("");
+    onChange({...pr, log: [...(pr.log || []), {ts: new Date().toISOString(), kind:"note", body: v}]});
+    setDraft("");
   };
-  const commitEdit = (ref) => {
+  const startEdit = (e) => { setEditKey(e.key); setEditVal(e.body); };
+  const cancelEdit = () => { setEditKey(null); setEditVal(""); };
+  const commitEdit = (entry) => {
     const v = editVal.trim();
-    if (ref.type === "details") {
+    if (entry.isDetails) {
       onChange({...pr, details: v});
     } else if (!v) {
-      onChange({...pr, log: log.filter((_, i) => i !== ref.idx)});
+      onChange({...pr, log: (pr.log || []).filter((_, i) => i !== entry.idx)});
     } else {
-      onChange({...pr, log: log.map((n, i) => i === ref.idx ? {...n, note: v} : n)});
+      onChange({...pr, log: (pr.log || []).map((n, i) => i === entry.idx
+        ? {...n, kind:"note", body: v, note: undefined}
+        : n)});
     }
-    setEditKey(null); setEditVal("");
+    cancelEdit();
   };
-  const deleteNote = (ref) => {
-    if (ref.type === "details") onChange({...pr, details: ""});
-    else onChange({...pr, log: log.filter((_, i) => i !== ref.idx)});
-    setEditKey(null); setEditVal("");
+  const deleteEntry = (entry) => {
+    if (entry.isDetails) onChange({...pr, details: ""});
+    else onChange({...pr, log: (pr.log || []).filter((_, i) => i !== entry.idx)});
+    cancelEdit();
   };
-  const startEdit = (n) => { setEditKey(keyOf(n.ref)); setEditVal(n.note); };
 
-  // --- Notepad styling ---
-  const LINE_H = 28;
-  const PAPER  = "#FFFEFB";
-  const RULE   = "#D9E2EC";          // soft blue-gray ruled line
-  const MARGIN = "#EFC9C9";          // pink margin line
-  const lined = {
-    lineHeight: `${LINE_H}px`,
-    backgroundImage: `repeating-linear-gradient(transparent, transparent ${LINE_H-1}px, ${RULE} ${LINE_H-1}px, ${RULE} ${LINE_H}px)`,
-    backgroundAttachment: "local",
-    backgroundColor: "transparent",
-  };
-  const noteFont = {fontFamily:F, fontSize:14, color:C.text};
+  // Small toolbar button used in the composer and the edit popover.
+  const fmtBtn = (label, title, onMouseDown, style={}) => (
+    <button type="button" onMouseDown={e => { e.preventDefault(); onMouseDown(); }}
+      title={title} aria-label={title}
+      style={{
+        width:26, height:26, borderRadius:C.r1, border:"1px solid "+C.border,
+        background:C.card, color:C.textSub, fontFamily:F, fontWeight:600,
+        fontSize:12, cursor:"pointer", lineHeight:1, flexShrink:0,
+        display:"inline-flex", alignItems:"center", justifyContent:"center",
+        transition:"background .12s, color .12s, border-color .12s",
+        ...style,
+      }}>{label}</button>
+  );
 
-  // A single saved note — click to edit in place.
-  // Plain render-fn (not a component) so editing textareas don't remount on keystroke.
-  const renderNote = (n) => {
-    const editing = editKey === keyOf(n.ref);
-    const stamp = noteTimeOf(n);
+  // Render a single user-written note.
+  const renderNote = (entry) => {
+    const editing = editKey === entry.key;
     return (
-      <div key={keyOf(n.ref)} style={{paddingTop:6}}>
-        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", minHeight:16}}>
-          <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-            {stamp || "Note"}
+      <div key={entry.key}
+        className="dh-tl-item"
+        style={{
+          position:"relative", padding:"10px 0",
+          borderTop: entry.key === days[0].entries[0]?.key ? "none" : "none",
+        }}>
+        <div style={{display:"flex", alignItems:"baseline", gap:10, marginBottom:4}}>
+          <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
+            fontWeight:500, flexShrink:0}}>
+            {entry.date ? timeOf(entry.date) : "Note"}
           </span>
-          {editing && (
-            <button onClick={()=>deleteNote(n.ref)}
-              style={{background:"none", border:"none", padding:0, cursor:"pointer",
-                color:C.textMuted, fontFamily:F, fontSize:11, display:"inline-flex", alignItems:"center", gap:4}}>
-              <I.trash size={11}/> Delete
-            </button>
+          {!editing && (
+            <span className="dh-tl-actions" style={{display:"inline-flex", gap:2}}>
+              <button onClick={()=>startEdit(entry)} aria-label="Edit"
+                className="dh-tl-action" title="Edit">
+                <I.edit size={12}/>
+              </button>
+              <button onClick={()=>deleteEntry(entry)} aria-label="Delete"
+                className="dh-tl-action" title="Delete">
+                <I.trash size={12}/>
+              </button>
+            </span>
           )}
         </div>
         {editing ? (
@@ -2100,99 +2161,158 @@ function CallNotesTimeline({pr, onChange, mobile}) {
             <textarea ref={editRef} value={editVal} autoFocus
               onChange={e=>setEditVal(e.target.value)}
               onKeyDown={e=>{
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(n.ref); }
-                if (e.key === "Escape") { setEditKey(null); setEditVal(""); }
+                if ((e.metaKey||e.ctrlKey) && e.key === "Enter") { e.preventDefault(); commitEdit(entry); }
+                if (e.key === "Escape") cancelEdit();
               }}
-              style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
-                resize:"vertical", padding:0, minHeight:LINE_H, display:"block"}} />
-            <div style={{display:"flex", gap:6, marginTop:6, alignItems:"center"}}>
-              <button type="button" onMouseDown={e=>{e.preventDefault(); wrapSelectionBold(editRef, editVal, setEditVal);}}
-                title="Bold (or wrap text in **)" style={boldBtnStyle}>B</button>
+              style={{
+                width:"100%", border:"1px solid "+C.greenBorder, borderRadius:C.r2,
+                outline:"none", resize:"vertical", padding:"10px 12px", minHeight:80,
+                fontFamily:F, fontSize:14, color:C.text, lineHeight:1.6,
+                boxShadow:C.ring,
+              }} />
+            <div style={{display:"flex", gap:6, marginTop:8, alignItems:"center"}}>
+              {fmtBtn("B", "Bold", () => wrapSelection(editRef, editVal, setEditVal, "**", "**", "bold text"), {fontWeight:700})}
+              {fmtBtn("I", "Italic", () => wrapSelection(editRef, editVal, setEditVal, "*", "*", "italic"), {fontStyle:"italic", fontFamily:"Georgia, serif"})}
+              {fmtBtn("`", "Code", () => wrapSelection(editRef, editVal, setEditVal, "`", "`", "code"), {fontFamily:'"JetBrains Mono", ui-monospace, monospace'})}
               <span style={{flex:1}} />
-              <button onClick={()=>commitEdit(n.ref)} {...btnStyle("primary","sm")}>Save</button>
+              <button onClick={cancelEdit} {...btnStyle("ghost","sm")}>Cancel</button>
+              <button onClick={()=>commitEdit(entry)} {...btnStyle("primary","sm")}>Save</button>
             </div>
           </div>
         ) : (
-          <div onClick={()=>startEdit(n)}
-            title="Tap to edit"
-            style={{...lined, ...noteFont, whiteSpace:"pre-wrap", cursor:"text",
-              minHeight:LINE_H, wordBreak:"break-word"}}>
-            {renderRich(n.note)}
+          <div style={{
+            fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6,
+            whiteSpace:"pre-wrap", wordBreak:"break-word",
+          }}>
+            {renderRich(entry.body)}
           </div>
         )}
       </div>
     );
   };
 
-  const sectionPad = mobile ? "12px 16px 14px 16px" : "14px 18px 16px 18px";
-  const boldBtnStyle = {
-    width:26, height:26, borderRadius:C.r1, border:"1px solid "+C.border,
-    background:C.card, color:C.text, fontFamily:"Georgia, serif", fontWeight:700,
-    fontSize:13, cursor:"pointer", lineHeight:1, flexShrink:0,
-    display:"inline-flex", alignItems:"center", justifyContent:"center",
+  // Render a system event (status change, due-date move) as a one-line item.
+  const renderEvent = (entry) => {
+    const e = describeEvent(entry);
+    const tone = e.tone === "success"
+      ? {bg: C.greenSubtle, border: C.greenBorder, icon: C.greenDark}
+      : {bg: C.bgSubtle,    border: C.border,      icon: C.textMuted};
+    const Icon = entry.event === "status" && entry.to === "Complete" ? I.check : I.clock;
+    return (
+      <div key={entry.key} style={{
+        display:"flex", alignItems:"center", gap:10, padding:"7px 0",
+        fontSize:13, fontFamily:F,
+      }}>
+        <span style={{
+          width:20, height:20, borderRadius:"50%", flexShrink:0,
+          background: tone.bg, border:"1px solid "+tone.border, color: tone.icon,
+          display:"inline-flex", alignItems:"center", justifyContent:"center",
+        }}>
+          <Icon size={11} stroke={2.5}/>
+        </span>
+        <span style={{color:C.textSub, fontWeight:500, letterSpacing:"-0.005em"}}>
+          {e.label}
+        </span>
+        <span style={{flex:1}} />
+        <span style={{fontSize:11, color:C.textMuted, fontVariantNumeric:"tabular-nums",
+          fontWeight:500, flexShrink:0}}>
+          {entry.date ? timeOf(entry.date) : ""}
+        </span>
+      </div>
+    );
   };
 
   return (
     <div style={{marginBottom:14}}>
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
-        <div style={{display:"flex", alignItems:"center", gap:8}}>
-          <div style={{width:3, height:13, background:C.green, borderRadius:2}} />
-          <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>Call notes</span>
-        </div>
-        <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Tap a note to edit</span>
+      <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:10}}>
+        <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase"}}>Activity</span>
+        <span style={{flex:1, height:1, background:C.border}}/>
       </div>
-      <div style={{
-        borderRadius:C.r3, border:"1px solid "+C.border, overflow:"hidden",
-        background:PAPER, boxShadow:"inset 3px 0 0 "+MARGIN,
-      }}>
-        {/* Today's page */}
-        <div style={{padding:sectionPad}}>
-          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:10}}>
-            <span style={{width:7, height:7, borderRadius:"50%", background:C.green, flexShrink:0}}/>
-            <span style={{fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>
-              {todayLabel}
-            </span>
-          </div>
-          <textarea ref={composeRef} value={text} onChange={e=>setText(e.target.value)}
-            onKeyDown={e=>{ if ((e.metaKey||e.ctrlKey) && e.key==="Enter") saveNew(); }}
-            placeholder="Start writing…"
-            rows={3}
-            style={{...lined, ...noteFont, width:"100%", border:"none", outline:"none",
-              resize:"vertical", padding:0, minHeight:LINE_H*3, display:"block",
-              color:C.text}} />
-          <div style={{display:"flex", gap:10, marginTop:8, alignItems:"center", paddingTop:10, borderTop:"1px solid "+RULE}}>
-            <button type="button" onMouseDown={e=>{e.preventDefault(); wrapSelectionBold(composeRef, text, setText);}}
-              title="Bold the selected text" style={boldBtnStyle}>B</button>
-            {!mobile && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>Select text, then tap B to bold</span>}
-            <span style={{flex:1}} />
-            <button onClick={saveNew} disabled={!text.trim()}
-              {...btnStyle("primary","sm", text.trim()?{}:{opacity:.45, cursor:"not-allowed"})}>
-              <I.plus size={12}/> Add note
-            </button>
-          </div>
-          {todayNotes.length > 0 && (
-            <div style={{marginTop:10, borderTop:"1px solid "+C.border, paddingTop:2}}>
-              {todayNotes.map(n=>renderNote(n))}
-            </div>
-          )}
-        </div>
 
-        {/* Past pages */}
-        {pastSections.map(([key, sec]) => (
-          <div key={key} style={{padding:sectionPad, borderTop:"1px solid "+C.border, background:"rgba(15,23,42,.015)"}}>
-            <div style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase", marginBottom:8}}>
-              {sec.label}
-            </div>
-            {sec.notes.slice().reverse().map(n=>renderNote(n))}
-          </div>
-        ))}
+      {/* Composer */}
+      <div className="dh-tl-composer" style={{
+        border:"1px solid "+C.border, borderRadius:C.r3, background:C.card,
+        padding:"10px 12px 8px", marginBottom:16,
+        transition:"border-color .15s, box-shadow .15s",
+      }}>
+        <textarea ref={composeRef} value={draft} onChange={e=>setDraft(e.target.value)}
+          onKeyDown={e=>{
+            if ((e.metaKey||e.ctrlKey) && e.key==="Enter") { e.preventDefault(); addNote(); }
+          }}
+          placeholder="Add a note…"
+          rows={2}
+          style={{
+            width:"100%", border:"none", outline:"none", resize:"vertical",
+            padding:0, minHeight:48, display:"block",
+            fontFamily:F, fontSize:14, color:C.text, lineHeight:1.55,
+            background:"transparent",
+          }} />
+        <div style={{display:"flex", gap:6, marginTop:6, alignItems:"center"}}>
+          {fmtBtn("B", "Bold (⌘B)", () => wrapSelection(composeRef, draft, setDraft, "**", "**", "bold text"), {fontWeight:700})}
+          {fmtBtn("I", "Italic (⌘I)", () => wrapSelection(composeRef, draft, setDraft, "*", "*", "italic"), {fontStyle:"italic", fontFamily:"Georgia, serif"})}
+          {fmtBtn("`", "Code", () => wrapSelection(composeRef, draft, setDraft, "`", "`", "code"), {fontFamily:'"JetBrains Mono", ui-monospace, monospace'})}
+          <span style={{flex:1}} />
+          {!mobile && (
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>
+              ⌘↵ to save
+            </span>
+          )}
+          <button onClick={addNote} disabled={!draft.trim()}
+            {...btnStyle("primary","sm", draft.trim() ? {} : {opacity:.45, cursor:"not-allowed"})}>
+            <I.plus size={12}/> Add note
+          </button>
+        </div>
       </div>
+
+      {/* Empty state */}
+      {isEmpty && (
+        <div style={{
+          padding:"28px 16px", textAlign:"center",
+          border:"1px dashed "+C.border, borderRadius:C.r3, background:C.bgSubtle,
+        }}>
+          <div style={{
+            width:36, height:36, borderRadius:"50%", background:C.card,
+            border:"1px solid "+C.border, color:C.textMuted,
+            display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:10,
+          }}>
+            <I.messageSquare size={16}/>
+          </div>
+          <div style={{fontSize:13, fontWeight:500, color:C.textSub, fontFamily:F}}>
+            No activity yet
+          </div>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:3}}>
+            Track every call, decision, and follow-up here.
+          </div>
+        </div>
+      )}
+
+      {/* Day-grouped feed, newest first */}
+      {!isEmpty && days.map(day => (
+        <div key={day.date ? day.date.getTime() : "earlier"} style={{marginBottom:8}}>
+          <div style={{
+            fontSize:11, fontWeight:700, color:C.textMuted, fontFamily:F,
+            letterSpacing:".06em", textTransform:"uppercase",
+            marginTop:6, marginBottom:2, paddingLeft:0,
+          }}>
+            {dayHeader(day.date)}
+          </div>
+          <div style={{paddingLeft:0}}>
+            {day.entries.map(entry => entry.kind === "event"
+              ? renderEvent(entry)
+              : renderNote(entry))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAddExpense, isExpensed}) {
-  const u = (f, v) => onChange({...pr, [f]:v});
+  // Field edits log a system event for tracked fields (status, dueDate); other
+  // fields pass through quietly. Status isn't edited here — it's owned by the
+  // done circle on the row — but dueDate is, so we go through withEvents.
+  const u = (f, v) => onChange(withEvents(pr, {[f]: v}));
   const addExpense = () => {
     if (!onAddExpense) return;
     onAddExpense({
@@ -2207,16 +2327,16 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
     });
   };
   const sectionLabel = (text) => (
-    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:12}}>
-      <div style={{width:3, height:13, background:C.green, borderRadius:2}} />
-      <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>{text}</span>
+    <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
+      <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+        letterSpacing:".06em", textTransform:"uppercase"}}>{text}</span>
+      <span style={{flex:1, height:1, background:C.border}}/>
     </div>
   );
-  const divider = <div style={{height:1, background:C.border, margin: mobile ? "18px 0" : "20px 0"}} />;
   const labelStyle = {fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F};
 
   return (
-    <div style={{padding: mobile ? "16px 14px 16px" : "20px 22px 18px", background:C.card, borderTop:"1px solid "+C.border}}>
+    <div style={{padding: mobile ? "18px 14px 16px" : "22px 24px 20px", background:C.card, borderTop:"1px solid "+C.border}}>
       {sectionLabel("Details")}
       <InputField label="What needs doing" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
       <div style={{marginBottom:14}}>
@@ -2235,15 +2355,15 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
         </div>
       </div>
 
-      {divider}
+      <div style={{marginTop:mobile?18:24}}>
+        <ActivityTimeline pr={pr} onChange={onChange} mobile={mobile} />
+      </div>
 
-      <CallNotesTimeline pr={pr} onChange={onChange} mobile={mobile} />
-
-      {divider}
-
-      {sectionLabel("Attachments")}
-      <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
-      <FileUploader files={pr.files||[]} onChange={v=>u("files",v)} mobile={mobile} />
+      <div style={{marginTop:mobile?18:24}}>
+        {sectionLabel("Attachments")}
+        <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
+        <FileUploader files={pr.files||[]} onChange={v=>u("files",v)} mobile={mobile} />
+      </div>
 
       {onAddExpense && (
         <div style={{display:"flex", alignItems:"center", gap:10, padding:"12px 14px", marginTop:4, marginBottom:14,
@@ -2309,9 +2429,9 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
 
   const toggleDone = (e) => {
     e && e.stopPropagation();
-    onChange({...pr, status: isDone ? "In Progress" : "Complete"});
+    onChange(withEvents(pr, {status: isDone ? "In Progress" : "Complete"}));
   };
-  const snooze = () => onChange({...pr, dueDate: nextDayIso(pr.dueDate)});
+  const snooze = () => onChange(withEvents(pr, {dueDate: nextDayIso(pr.dueDate)}));
   const openNoteBar = () => {
     if (expanded) { setExpanded(false); }
     setNoteOpen(true);
@@ -2319,7 +2439,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
   const submitInlineNote = () => {
     const v = noteText.trim();
     if (!v) return;
-    onChange({...pr, log: [...(pr.log||[]), {date: formatNoteStamp(), note: v}]});
+    onChange({...pr, log: [...(pr.log||[]), {ts: new Date().toISOString(), kind: "note", body: v}]});
     setNoteText("");
     setNoteOpen(false);
   };
@@ -2624,7 +2744,7 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
     if (contractor && (pr.contractor||"") !== contractor) return false;
     if (search) {
       const q = search.toLowerCase();
-      const hay = `${pr.name||""} ${pr.contractor||""} ${pr.details||""} ${(pr.log||[]).map(l=>l.note).join(" ")}`.toLowerCase();
+      const hay = `${pr.name||""} ${pr.contractor||""} ${pr.details||""} ${(pr.log||[]).filter(l=>l.kind!=="event").map(l=>l.body||l.note||"").join(" ")}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -2644,36 +2764,43 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
   }]);
 
   const status = propertyStatus(property);
-  const summary = status.openCount === 0
-    ? "All clear"
-    : status.overdueCount > 0
-      ? `${status.openCount} open · ${status.overdueCount} overdue`
-      : `${status.openCount} open`;
+
+  // Status pill content + tone.
+  const pill = status.kind === "overdue"
+    ? {bg: C.redSubtle,    border: C.redBorder,    color: C.redDark,    dot: C.red,    label: `${status.overdueCount} overdue`}
+    : status.kind === "due-soon"
+      ? {bg: C.amberSubtle,  border: C.amberBorder,  color: C.amberDark,  dot: C.amber,  label: `${status.openCount} open`}
+      : status.kind === "clear"
+        ? {bg: C.greenSubtle,  border: C.greenBorder,  color: C.greenDark,  dot: C.green,  label: "All clear"}
+        : {bg: C.bgSubtle,     border: C.border,       color: C.textSub,    dot: C.borderHover, label: `${status.openCount} open`};
 
   return (
     <Card id={"prop-"+property.id} className="dh-prop-card"
       style={{marginBottom:14}} padding={0}>
       {!hideHeader && (
-        <header style={{padding:mobile?"12px 14px":"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.bgSubtle:"none"}}>
+        <header style={{padding:mobile?"14px 16px":"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
           <div style={{minWidth:0, flex:1}}>
-            <h3 style={{margin:0, fontSize:mobile?16:18, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
+            <h3 style={{margin:0, fontSize:mobile?15:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
-            <div style={{fontSize:mobile?12:13, color:"#71717a", fontFamily:F, marginTop:1,
+            <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {property.city}{property.state?`, ${property.state}`:""}
             </div>
           </div>
-          <div style={{display:"inline-flex", alignItems:"center", gap:6, flexShrink:0}}>
+          <span style={{
+            display:"inline-flex", alignItems:"center", gap:6, flexShrink:0,
+            padding:"4px 9px", borderRadius:9999, fontFamily:F,
+            background:pill.bg, border:"1px solid "+pill.border, color:pill.color,
+            fontSize:11, fontWeight:600, letterSpacing:"-0.005em",
+          }}>
             <span className={status.kind === "overdue" ? "dh-pulse" : undefined}
-              style={{width:8, height:8, borderRadius:"50%", background:status.color, flexShrink:0}}/>
-            <span style={{fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-              {summary}
-            </span>
-          </div>
+              style={{width:6, height:6, borderRadius:"50%", background:pill.dot, flexShrink:0}}/>
+            <span style={{fontVariantNumeric:"tabular-nums"}}>{pill.label}</span>
+          </span>
         </header>
       )}
       {sorted.length === 0 ? (
-        <div style={{padding:"30px 16px 24px", textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:6}}>
+        <div style={{padding:"32px 16px 26px", textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:8}}>
           {!search && filterMode === "open" ? (
             <>
               <div style={{
@@ -2683,7 +2810,8 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
               }}>
                 <I.check size={17} stroke={2.5}/>
               </div>
-              <div style={{fontSize:13, color:"#71717a", fontFamily:F}}>All caught up on this property</div>
+              <div style={{fontSize:13, color:C.textSub, fontFamily:F, fontWeight:500}}>All caught up</div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:F}}>No open follow-ups on this property</div>
             </>
           ) : (
             <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>
@@ -2717,29 +2845,37 @@ function ContractorChip({label, active, onClick}) {
   );
 }
 
-function DueNowSection({title, items, bg, labelColor, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
+function DueNowSection({title, items, accent, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
   if (!items.length) return null;
   return (
-    <div style={{background: bg}}>
-      <header style={{padding:mobile?"10px 14px":"10px 16px", display:"flex", alignItems:"center", gap:10}}>
-        <span style={{fontSize:11, fontWeight:700, color:labelColor, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase"}}>
+    <div>
+      <header style={{
+        padding: mobile ? "12px 14px 8px" : "14px 18px 8px",
+        display: "flex", alignItems: "center", gap: 10,
+      }}>
+        <span style={{width:7, height:7, borderRadius:"50%", background:accent, flexShrink:0}}/>
+        <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase"}}>
           {title}
         </span>
-        <span style={{fontSize:11, color:labelColor, fontFamily:F, fontWeight:600, fontVariantNumeric:"tabular-nums",
-          background:"rgba(255,255,255,.65)", border:"1px solid rgba(0,0,0,.05)", padding:"1px 8px", borderRadius:9999}}>
+        <span style={{fontSize:11, color:C.textSub, fontFamily:F, fontWeight:600,
+          fontVariantNumeric:"tabular-nums", background:C.bgSubtle,
+          padding:"1px 8px", borderRadius:9999, minWidth:20, textAlign:"center"}}>
           {items.length}
         </span>
       </header>
-      {items.map(({pr, property}) => (
-        <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
-          propLabel={property.address} propId={property.id} showProperty
-          onPropertyClick={() => onPropertyClick(property.id)}
-          onChange={updated => onRowChange(property, updated)}
-          onDelete={() => onRowDelete(property, pr.id)}
-          onAddExpense={exp => onAddExpense(property, exp)}
-          isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
-          mobile={mobile} contractors={contractors} />
-      ))}
+      <div>
+        {items.map(({pr, property}) => (
+          <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
+            propLabel={property.address} propId={property.id} showProperty
+            onPropertyClick={() => onPropertyClick(property.id)}
+            onChange={updated => onRowChange(property, updated)}
+            onDelete={() => onRowDelete(property, pr.id)}
+            onAddExpense={exp => onAddExpense(property, exp)}
+            isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
+            mobile={mobile} contractors={contractors} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -2824,6 +2960,8 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
     );
   }
 
+  const overdueCount = overdue.length;
+
   return (
     <div style={{
       background:pageBg, minHeight:"100%",
@@ -2832,33 +2970,76 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       paddingLeft:   `calc(${mobile?24:32}px + env(safe-area-inset-left, 0px))`,
       paddingRight:  `calc(${mobile?24:32}px + env(safe-area-inset-right, 0px))`,
     }}>
-      <PageHeader
-        title="Projects"
-        subtitle={openTotal === 0
-          ? "All clear — no open follow-ups."
-          : `${openTotal} open follow-up${openTotal===1?"":"s"} across ${properties.length} ${properties.length===1?"property":"properties"}.`}
-      />
+      {/* Header with inline stats */}
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+        gap:16, flexWrap:"wrap", marginBottom:24}}>
+        <div style={{minWidth:0}}>
+          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            Projects
+          </h1>
+          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
+            {openTotal === 0
+              ? "All clear across the portfolio."
+              : `Track every follow-up across ${properties.length} ${properties.length===1?"property":"properties"}.`}
+          </p>
+        </div>
+        {openTotal > 0 && (
+          <div style={{display:"flex", gap:0, alignItems:"stretch",
+            background:C.card, border:"1px solid "+C.border, borderRadius:C.r3, padding:2,
+            boxShadow:C.sh1}}>
+            <div style={{padding:"6px 12px", display:"flex", alignItems:"center", gap:6, fontFamily:F}}>
+              <span style={{fontSize:11, color:C.textMuted, fontWeight:600,
+                letterSpacing:".04em", textTransform:"uppercase"}}>Open</span>
+              <span style={{fontSize:14, fontWeight:700, color:C.text, fontVariantNumeric:"tabular-nums"}}>{openTotal}</span>
+            </div>
+            {overdueCount > 0 && (
+              <>
+                <span style={{width:1, background:C.border, margin:"4px 0"}}/>
+                <div style={{padding:"6px 12px", display:"flex", alignItems:"center", gap:6, fontFamily:F}}>
+                  <span style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
+                  <span style={{fontSize:11, color:C.redDark, fontWeight:600,
+                    letterSpacing:".04em", textTransform:"uppercase"}}>Overdue</span>
+                  <span style={{fontSize:14, fontWeight:700, color:C.redDark, fontVariantNumeric:"tabular-nums"}}>{overdueCount}</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {dueNowTotal > 0 && (
-        <Card style={{marginBottom:24}} padding={0}>
-          <DueNowSection title="Overdue"   items={overdue}    bg="#FEF2F2" labelColor="#991b1b"
+        <Card style={{marginBottom:20}} padding={0}>
+          <DueNowSection title="Overdue"   items={overdue}    accent={C.red}
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
           {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title="Today"     items={todayItems} bg="#FFFBEB" labelColor="#92400e"
+          <DueNowSection title="Today"     items={todayItems} accent={C.amber}
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
           {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title="This week" items={thisWeek}   bg="#FAFAFA" labelColor="#3f3f46"
+          <DueNowSection title="This week" items={thisWeek}   accent={C.borderHover}
             onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
         </Card>
       )}
 
-      {/* Filter + search */}
-      <div style={{display:"flex", gap:10, marginBottom:12, flexWrap:"wrap"}}>
-        <div style={{display:"flex", gap:6}}>
-          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => (
-            <button key={id} onClick={()=>setFilterMode(id)}
-              {...btnStyle(filterMode===id?"primary":"secondary","sm")}>{label}</button>
-          ))}
+      {/* Filter + search row */}
+      <div style={{display:"flex", gap:10, marginBottom:contractors.length?12:18, flexWrap:"wrap", alignItems:"center"}}>
+        {/* Segmented filter control */}
+        <div style={{display:"flex", padding:3, background:C.bgSubtle,
+          border:"1px solid "+C.border, borderRadius:C.r2}}>
+          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => {
+            const active = filterMode === id;
+            return (
+              <button key={id} onClick={()=>setFilterMode(id)}
+                style={{
+                  padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active?600:500, fontSize:12, fontFamily:F,
+                  letterSpacing:"-0.005em",
+                  boxShadow: active ? C.sh1 : "none",
+                  transition:"background .12s, color .12s, box-shadow .12s",
+                }}>{label}</button>
+            );
+          })}
         </div>
         <div style={{position:"relative", flex:1, minWidth:220}}>
           <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
@@ -2873,7 +3054,7 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
 
       {/* Contractor chip row */}
       {contractors.length > 0 && (
-        <div className="dh-chip-row" style={{display:"flex", gap:6, marginBottom:18, overflowX:"auto",
+        <div className="dh-chip-row" style={{display:"flex", gap:6, marginBottom:20, overflowX:"auto",
           WebkitOverflowScrolling:"touch", paddingBottom:2}}>
           <ContractorChip label="All contractors" active={!contractor} onClick={()=>setContractor("")}/>
           {contractors.map(c => (
@@ -2916,14 +3097,25 @@ function PropertyProjectsTab({p, set, mobile}) {
   return (
     <div>
       <div style={{display:"flex", gap:10, marginBottom:14, flexWrap:"wrap", alignItems:"center"}}>
-        <div style={{display:"flex", gap:6}}>
-          <button onClick={()=>setFilterMode("open")} {...btnStyle(filterMode==="open"?"primary":"secondary","sm")}>
-            Open{openCount?` · ${openCount}`:""}
-          </button>
-          <button onClick={()=>setFilterMode("done")} {...btnStyle(filterMode==="done"?"primary":"secondary","sm")}>
-            Done{doneCount?` · ${doneCount}`:""}
-          </button>
-          <button onClick={()=>setFilterMode("all")} {...btnStyle(filterMode==="all"?"primary":"secondary","sm")}>All</button>
+        {/* Segmented filter control — matches the cross-property page */}
+        <div style={{display:"flex", padding:3, background:C.bgSubtle,
+          border:"1px solid "+C.border, borderRadius:C.r2}}>
+          {[["open","Open",openCount],["done","Done",doneCount],["all","All",null]].map(([id,label,count]) => {
+            const active = filterMode === id;
+            return (
+              <button key={id} onClick={()=>setFilterMode(id)}
+                style={{
+                  padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active?600:500, fontSize:12, fontFamily:F,
+                  letterSpacing:"-0.005em",
+                  boxShadow: active ? C.sh1 : "none",
+                  transition:"background .12s, color .12s, box-shadow .12s",
+                  fontVariantNumeric:"tabular-nums",
+                }}>{label}{count!=null && count>0 ? ` · ${count}` : ""}</button>
+            );
+          })}
         </div>
         <div style={{position:"relative", flex:1, minWidth:200}}>
           <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
@@ -4204,6 +4396,11 @@ export default function App() {
       @media (hover:hover){.dh-row .dh-row-actions{opacity:0;transition:opacity .12s;}.dh-row:hover .dh-row-actions{opacity:1;}}
       .dh-row-action{background:transparent;border:none;padding:6px;border-radius:6px;cursor:pointer;color:${C.textMuted};display:inline-flex;align-items:center;justify-content:center;transition:background .12s,color .12s;}
       .dh-row-action:hover{background:${C.bgSubtle};color:${C.text};}
+      /* Activity timeline: hover-reveal edit/delete on each note */
+      .dh-tl-action{background:transparent;border:none;padding:4px;border-radius:4px;cursor:pointer;color:${C.textMuted};display:inline-flex;align-items:center;justify-content:center;transition:background .12s,color .12s;}
+      .dh-tl-action:hover{background:${C.bgSubtle};color:${C.text};}
+      @media (hover:hover){.dh-tl-item .dh-tl-actions{opacity:0;transition:opacity .12s;}.dh-tl-item:hover .dh-tl-actions{opacity:1;}}
+      .dh-tl-composer:focus-within{border-color:${C.green}!important;box-shadow:${C.ring};}
       @keyframes dh-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
       .dh-pulse{animation:dh-pulse 2s ease-in-out infinite;}
       .dh-nav-item{transition:background-color .12s,color .12s;}
