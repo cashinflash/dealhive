@@ -1927,19 +1927,45 @@ const renderRich = (text) => {
   return out;
 };
 
-// Wrap the textarea's current selection with `prefix`/`suffix` for bold/italic/code.
-const wrapSelection = (taRef, value, setValue, prefix, suffix=prefix, placeholder="") => {
-  const ta = taRef.current;
-  if (!ta) { setValue((value||"") + prefix + placeholder + suffix); return; }
-  const s = ta.selectionStart, e = ta.selectionEnd;
-  const sel = value.slice(s, e);
-  const inner = sel || placeholder;
-  setValue(value.slice(0, s) + prefix + inner + suffix + value.slice(e));
-  requestAnimationFrame(() => {
-    ta.focus();
-    const pos = s + prefix.length;
-    ta.setSelectionRange(pos, pos + inner.length);
-  });
+// Markdown → HTML, used to seed a contentEditable editor from stored markdown.
+// Renders the same subset as `renderRich`: **bold**, *italic*, `code`, auto-linked URLs.
+const mdToHtml = (md) => {
+  if (!md) return "";
+  return String(md)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(https?:\/\/[^\s<)]+)/g, '<a href="$1" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/\n/g, "<br>");
+};
+
+// HTML → markdown for storage. Walks the DOM and emits a small markdown subset.
+// Anything outside the allowlist is reduced to its text content, so pasted rich
+// content can never sneak unsafe tags into the saved note.
+const htmlToMd = (html) => {
+  if (!html) return "";
+  const root = document.createElement("div");
+  root.innerHTML = html;
+  let out = "";
+  const walk = (node) => {
+    if (node.nodeType === 3) { out += node.textContent; return; }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName.toLowerCase();
+    if (tag === "br") { out += "\n"; return; }
+    if (tag === "div" || tag === "p") {
+      if (out && !out.endsWith("\n")) out += "\n";
+      [...node.childNodes].forEach(walk);
+      if (!out.endsWith("\n")) out += "\n";
+      return;
+    }
+    if (tag === "strong" || tag === "b") { out += "**"; [...node.childNodes].forEach(walk); out += "**"; return; }
+    if (tag === "em" || tag === "i")     { out += "*";  [...node.childNodes].forEach(walk); out += "*";  return; }
+    if (tag === "code")                  { out += "`";  [...node.childNodes].forEach(walk); out += "`";  return; }
+    [...node.childNodes].forEach(walk);  // <a>, unknown tags → just text (URLs are auto-linked on render)
+  };
+  [...root.childNodes].forEach(walk);
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 };
 
 // Human description of a system event for inline rendering in the timeline.
@@ -2077,67 +2103,147 @@ function FileUploader({files=[], onChange, mobile}) {
 // `pr.log` entries are either {ts, kind:"note", body} or
 // {ts, kind:"event", event, from, to}. Legacy {ts, note} and pr.details are
 // also rendered via buildTimeline().
-function ActivityTimeline({pr, onChange, mobile}) {
-  const [draft, setDraft]       = useState("");
-  const [editKey, setEditKey]   = useState(null);
-  const [editVal, setEditVal]   = useState("");
-  const composeRef = useRef(null);
-  const editRef    = useRef(null);
+// WYSIWYG rich editor backed by contentEditable. Stores markdown in the data
+// model (so renderRich() keeps working for both new and legacy notes), but the
+// user only ever sees real bold/italic — no asterisks leaking into the UI.
+function RichEditor({initialMd = "", placeholder = "", onSubmit, onCancel,
+                     autoFocus = false, primary = "Add note", showCancel = false,
+                     minHeight = 48, mobile}) {
+  const ref = useRef(null);
+  const [empty, setEmpty] = useState(true);
 
-  const days = groupTimelineByDay(buildTimeline(pr));
-  const isEmpty = days.length === 0 || (days.length === 1 && days[0].entries.length === 0);
-
-  const addNote = () => {
-    const v = draft.trim();
-    if (!v) return;
-    onChange({...pr, log: [...(pr.log || []), {ts: new Date().toISOString(), kind:"note", body: v}]});
-    setDraft("");
-  };
-  const startEdit = (e) => { setEditKey(e.key); setEditVal(e.body); };
-  const cancelEdit = () => { setEditKey(null); setEditVal(""); };
-  const commitEdit = (entry) => {
-    const v = editVal.trim();
-    if (entry.isDetails) {
-      onChange({...pr, details: v});
-    } else if (!v) {
-      onChange({...pr, log: (pr.log || []).filter((_, i) => i !== entry.idx)});
-    } else {
-      onChange({...pr, log: (pr.log || []).map((n, i) => i === entry.idx
-        ? {...n, kind:"note", body: v, note: undefined}
-        : n)});
+  // Seed content once and focus with the caret at the end. Setting innerHTML
+  // on every render would clobber the user's selection mid-typing, so we
+  // intentionally only do it on mount.
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = mdToHtml(initialMd);
+    setEmpty(!ref.current.textContent.trim());
+    if (autoFocus) {
+      ref.current.focus();
+      const range = document.createRange();
+      range.selectNodeContents(ref.current);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
-    cancelEdit();
-  };
-  const deleteEntry = (entry) => {
-    if (entry.isDetails) onChange({...pr, details: ""});
-    else onChange({...pr, log: (pr.log || []).filter((_, i) => i !== entry.idx)});
-    cancelEdit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshEmpty = () => setEmpty(!ref.current.textContent.trim());
+
+  const submit = () => {
+    if (!ref.current) return;
+    const md = htmlToMd(ref.current.innerHTML);
+    if (!md.trim()) return;
+    onSubmit(md);
+    ref.current.innerHTML = "";
+    setEmpty(true);
   };
 
-  // Small toolbar button used in the composer and the edit popover.
-  const fmtBtn = (label, title, onMouseDown, style={}) => (
-    <button type="button" onMouseDown={e => { e.preventDefault(); onMouseDown(); }}
+  const fmt = (cmd) => {
+    if (!ref.current) return;
+    ref.current.focus();
+    // execCommand is deprecated but is the only cross-browser way to toggle
+    // bold/italic at the current selection. The Selection API equivalent would
+    // be ~50 lines of edge-case handling. Pragmatic choice for now.
+    document.execCommand(cmd, false, null);
+    refreshEmpty();
+  };
+
+  const fmtBtn = (label, title, onClick, style={}) => (
+    <button type="button" onMouseDown={e => { e.preventDefault(); onClick(); }}
       title={title} aria-label={title}
       style={{
-        width:26, height:26, borderRadius:C.r1, border:"1px solid "+C.border,
+        width:28, height:28, borderRadius:C.r1, border:"1px solid "+C.border,
         background:C.card, color:C.textSub, fontFamily:F, fontWeight:600,
-        fontSize:12, cursor:"pointer", lineHeight:1, flexShrink:0,
+        fontSize:13, cursor:"pointer", lineHeight:1, flexShrink:0,
         display:"inline-flex", alignItems:"center", justifyContent:"center",
         transition:"background .12s, color .12s, border-color .12s",
         ...style,
       }}>{label}</button>
   );
 
+  return (
+    <div className="dh-tl-composer" style={{
+      border:"1px solid "+C.border, borderRadius:C.r3, background:C.card,
+      padding:"10px 12px 8px",
+      transition:"border-color .15s, box-shadow .15s",
+    }}>
+      <div ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        className="dh-rich-editor"
+        data-placeholder={placeholder}
+        data-empty={empty ? "true" : "false"}
+        onInput={refreshEmpty}
+        onPaste={e => {
+          // Strip any rich formatting from pasted content — only plain text
+          // gets into the editor. Keeps the storage layer simple and prevents
+          // pasted HTML from sneaking in unexpected tags/styles.
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+          document.execCommand("insertText", false, text);
+        }}
+        onKeyDown={e => {
+          if ((e.metaKey||e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(); }
+          if (e.key === "Escape" && onCancel) { e.preventDefault(); onCancel(); }
+        }}
+        style={{
+          minHeight, outline:"none",
+          fontFamily:F, fontSize:14, color:C.text, lineHeight:1.55,
+          whiteSpace:"pre-wrap", wordBreak:"break-word",
+        }} />
+      <div style={{display:"flex", gap:6, marginTop:8, alignItems:"center"}}>
+        {fmtBtn("B", "Bold (⌘B)",   () => fmt("bold"),   {fontWeight:700})}
+        {fmtBtn("I", "Italic (⌘I)", () => fmt("italic"), {fontStyle:"italic", fontFamily:"Georgia, serif"})}
+        <span style={{flex:1}} />
+        {!mobile && !showCancel && (
+          <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>⌘↵ to save</span>
+        )}
+        {showCancel && (
+          <button onClick={onCancel} {...btnStyle("ghost","sm")}>Cancel</button>
+        )}
+        <button onClick={submit} disabled={empty}
+          {...btnStyle("primary","sm", empty ? {opacity:.45, cursor:"not-allowed"} : {})}>
+          {!showCancel && <I.plus size={12}/>}{primary}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActivityTimeline({pr, onChange, mobile}) {
+  const [editKey, setEditKey] = useState(null);
+
+  const days = groupTimelineByDay(buildTimeline(pr));
+  const isEmpty = days.length === 0 || (days.length === 1 && days[0].entries.length === 0);
+
+  const addNote = (md) => {
+    onChange({...pr, log: [...(pr.log || []), {ts: new Date().toISOString(), kind:"note", body: md}]});
+  };
+  const commitEdit = (entry, md) => {
+    if (entry.isDetails) {
+      onChange({...pr, details: md});
+    } else {
+      onChange({...pr, log: (pr.log || []).map((n, i) => i === entry.idx
+        ? {...n, kind:"note", body: md, note: undefined}
+        : n)});
+    }
+    setEditKey(null);
+  };
+  const deleteEntry = (entry) => {
+    if (entry.isDetails) onChange({...pr, details: ""});
+    else onChange({...pr, log: (pr.log || []).filter((_, i) => i !== entry.idx)});
+    setEditKey(null);
+  };
+
   // Render a single user-written note.
   const renderNote = (entry) => {
     const editing = editKey === entry.key;
     return (
-      <div key={entry.key}
-        className="dh-tl-item"
-        style={{
-          position:"relative", padding:"10px 0",
-          borderTop: entry.key === days[0].entries[0]?.key ? "none" : "none",
-        }}>
+      <div key={entry.key} className="dh-tl-item" style={{position:"relative", padding:"10px 0"}}>
         <div style={{display:"flex", alignItems:"baseline", gap:10, marginBottom:4}}>
           <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums",
             fontWeight:500, flexShrink:0}}>
@@ -2145,7 +2251,7 @@ function ActivityTimeline({pr, onChange, mobile}) {
           </span>
           {!editing && (
             <span className="dh-tl-actions" style={{display:"inline-flex", gap:2}}>
-              <button onClick={()=>startEdit(entry)} aria-label="Edit"
+              <button onClick={()=>setEditKey(entry.key)} aria-label="Edit"
                 className="dh-tl-action" title="Edit">
                 <I.edit size={12}/>
               </button>
@@ -2157,28 +2263,16 @@ function ActivityTimeline({pr, onChange, mobile}) {
           )}
         </div>
         {editing ? (
-          <div>
-            <textarea ref={editRef} value={editVal} autoFocus
-              onChange={e=>setEditVal(e.target.value)}
-              onKeyDown={e=>{
-                if ((e.metaKey||e.ctrlKey) && e.key === "Enter") { e.preventDefault(); commitEdit(entry); }
-                if (e.key === "Escape") cancelEdit();
-              }}
-              style={{
-                width:"100%", border:"1px solid "+C.greenBorder, borderRadius:C.r2,
-                outline:"none", resize:"vertical", padding:"10px 12px", minHeight:80,
-                fontFamily:F, fontSize:14, color:C.text, lineHeight:1.6,
-                boxShadow:C.ring,
-              }} />
-            <div style={{display:"flex", gap:6, marginTop:8, alignItems:"center"}}>
-              {fmtBtn("B", "Bold", () => wrapSelection(editRef, editVal, setEditVal, "**", "**", "bold text"), {fontWeight:700})}
-              {fmtBtn("I", "Italic", () => wrapSelection(editRef, editVal, setEditVal, "*", "*", "italic"), {fontStyle:"italic", fontFamily:"Georgia, serif"})}
-              {fmtBtn("`", "Code", () => wrapSelection(editRef, editVal, setEditVal, "`", "`", "code"), {fontFamily:'"JetBrains Mono", ui-monospace, monospace'})}
-              <span style={{flex:1}} />
-              <button onClick={cancelEdit} {...btnStyle("ghost","sm")}>Cancel</button>
-              <button onClick={()=>commitEdit(entry)} {...btnStyle("primary","sm")}>Save</button>
-            </div>
-          </div>
+          <RichEditor
+            key={entry.key + "-edit"}
+            initialMd={entry.body || ""}
+            placeholder="Note…"
+            onSubmit={(md) => commitEdit(entry, md)}
+            onCancel={() => setEditKey(null)}
+            primary="Save"
+            showCancel
+            autoFocus
+            mobile={mobile} />
         ) : (
           <div style={{
             fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6,
@@ -2191,7 +2285,7 @@ function ActivityTimeline({pr, onChange, mobile}) {
     );
   };
 
-  // Render a system event (status change, due-date move) as a one-line item.
+  // System event (status change, due-date move) — light one-line row.
   const renderEvent = (entry) => {
     const e = describeEvent(entry);
     const tone = e.tone === "success"
@@ -2230,42 +2324,10 @@ function ActivityTimeline({pr, onChange, mobile}) {
         <span style={{flex:1, height:1, background:C.border}}/>
       </div>
 
-      {/* Composer */}
-      <div className="dh-tl-composer" style={{
-        border:"1px solid "+C.border, borderRadius:C.r3, background:C.card,
-        padding:"10px 12px 8px", marginBottom:16,
-        transition:"border-color .15s, box-shadow .15s",
-      }}>
-        <textarea ref={composeRef} value={draft} onChange={e=>setDraft(e.target.value)}
-          onKeyDown={e=>{
-            if ((e.metaKey||e.ctrlKey) && e.key==="Enter") { e.preventDefault(); addNote(); }
-          }}
-          placeholder="Add a note…"
-          rows={2}
-          style={{
-            width:"100%", border:"none", outline:"none", resize:"vertical",
-            padding:0, minHeight:48, display:"block",
-            fontFamily:F, fontSize:14, color:C.text, lineHeight:1.55,
-            background:"transparent",
-          }} />
-        <div style={{display:"flex", gap:6, marginTop:6, alignItems:"center"}}>
-          {fmtBtn("B", "Bold (⌘B)", () => wrapSelection(composeRef, draft, setDraft, "**", "**", "bold text"), {fontWeight:700})}
-          {fmtBtn("I", "Italic (⌘I)", () => wrapSelection(composeRef, draft, setDraft, "*", "*", "italic"), {fontStyle:"italic", fontFamily:"Georgia, serif"})}
-          {fmtBtn("`", "Code", () => wrapSelection(composeRef, draft, setDraft, "`", "`", "code"), {fontFamily:'"JetBrains Mono", ui-monospace, monospace'})}
-          <span style={{flex:1}} />
-          {!mobile && (
-            <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>
-              ⌘↵ to save
-            </span>
-          )}
-          <button onClick={addNote} disabled={!draft.trim()}
-            {...btnStyle("primary","sm", draft.trim() ? {} : {opacity:.45, cursor:"not-allowed"})}>
-            <I.plus size={12}/> Add note
-          </button>
-        </div>
+      <div style={{marginBottom:16}}>
+        <RichEditor placeholder="Add a note…" onSubmit={addNote} mobile={mobile} />
       </div>
 
-      {/* Empty state */}
       {isEmpty && (
         <div style={{
           padding:"28px 16px", textAlign:"center",
@@ -2287,17 +2349,16 @@ function ActivityTimeline({pr, onChange, mobile}) {
         </div>
       )}
 
-      {/* Day-grouped feed, newest first */}
       {!isEmpty && days.map(day => (
         <div key={day.date ? day.date.getTime() : "earlier"} style={{marginBottom:8}}>
           <div style={{
             fontSize:11, fontWeight:700, color:C.textMuted, fontFamily:F,
             letterSpacing:".06em", textTransform:"uppercase",
-            marginTop:6, marginBottom:2, paddingLeft:0,
+            marginTop:6, marginBottom:2,
           }}>
             {dayHeader(day.date)}
           </div>
-          <div style={{paddingLeft:0}}>
+          <div>
             {day.entries.map(entry => entry.kind === "event"
               ? renderEvent(entry)
               : renderNote(entry))}
@@ -4401,6 +4462,12 @@ export default function App() {
       .dh-tl-action:hover{background:${C.bgSubtle};color:${C.text};}
       @media (hover:hover){.dh-tl-item .dh-tl-actions{opacity:0;transition:opacity .12s;}.dh-tl-item:hover .dh-tl-actions{opacity:1;}}
       .dh-tl-composer:focus-within{border-color:${C.green}!important;box-shadow:${C.ring};}
+      /* contentEditable rich editor: placeholder shown when empty */
+      .dh-rich-editor{caret-color:${C.green};}
+      .dh-rich-editor[data-empty="true"]::before{content:attr(data-placeholder);color:${C.textMuted};pointer-events:none;display:block;}
+      .dh-rich-editor strong{font-weight:700;}
+      .dh-rich-editor em{font-style:italic;}
+      .dh-rich-editor code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.92em;background:${C.bgSubtle};padding:1px 5px;border-radius:4px;}
       @keyframes dh-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
       .dh-pulse{animation:dh-pulse 2s ease-in-out infinite;}
       .dh-nav-item{transition:background-color .12s,color .12s;}
