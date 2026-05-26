@@ -95,6 +95,19 @@ async function pullFromApify(token, maxItems) {
       mappedCount: items.length,
       droppedCount: rawCount - items.length,
       sampleKeys,
+      // First item's actual values for safe fields — lets us debug type
+      // coercion issues (e.g. price arriving as "$79,900" instead of a number).
+      sampleValues: parsed[0] ? {
+        id:            parsed[0].id,
+        price:         parsed[0].price,
+        priceType:     typeof parsed[0].price,
+        city:          parsed[0].city,
+        state_code:    parsed[0].state_code,
+        title:         parsed[0].title,
+        property_type: parsed[0].property_type,
+        bedrooms:      parsed[0].bedrooms,
+        bedroomsType:  typeof parsed[0].bedrooms,
+      } : null,
     },
   };
 }
@@ -106,7 +119,10 @@ async function pullFromApify(token, maxItems) {
 // surface that on the card; users click through to InvestorLift to get the
 // address and contact info after expressing interest.
 function mapApifyDeal(raw) {
-  const price = Number(raw.price || 0);
+  // Apify scrapers often hand back prices as formatted strings ("$79,900")
+  // rather than numbers — Number() chokes on that and returns NaN. Strip
+  // anything that isn't a digit or dot, then parse.
+  const price = parseLoose(raw.price);
   const city  = raw.city || "";
   const state = normalizeState(raw.state_code || raw.state);
   if (!price || !city) return null;
@@ -267,8 +283,16 @@ function dedupByAddress(deals) {
 
 // -- Small helpers ------------------------------------------------------------
 function today() { return new Date().toISOString().slice(0, 10); }
-function num(v)  { const n = Number(v); return Number.isFinite(n) && n !== 0 ? n : null; }
-function int(v)  { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; }
+function num(v)  { const n = parseLoose(v); return Number.isFinite(n) && n !== 0 ? n : null; }
+function int(v)  { const n = Math.round(parseLoose(v)); return Number.isFinite(n) ? n : 0; }
+// Tolerates numbers, integer-as-strings, and formatted strings like "$79,900".
+function parseLoose(v) {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const cleaned = String(v).replace(/[^\d.\-]/g, "");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
 function pickFirst(arr) {
   if (!Array.isArray(arr) || arr.length === 0) return null;
   const x = arr[0];
@@ -309,15 +333,19 @@ function hashId(s) {
 }
 
 // -- Pipeline -----------------------------------------------------------------
-async function runPipeline(apifyKey, rentcastKey) {
-  const sources = {investorlift: 0, rentcast: 0};
+// `rentcastKey` is still accepted for backward-compat (and could be re-enabled
+// by un-commenting the call below) but is intentionally not used: RentCast
+// surfaces generic public listings with no photos, which dilutes the Deals
+// page. Sticking to the exclusive InvestorLift Network feed only.
+async function runPipeline(apifyKey, _rentcastKey) {
+  const sources = {investorlift: 0};
+  const errors  = {investorlift: false};
   const debug   = {};
   const raw     = [];
 
-  // 1. Apify InvestorLift — wrap in try/catch so one bad source can't take
-  // the whole nightly down. pullFromApify returns its own debug payload
-  // (http status, raw count, sample of field names) so the /pullDealsNow
-  // response can carry it back without needing log spelunking.
+  // Apify InvestorLift — single source for now. pullFromApify returns its
+  // own debug payload (http status, raw count, sample values) so the
+  // /pullDealsNow response can carry it back without needing log spelunking.
   if (apifyKey) {
     try {
       const {items, debug: apifyDebug} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
@@ -326,27 +354,13 @@ async function runPipeline(apifyKey, rentcastKey) {
       debug.apify = apifyDebug;
       logger.info(`Apify: ${apifyDebug.rawCount || 0} raw, ${items.length} mapped`, apifyDebug);
     } catch (e) {
+      errors.investorlift = true;
       debug.apify = {error: e.message};
       logger.error("Apify pull failed", {error: e.message});
     }
   } else {
+    errors.investorlift = true;
     debug.apify = {error: "APIFY_API_KEY not set"};
-  }
-
-  // 2. RentCast per market.
-  if (rentcastKey) {
-    for (const market of MARKETS) {
-      try {
-        const items = await pullFromRentCast(rentcastKey, market, RENTCAST_MAX_PER_MARKET);
-        sources.rentcast += items.length;
-        raw.push(...items);
-      } catch (e) {
-        logger.error(`RentCast ${market.id} failed`, {error: e.message});
-      }
-    }
-    logger.info(`Pulled ${sources.rentcast} from RentCast across ${MARKETS.length} markets`);
-  } else {
-    logger.warn("RENTCAST_API_KEY not set — skipping RentCast");
   }
 
   // 3. Filter to residential + only deals that score on at least one strategy.
@@ -356,10 +370,12 @@ async function runPipeline(apifyKey, rentcastKey) {
     .filter(({tags}) => tags.length > 0);
   const deduped = dedupByAddress(scored.map(({d}) => d));
 
-  // 4. Safety net: if both sources failed (empty `raw`), do NOT clobber the
-  // existing /deals — yesterday's data is better than no data.
-  if (raw.length === 0) {
-    logger.warn("All sources empty — leaving existing /deals untouched.");
+  // 4. Safety net: only skip the write if every source ERRORED. If Apify
+  // ran but returned 0 mappable items, that's a legitimate "no deals
+  // right now" — we still write empty so stale data doesn't linger.
+  const allErrored = Object.values(errors).every(Boolean);
+  if (allErrored) {
+    logger.warn("All sources errored — leaving existing /deals untouched.");
     return {written: 0, raw: 0, sources, debug, skipped: true};
   }
 
