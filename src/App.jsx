@@ -2907,22 +2907,29 @@ function ContractorChip({label, active, onClick}) {
   );
 }
 
-function DueNowSection({title, items, accent, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
+function DueNowSection({title, items, tone, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
   if (!items.length) return null;
   return (
     <div>
       <header style={{
-        padding: mobile ? "12px 14px 8px" : "14px 18px 8px",
+        padding: mobile ? "11px 14px" : "12px 18px",
         display: "flex", alignItems: "center", gap: 10,
+        background: tone.bg,
+        borderBottom: "1px solid " + tone.border,
       }}>
-        <span style={{width:7, height:7, borderRadius:"50%", background:accent, flexShrink:0}}/>
-        <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
-          letterSpacing:".06em", textTransform:"uppercase"}}>
+        <span style={{width:9, height:9, borderRadius:"50%", background:tone.dot, flexShrink:0}}/>
+        <span style={{
+          fontSize: mobile ? 12 : 13, fontWeight:700, color:tone.text, fontFamily:F,
+          letterSpacing:".08em", textTransform:"uppercase",
+        }}>
           {title}
         </span>
-        <span style={{fontSize:11, color:C.textSub, fontFamily:F, fontWeight:600,
-          fontVariantNumeric:"tabular-nums", background:C.bgSubtle,
-          padding:"1px 8px", borderRadius:9999, minWidth:20, textAlign:"center"}}>
+        <span style={{
+          fontSize:11, color:"#fff", fontFamily:F, fontWeight:700,
+          fontVariantNumeric:"tabular-nums",
+          background:tone.dot, padding:"2px 8px",
+          borderRadius:9999, minWidth:22, textAlign:"center", lineHeight:1.4,
+        }}>
           {items.length}
         </span>
       </header>
@@ -3318,13 +3325,16 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         <>
           {dueNowTotal > 0 && (
             <Card style={{marginBottom:20}} padding={0}>
-              <DueNowSection title="Overdue"   items={overdue}    accent={C.red}
+              <DueNowSection title="Overdue"   items={overdue}
+                tone={{dot:C.red,     text:C.redDark,   bg:C.redSubtle,    border:C.redBorder}}
                 onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
               {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
-              <DueNowSection title="Today"     items={todayItems} accent={C.amber}
+              <DueNowSection title="Today"     items={todayItems}
+                tone={{dot:C.amber,   text:C.amberDark, bg:C.amberSubtle,  border:C.amberBorder}}
                 onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
               {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
-              <DueNowSection title="This week" items={thisWeek}   accent={C.borderHover}
+              <DueNowSection title="This week" items={thisWeek}
+                tone={{dot:C.textSub, text:C.text,      bg:C.bgSubtle,     border:C.border}}
                 onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
             </Card>
           )}
