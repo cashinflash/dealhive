@@ -151,6 +151,10 @@ function mapApifyDeal(raw) {
     rent:      0, // 1% rule fallback in classifyDeal fills this for the buyhold score
     arv:       int(raw.arv_estimate),
     photo:     raw.img_url || null,
+    // Gallery support — actor currently returns one hero image, but the
+    // client renders a carousel that scales to N photos so this is ready
+    // when we either upgrade the actor or add a second-pass per-deal pull.
+    photos:    raw.img_url ? [raw.img_url] : [],
     seller: {
       name:    raw.wholesaler_name || raw.account_title || null,
       company: raw.wholesaler_company || null,
