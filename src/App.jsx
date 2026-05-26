@@ -459,6 +459,7 @@ const I = {
   arrowLeft:   p => <IconSvg {...p} d={<g><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></g>}/>,
   arrowRight:  p => <IconSvg {...p} d={<g><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></g>}/>,
   chevronRight:p => <IconSvg {...p} d="M9 18l6-6-6-6"/>,
+  chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
   chevronDown: p => <IconSvg {...p} d="M6 9l6 6 6-6"/>,
   trash:       p => <IconSvg {...p} d={<g><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></g>}/>,
   edit:        p => <IconSvg {...p} d={<g><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>,
@@ -2404,7 +2405,7 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
         <label style={labelStyle}>Type</label>
         <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
       </div>
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "minmax(0,1fr) minmax(0,1fr)" : "repeat(4, minmax(0,1fr))", gap: mobile?10:12}}>
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "repeat(4, minmax(0,1fr))", gap: mobile?10:12}}>
         <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
         <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
         <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
@@ -2941,10 +2942,175 @@ function DueNowSection({title, items, accent, onPropertyClick, onRowChange, onRo
   );
 }
 
+// Compact month calendar with a dot on every day that has follow-ups due.
+// Tap a day → focused day view in ProjectsPage; tap again to clear. Past days
+// with items get a red dot (overdue), today/future days get an orange one.
+function ProjectsCalendar({allOpen, mobile, selectedDate, onSelectDate}) {
+  const todayKey = todayIso();
+  const [viewMonth, setViewMonth] = useState(() => {
+    const seed = selectedDate ? new Date(selectedDate + "T00:00:00") : new Date();
+    return new Date(seed.getFullYear(), seed.getMonth(), 1);
+  });
+
+  // Re-anchor the visible month if the parent selects a date in a different month.
+  useEffect(() => {
+    if (!selectedDate) return;
+    const d = new Date(selectedDate + "T00:00:00");
+    if (d.getFullYear() !== viewMonth.getFullYear() || d.getMonth() !== viewMonth.getMonth()) {
+      setViewMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
+
+  const year  = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = new Date(year, month, 1).getDay();
+
+  // Count items due per day (within the visible month only).
+  const itemsByDay = {};
+  allOpen.forEach(({pr}) => {
+    if (!pr.dueDate) return;
+    const d = new Date(pr.dueDate + "T00:00:00");
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      itemsByDay[pr.dueDate] = (itemsByDay[pr.dueDate] || 0) + 1;
+    }
+  });
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    cells.push({day:d, dateStr, count: itemsByDay[dateStr] || 0});
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthLabel = viewMonth.toLocaleString("en-US", {month:"long", year:"numeric"});
+  const goToToday  = () => {
+    const t = new Date();
+    setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+    onSelectDate(todayKey);
+  };
+  const prevMonth  = () => setViewMonth(new Date(year, month - 1, 1));
+  const nextMonth  = () => setViewMonth(new Date(year, month + 1, 1));
+
+  const navBtn = (icon, onClick, label) => (
+    <button onClick={onClick} aria-label={label}
+      className="dh-cal-nav"
+      style={{
+        width:30, height:30, borderRadius:C.r1, border:"none", background:"transparent",
+        color:C.textSub, cursor:"pointer",
+        display:"inline-flex", alignItems:"center", justifyContent:"center",
+        transition:"background .12s, color .12s",
+      }}>{icon}</button>
+  );
+
+  const totalDueThisMonth = Object.values(itemsByDay).reduce((s,n) => s+n, 0);
+
+  return (
+    <Card style={{marginBottom:20, padding: mobile ? "14px 14px 12px" : "16px 18px 14px"}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, gap:8}}>
+        <div style={{display:"flex", alignItems:"center", gap:2}}>
+          {navBtn(<I.chevronLeft size={16}/>, prevMonth, "Previous month")}
+          <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
+            padding:"0 8px", letterSpacing:"-0.01em", minWidth: mobile?130:150, textAlign:"center"}}>
+            {monthLabel}
+          </span>
+          {navBtn(<I.chevronRight size={16}/>, nextMonth, "Next month")}
+        </div>
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          {totalDueThisMonth > 0 && (
+            <span style={{fontSize:11, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums", fontWeight:500}}>
+              {totalDueThisMonth} due
+            </span>
+          )}
+          <button onClick={goToToday}
+            style={{
+              background:"transparent", border:"1px solid "+C.border, borderRadius:C.r1,
+              padding:"4px 10px", fontSize:12, fontWeight:600, color:C.textSub,
+              cursor:"pointer", fontFamily:F, letterSpacing:"-0.005em",
+              transition:"background .12s, color .12s, border-color .12s",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.background=C.bgSubtle; e.currentTarget.style.color=C.text;}}
+            onMouseLeave={e=>{e.currentTarget.style.background="transparent"; e.currentTarget.style.color=C.textSub;}}>
+            Today
+          </button>
+        </div>
+      </div>
+
+      <div style={{display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:2, marginBottom:4}}>
+        {["S","M","T","W","T","F","S"].map((d, i) => (
+          <div key={i} style={{
+            textAlign:"center", fontSize:10, fontWeight:700, color:C.textMuted,
+            fontFamily:F, letterSpacing:".06em", textTransform:"uppercase", padding:"4px 0",
+          }}>{d}</div>
+        ))}
+      </div>
+
+      <div style={{display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:2}}>
+        {cells.map((cell, i) => {
+          if (!cell) return <div key={`pad-${i}`} style={{aspectRatio:"1 / 1"}}/>;
+          const isToday    = cell.dateStr === todayKey;
+          const isSelected = cell.dateStr === selectedDate;
+          const isPast     = cell.dateStr < todayKey;
+          const hasItems   = cell.count > 0;
+          const dotColor   = isSelected ? "#fff" : isPast ? C.red : C.green;
+          return (
+            <button key={cell.dateStr}
+              onClick={() => onSelectDate(isSelected ? null : cell.dateStr)}
+              aria-label={`${cell.dateStr}${hasItems ? `, ${cell.count} item${cell.count===1?"":"s"} due` : ""}`}
+              aria-pressed={isSelected}
+              className="dh-cal-day"
+              style={{
+                aspectRatio:"1 / 1", padding:0, border:"none", cursor:"pointer",
+                borderRadius:C.r2,
+                background: isSelected ? C.green
+                          : isToday    ? C.greenSubtle
+                          : "transparent",
+                color:      isSelected ? "#fff"
+                          : isToday    ? C.greenDark
+                          : C.text,
+                position:"relative",
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:1,
+                transition:"background .12s, color .12s",
+                fontFamily:F, fontSize: mobile ? 13 : 14,
+                fontWeight: isToday || isSelected ? 700 : 500,
+                fontVariantNumeric:"tabular-nums",
+                outline: isToday && !isSelected ? `1px solid ${C.greenBorder}` : "none",
+                outlineOffset: -1,
+              }}>
+              <span style={{lineHeight:1}}>{cell.day}</span>
+              {hasItems && (
+                <span style={{
+                  width: cell.count > 1 ? 14 : 5,
+                  height: 5, marginTop: 2,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  gap:2,
+                }}>
+                  <span style={{width:5, height:5, borderRadius:"50%", background:dotColor}}/>
+                  {cell.count > 1 && (
+                    <span style={{
+                      fontSize:9, fontWeight:700, color: isSelected ? "rgba(255,255,255,.85)" : C.textMuted,
+                      lineHeight:1, fontVariantNumeric:"tabular-nums",
+                    }}>{cell.count}</span>
+                  )}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function ProjectsPage({properties, onUpdateProperty, mobile}) {
   const isWide = useIsWide();
   const [filterMode, setFilterMode] = useState("open");
   const [search, setSearch]         = useState("");
+  // When set (YYYY-MM-DD), the page enters a focused "day view" showing only
+  // items due that day, and the calendar highlights the selection.
+  const [selectedDate, setSelectedDate] = useState(null);
   // Persist contractor selection in URL ?contractor=...
   const [contractor, setContractor] = useState(() => {
     try { return new URLSearchParams(window.location.search).get("contractor") || ""; } catch { return ""; }
@@ -3023,6 +3189,37 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
 
   const overdueCount = overdue.length;
 
+  // Day view: every follow-up due on the selected date, open or done, across
+  // properties (with the contractor filter still applied). Open items first.
+  const selectedDayItems = selectedDate
+    ? properties.flatMap(p =>
+        (p.projects || [])
+          .filter(pr => pr.dueDate === selectedDate)
+          .filter(pr => !contractor || (pr.contractor || "") === contractor)
+          .map(pr => ({pr, property: p}))
+      ).sort((a, b) => {
+        const aDone = a.pr.status === "Complete" ? 1 : 0;
+        const bDone = b.pr.status === "Complete" ? 1 : 0;
+        return aDone - bDone;
+      })
+    : [];
+
+  const selectedDayLabel = selectedDate
+    ? (() => {
+        const d = new Date(selectedDate + "T00:00:00");
+        const today = startOfToday();
+        const that  = new Date(d); that.setHours(0,0,0,0);
+        const diff  = Math.round((that - today) / 86400000);
+        const md    = d.toLocaleDateString("en-US", {month:"long", day:"numeric"});
+        if (diff === 0)  return `Today · ${md}`;
+        if (diff === -1) return `Yesterday · ${md}`;
+        if (diff === 1)  return `Tomorrow · ${md}`;
+        const wd = d.toLocaleDateString("en-US", {weekday:"long"});
+        const sameYear = d.getFullYear() === new Date().getFullYear();
+        return sameYear ? `${wd} · ${md}` : `${wd} · ${md}, ${d.getFullYear()}`;
+      })()
+    : "";
+
   return (
     <div style={{
       background:pageBg, minHeight:"100%",
@@ -3033,7 +3230,7 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
     }}>
       {/* Header with inline stats */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-        gap:16, flexWrap:"wrap", marginBottom:24}}>
+        gap:16, flexWrap:"wrap", marginBottom:20}}>
         <div style={{minWidth:0}}>
           <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
             Projects
@@ -3068,72 +3265,124 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         )}
       </div>
 
-      {dueNowTotal > 0 && (
-        <Card style={{marginBottom:20}} padding={0}>
-          <DueNowSection title="Overdue"   items={overdue}    accent={C.red}
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
-          {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title="Today"     items={todayItems} accent={C.amber}
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
-          {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
-          <DueNowSection title="This week" items={thisWeek}   accent={C.borderHover}
-            onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
+      {/* Calendar — always visible at the top */}
+      <ProjectsCalendar allOpen={allOpen} mobile={mobile}
+        selectedDate={selectedDate} onSelectDate={setSelectedDate} />
+
+      {selectedDate ? (
+        /* Focused day view: just the items due on this day */
+        <Card padding={0}>
+          <header style={{
+            padding: mobile ? "14px 16px" : "16px 18px",
+            display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+            borderBottom: selectedDayItems.length ? "1px solid "+C.border : "none",
+          }}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase"}}>Due</div>
+              <div style={{fontSize: mobile ? 15 : 16, fontWeight:600, color:C.text, fontFamily:F,
+                letterSpacing:"-0.01em", marginTop:2}}>
+                {selectedDayLabel}
+              </div>
+              <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2,
+                fontVariantNumeric:"tabular-nums"}}>
+                {selectedDayItems.length === 0
+                  ? "Nothing scheduled"
+                  : `${selectedDayItems.length} item${selectedDayItems.length===1?"":"s"}`}
+              </div>
+            </div>
+            <button onClick={() => setSelectedDate(null)} {...btnStyle("secondary","sm")}>
+              <I.x size={12} stroke={2.5}/> Clear
+            </button>
+          </header>
+          {selectedDayItems.length === 0 ? (
+            <div style={{padding:"32px 16px", textAlign:"center"}}>
+              <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>
+                No follow-ups are scheduled for this day.
+              </div>
+            </div>
+          ) : (
+            selectedDayItems.map(({pr, property}) => (
+              <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
+                propLabel={property.address} propId={property.id} showProperty
+                onChange={updated => handleRowChange(property, updated)}
+                onDelete={() => handleRowDelete(property, pr.id)}
+                onAddExpense={exp => handleAddExpense(property, exp)}
+                isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
+                mobile={mobile} contractors={contractors} />
+            ))
+          )}
         </Card>
+      ) : (
+        /* Normal view: Due Now + filter + property sections */
+        <>
+          {dueNowTotal > 0 && (
+            <Card style={{marginBottom:20}} padding={0}>
+              <DueNowSection title="Overdue"   items={overdue}    accent={C.red}
+                onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
+              {overdue.length > 0 && (todayItems.length > 0 || thisWeek.length > 0) && <div style={{height:1, background:C.border}}/>}
+              <DueNowSection title="Today"     items={todayItems} accent={C.amber}
+                onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
+              {todayItems.length > 0 && thisWeek.length > 0 && <div style={{height:1, background:C.border}}/>}
+              <DueNowSection title="This week" items={thisWeek}   accent={C.borderHover}
+                onPropertyClick={scrollToProperty} onRowChange={handleRowChange} onRowDelete={handleRowDelete} onAddExpense={handleAddExpense} mobile={mobile} contractors={contractors}/>
+            </Card>
+          )}
+
+          {/* Filter + search row */}
+          <div style={{display:"flex", gap:10, marginBottom:contractors.length?12:18, flexWrap:"wrap", alignItems:"center"}}>
+            <div style={{display:"flex", padding:3, background:C.bgSubtle,
+              border:"1px solid "+C.border, borderRadius:C.r2}}>
+              {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => {
+                const active = filterMode === id;
+                return (
+                  <button key={id} onClick={()=>setFilterMode(id)}
+                    style={{
+                      padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                      background: active ? C.card : "transparent",
+                      color: active ? C.text : C.textSub,
+                      fontWeight: active?600:500, fontSize:12, fontFamily:F,
+                      letterSpacing:"-0.005em",
+                      boxShadow: active ? C.sh1 : "none",
+                      transition:"background .12s, color .12s, box-shadow .12s",
+                    }}>{label}</button>
+                );
+              })}
+            </div>
+            <div style={{position:"relative", flex:1, minWidth:220}}>
+              <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
+                color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
+                <I.search size={15}/>
+              </span>
+              <input value={search} onChange={e=>setSearch(e.target.value)}
+                placeholder={mobile ? "Search follow-ups…" : "Search follow-ups, contractors, details"}
+                style={{...iS(mobile), paddingLeft:36}} />
+            </div>
+          </div>
+
+          {/* Contractor chip row */}
+          {contractors.length > 0 && (
+            <div className="dh-chip-row" style={{display:"flex", gap:6, marginBottom:20, overflowX:"auto",
+              WebkitOverflowScrolling:"touch", paddingBottom:2}}>
+              <ContractorChip label="All contractors" active={!contractor} onClick={()=>setContractor("")}/>
+              {contractors.map(c => (
+                <ContractorChip key={c} label={c} active={contractor===c}
+                  onClick={()=>setContractor(contractor===c ? "" : c)}/>
+              ))}
+            </div>
+          )}
+
+          <div style={{display:"grid", gridTemplateColumns: isWide ? "1fr 1fr" : "1fr", gap:14}}>
+            {properties.map(p => (
+              <PropertySection key={p.id} property={p}
+                onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
+                onAddExpense={exp => handleAddExpense(p, exp)}
+                mobile={mobile} filterMode={filterMode} search={search}
+                contractor={contractor} contractors={contractors} />
+            ))}
+          </div>
+        </>
       )}
-
-      {/* Filter + search row */}
-      <div style={{display:"flex", gap:10, marginBottom:contractors.length?12:18, flexWrap:"wrap", alignItems:"center"}}>
-        {/* Segmented filter control */}
-        <div style={{display:"flex", padding:3, background:C.bgSubtle,
-          border:"1px solid "+C.border, borderRadius:C.r2}}>
-          {[["open","Open"],["done","Done"],["all","All"]].map(([id,label]) => {
-            const active = filterMode === id;
-            return (
-              <button key={id} onClick={()=>setFilterMode(id)}
-                style={{
-                  padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
-                  background: active ? C.card : "transparent",
-                  color: active ? C.text : C.textSub,
-                  fontWeight: active?600:500, fontSize:12, fontFamily:F,
-                  letterSpacing:"-0.005em",
-                  boxShadow: active ? C.sh1 : "none",
-                  transition:"background .12s, color .12s, box-shadow .12s",
-                }}>{label}</button>
-            );
-          })}
-        </div>
-        <div style={{position:"relative", flex:1, minWidth:220}}>
-          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
-            color:C.textMuted, pointerEvents:"none", display:"inline-flex"}}>
-            <I.search size={15}/>
-          </span>
-          <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder={mobile ? "Search follow-ups…" : "Search follow-ups, contractors, details"}
-            style={{...iS(mobile), paddingLeft:36}} />
-        </div>
-      </div>
-
-      {/* Contractor chip row */}
-      {contractors.length > 0 && (
-        <div className="dh-chip-row" style={{display:"flex", gap:6, marginBottom:20, overflowX:"auto",
-          WebkitOverflowScrolling:"touch", paddingBottom:2}}>
-          <ContractorChip label="All contractors" active={!contractor} onClick={()=>setContractor("")}/>
-          {contractors.map(c => (
-            <ContractorChip key={c} label={c} active={contractor===c}
-              onClick={()=>setContractor(contractor===c ? "" : c)}/>
-          ))}
-        </div>
-      )}
-
-      <div style={{display:"grid", gridTemplateColumns: isWide ? "1fr 1fr" : "1fr", gap:14}}>
-        {properties.map(p => (
-          <PropertySection key={p.id} property={p}
-            onUpdateProjects={projects => handleUpdateProjects(p.id, projects)}
-            onAddExpense={exp => handleAddExpense(p, exp)}
-            mobile={mobile} filterMode={filterMode} search={search}
-            contractor={contractor} contractors={contractors} />
-        ))}
-      </div>
     </div>
   );
 }
@@ -4468,6 +4717,9 @@ export default function App() {
       .dh-rich-editor strong{font-weight:700;}
       .dh-rich-editor em{font-style:italic;}
       .dh-rich-editor code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.92em;background:${C.bgSubtle};padding:1px 5px;border-radius:4px;}
+      .dh-cal-nav:hover{background:${C.bgSubtle}!important;color:${C.text}!important;}
+      .dh-cal-day:hover{background:${C.bgSubtle};}
+      .dh-cal-day[aria-pressed="true"]:hover{background:${C.greenHover}!important;}
       @keyframes dh-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
       .dh-pulse{animation:dh-pulse 2s ease-in-out infinite;}
       .dh-nav-item{transition:background-color .12s,color .12s;}
