@@ -3673,16 +3673,19 @@ const DEAL_MARKETS = [
 // flip) and surface tags + scores so the card can show the right hero numbers.
 // A deal can carry both tags ("multi-strategy") or neither (skipped from feed).
 const classifyDeal = (deal) => {
-  // Buy-and-hold pro forma uses the same calc() the analyzer uses, with
-  // sensible default ops expenses derived from price/rent.
+  // 1% rule fallback for listings without a rent estimate (RentCast active
+  // listings don't include one). Conservative proxy; the analyzer uses real
+  // comps when the user opens a specific deal. Keep this in sync with the
+  // matching helper in functions/index.js.
+  const rent       = deal.rent && deal.rent > 0 ? deal.rent : Math.round((deal.price || 0) * 0.01);
   const monthlyTax = Math.round((deal.price * 0.0233) / 12); // ~OH-ish 2.33%/yr
   const buyHoldInputs = {
     purchasePrice: deal.price || 0,
     repairCosts:   deal.repair || 0,
-    rentAmount:    deal.rent   || 0,
+    rentAmount:    rent,
     expPropTax:    monthlyTax,
     expInsurance:  100,
-    expManagement: Math.round((deal.rent || 0) * 0.08), // 8% PM
+    expManagement: Math.round(rent * 0.08), // 8% PM
     expUtilities:  0,
     vacancyRate:   5,
     downPaymentPct: 20,
@@ -3701,14 +3704,15 @@ const classifyDeal = (deal) => {
   const flipProfit   = Math.round(arv - totalIn - agentFee - sellClosing - holdingCost);
   const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
-  // What is this deal good for?
+  // Thresholds tuned for cash-flow markets where wholesale prices cluster at
+  // $40-100k — a $20k flip-profit gate filtered out the entire feed there.
   const tags = [];
-  if (buyHold.finCap >= 7 && buyHold.finCF > 50)   tags.push("buyhold");
-  if (flipROI    >= 15 && flipProfit >= 20000)     tags.push("flip");
+  if (buyHold.finCap >= 6  && buyHold.finCF > 0)      tags.push("buyhold");
+  if (flipROI       >= 12 && flipProfit     >= 10000) tags.push("flip");
 
   // Score is used to pick the "primary" strategy when both fit.
   const buyHoldScore = (buyHold.finCF > 0 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
-  const flipScore    = (flipROI   > 15 ? 30 : 0) + Math.min(flipROI, 50);
+  const flipScore    = (flipROI   > 12 ? 30 : 0) + Math.min(flipROI, 50);
 
   return {
     tags, buyHoldScore, flipScore,

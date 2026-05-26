@@ -188,10 +188,16 @@ function isResidential(deal) { return RESIDENTIAL_TYPES.has(deal.type); }
 // function has no client deps. Both must stay in sync; if you tune one, tune
 // the other (or extract to a shared package later).
 function classifyDeal(deal) {
+  // For listings missing a rent estimate (RentCast active-listings feed doesn't
+  // include one), fall back to the "1% rule" — monthly rent ~= 1% of price.
+  // It's a conservative proxy; users see the real number after running comps
+  // in the analyzer. Without this fallback, cap rate divides by zero and every
+  // RentCast listing fails the buyhold filter.
+  const rent       = deal.rent && deal.rent > 0 ? deal.rent : Math.round((deal.price || 0) * 0.01);
   const monthlyTax = Math.round((deal.price * 0.0233) / 12);
   const PI         = monthlyPI(deal.price * 0.8, 7.5);
-  const exp        = monthlyTax + 100 + Math.round((deal.rent || 0) * 0.08);
-  const effRent    = (deal.rent || 0) * 0.95;
+  const exp        = monthlyTax + 100 + Math.round(rent * 0.08);
+  const effRent    = rent * 0.95;
   const finCF      = effRent - exp - PI;
   const noi        = (effRent - exp) * 12;
   const finCap     = deal.price > 0 ? (noi / deal.price) * 100 : 0;
@@ -201,9 +207,12 @@ function classifyDeal(deal) {
   const flipProfit = Math.round(arv - totalIn - arv * 0.06 - arv * 0.02 - 6 * 600);
   const flipROI    = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
+  // Thresholds tuned for cash-flow markets (Cleveland / Detroit / Memphis / etc.)
+  // where median wholesale prices sit at $40-100k. Earlier $20k flip-profit gate
+  // filtered out the entire feed.
   const tags = [];
-  if (finCap >= 7  && finCF      > 50)     tags.push("buyhold");
-  if (flipROI >= 15 && flipProfit >= 20000) tags.push("flip");
+  if (finCap >= 6   && finCF      > 0)      tags.push("buyhold");
+  if (flipROI >= 12 && flipProfit >= 10000) tags.push("flip");
   return tags;
 }
 
