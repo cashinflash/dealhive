@@ -4750,7 +4750,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0, rentcastKey=""}) {
+function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0, rentcastKey="", tier="free", onUpgrade, onDowngrade}) {
   const [llcTxt,setLlcTxt] = useState(llcs.join("\n"));
   const [rates,setRates]   = useState({...renoRates});
   const [saved,setSaved]   = useState(false);
@@ -4758,6 +4758,7 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
     onSave(llcTxt.split("\n").map(s=>s.trim()).filter(Boolean), rates);
     setSaved(true); setTimeout(()=>setSaved(false), 2000);
   };
+  const isPro = tier === "pro";
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px", maxWidth:680}}>
       <PageHeader title="Settings"/>
@@ -4778,6 +4779,52 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
           <button onClick={onSignOut} {...btnStyle("secondary","md")}>Sign out</button>
         </div>
       </SectionBlock>
+
+      <SectionBlock title="Subscription" color={C.green}>
+        <div style={{
+          background: isPro
+            ? `linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 70%)`
+            : C.bgSubtle,
+          border:"1px solid "+(isPro ? C.greenBorder : C.border),
+          borderRadius:C.r3, padding:"14px 16px",
+          display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
+        }}>
+          <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+            <div style={{
+              width:38, height:38, borderRadius:C.r3,
+              background: isPro ? C.green : C.card, color: isPro ? "#fff" : C.textMuted,
+              border:"1px solid "+(isPro ? C.green : C.border),
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+            }}>
+              <I.star size={18} stroke={2.2}/>
+            </div>
+            <div style={{minWidth:0}}>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <span style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>
+                  DealHive {isPro ? "Pro" : "Free"}
+                </span>
+                {isPro && <Badge label="Active" bg={C.greenLight} c={C.greenDark} dot/>}
+              </div>
+              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, lineHeight:1.5}}>
+                {isPro
+                  ? "Full access to all deals, exact addresses, and the analyzer pre-filled."
+                  : "Browse a preview of the deal feed. Upgrade for the full list, exact addresses, and unlimited analyzer pre-fills."}
+              </div>
+            </div>
+          </div>
+          {isPro ? (
+            <button onClick={onDowngrade} {...btnStyle("secondary","md")}>Switch to Free</button>
+          ) : (
+            <button onClick={onUpgrade} {...btnStyle("primary","md")}>
+              <I.star size={13}/> Upgrade to Pro
+            </button>
+          )}
+        </div>
+        <p style={{fontSize:11, color:C.textMuted, fontFamily:F, margin:"10px 0 0", lineHeight:1.5}}>
+          Real billing via Stripe is coming. Until then, you can toggle tiers freely here to preview either experience.
+        </p>
+      </SectionBlock>
+
       <SectionBlock title="Data provider" color={C.green}>
         <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"12px 14px",
           display:"flex", alignItems:"flex-start", gap:10}}>
@@ -5402,12 +5449,16 @@ export default function App() {
     setPropId(p.id); setPage("property");
     setToast("Saved to My Properties"); setTimeout(()=>setToast(""), 2000);
   };
-  // Stripe / paid-tier checkout will live behind this — for now just a toast
-  // so the upgrade affordances aren't dead.
-  const handleUpgrade = () => {
-    setToast("Pro upgrade coming soon");
+  // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
+  // can use Pro features. When checkout lands this will redirect to Stripe and
+  // the tier will be set server-side on a successful payment webhook.
+  const setTier = (tier) => {
+    persist({...data, tier});
+    setToast(tier === "pro" ? "Welcome to DealHive Pro!" : "Switched to Free");
     setTimeout(()=>setToast(""), 2500);
   };
+  const handleUpgrade   = () => setTier("pro");
+  const handleDowngrade = () => setTier("free");
 
   const alerts     = (data.properties||[]).filter(p => {
     const d = dU(p.leaseEnd);
@@ -5458,7 +5509,8 @@ export default function App() {
         ) : page==="settings" ? (
           <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
             onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""} />
+            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""}
+            tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
         ) : null}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} />
@@ -5494,7 +5546,8 @@ export default function App() {
             ) : page==="settings" ? (
               <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
                 onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""} />
+                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""}
+                tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
             ) : null}
           </ErrorBoundary>
         </div>
