@@ -3737,42 +3737,54 @@ const dealToProForma = (deal) => ({
 
 // Sample deals — Phase 0 placeholder until the listings pipeline lands.
 // Real lat/lng so Street View renders authentically per card.
+// Property types that surface in the Deals feed. Residential 1–4 unit only —
+// no commercial, no land, no mobile/manufactured, no 5+ unit apartment buildings.
+// Strings line up with RentCast's `propertyType` taxonomy so the live pipeline
+// can pass them straight through to this filter when Phase 1 lands.
+const RESIDENTIAL_TYPES = new Set([
+  "Single Family",
+  "Multi-Family",  // RentCast lumps 2–4 unit duplex/triplex/fourplex here
+  "Townhouse",
+  "Condo",
+]);
+const isResidential = (deal) => RESIDENTIAL_TYPES.has(deal.type);
+
 const SAMPLE_DEALS = [
   {id:"sd1",  market:"cle", address:"3214 W 65th Street",      city:"Cleveland",    state:"OH", zip:"44102",
-   lat:41.4641, lng:-81.7345, beds:3, baths:1, sqft:1240, yearBuilt:1922,
+   type:"Single Family", lat:41.4641, lng:-81.7345, beds:3, baths:1, sqft:1240, yearBuilt:1922,
    price:79900,  repair:18000, rent:1150, arv:142000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd2",  market:"cle", address:"4128 East 116th Street",  city:"Cleveland",    state:"OH", zip:"44105",
-   lat:41.4596, lng:-81.6133, beds:4, baths:2, sqft:1560, yearBuilt:1918,
+   type:"Multi-Family", lat:41.4596, lng:-81.6133, beds:4, baths:2, sqft:1560, yearBuilt:1918,
    price:62500,  repair:42000, rent:1300, arv:158000, source:"Auction.com", sourcedAt:"2026-05-25"},
   {id:"sd3",  market:"cle", address:"1429 West 95th Street",   city:"Cleveland",    state:"OH", zip:"44102",
-   lat:41.4866, lng:-81.7560, beds:3, baths:2, sqft:1380, yearBuilt:1925,
+   type:"Single Family", lat:41.4866, lng:-81.7560, beds:3, baths:2, sqft:1380, yearBuilt:1925,
    price:115000, repair:8000,  rent:1450, arv:152000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd4",  market:"det", address:"15843 Mansfield Street",  city:"Detroit",      state:"MI", zip:"48227",
-   lat:42.4002, lng:-83.2034, beds:3, baths:1, sqft:1180, yearBuilt:1948,
+   type:"Single Family", lat:42.4002, lng:-83.2034, beds:3, baths:1, sqft:1180, yearBuilt:1948,
    price:52000,  repair:28000, rent:1150, arv:118000, source:"Sheriff Sale", sourcedAt:"2026-05-25"},
   {id:"sd5",  market:"det", address:"19211 Strathmoor Street", city:"Detroit",      state:"MI", zip:"48235",
-   lat:42.4366, lng:-83.1958, beds:4, baths:2, sqft:1540, yearBuilt:1942,
+   type:"Multi-Family", lat:42.4366, lng:-83.1958, beds:4, baths:2, sqft:1540, yearBuilt:1942,
    price:84500,  repair:12000, rent:1450, arv:135000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd6",  market:"mem", address:"3447 Park Avenue",        city:"Memphis",      state:"TN", zip:"38111",
-   lat:35.1241, lng:-89.9417, beds:3, baths:2, sqft:1320, yearBuilt:1955,
+   type:"Single Family", lat:35.1241, lng:-89.9417, beds:3, baths:2, sqft:1320, yearBuilt:1955,
    price:78500,  repair:14000, rent:1200, arv:128000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd7",  market:"mem", address:"1238 Tutwiler Avenue",    city:"Memphis",      state:"TN", zip:"38107",
-   lat:35.1697, lng:-90.0148, beds:2, baths:1, sqft:980,  yearBuilt:1940,
+   type:"Single Family", lat:35.1697, lng:-90.0148, beds:2, baths:1, sqft:980,  yearBuilt:1940,
    price:42000,  repair:24000, rent:925,  arv:88000,  source:"Auction.com", sourcedAt:"2026-05-25"},
   {id:"sd8",  market:"bhm", address:"5612 33rd Avenue North",  city:"Birmingham",   state:"AL", zip:"35207",
-   lat:33.5616, lng:-86.8311, beds:3, baths:1, sqft:1100, yearBuilt:1952,
+   type:"Single Family", lat:33.5616, lng:-86.8311, beds:3, baths:1, sqft:1100, yearBuilt:1952,
    price:48000,  repair:22000, rent:1050, arv:108000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd9",  market:"ind", address:"821 N New Jersey Street", city:"Indianapolis", state:"IN", zip:"46202",
-   lat:39.7794, lng:-86.1556, beds:3, baths:2, sqft:1380, yearBuilt:1908,
+   type:"Single Family", lat:39.7794, lng:-86.1556, beds:3, baths:2, sqft:1380, yearBuilt:1908,
    price:124000, repair:18000, rent:1500, arv:182000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd10", market:"ind", address:"4128 Carrollton Avenue",  city:"Indianapolis", state:"IN", zip:"46205",
-   lat:39.8266, lng:-86.1444, beds:2, baths:1, sqft:920,  yearBuilt:1925,
+   type:"Townhouse", lat:39.8266, lng:-86.1444, beds:2, baths:1, sqft:920,  yearBuilt:1925,
    price:75000,  repair:12000, rent:1100, arv:118000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd11", market:"kcm", address:"4218 Bellefontaine Ave",  city:"Kansas City",  state:"MO", zip:"64130",
-   lat:39.0488, lng:-94.5444, beds:3, baths:2, sqft:1180, yearBuilt:1948,
+   type:"Single Family", lat:39.0488, lng:-94.5444, beds:3, baths:2, sqft:1180, yearBuilt:1948,
    price:58000,  repair:20000, rent:1100, arv:115000, source:"RentCast", sourcedAt:"2026-05-25"},
   {id:"sd12", market:"kcm", address:"3315 Wabash Avenue",      city:"Kansas City",  state:"MO", zip:"64109",
-   lat:39.0697, lng:-94.5536, beds:4, baths:2, sqft:1620, yearBuilt:1915,
+   type:"Multi-Family", lat:39.0697, lng:-94.5536, beds:4, baths:2, sqft:1620, yearBuilt:1915,
    price:95000,  repair:32000, rent:1400, arv:172000, source:"Auction.com", sourcedAt:"2026-05-25"},
 ];
 
@@ -3931,6 +3943,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile}) {
 
   // Filter sample deals through classification + user filters.
   const classified = SAMPLE_DEALS
+    .filter(isResidential)
     .map(d => ({d, c: classifyDeal(d)}))
     .filter(({c}) => c.tags.length > 0);
   const filtered = classified.filter(({d, c}) => {
