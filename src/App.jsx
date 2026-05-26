@@ -1837,6 +1837,16 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 };
 
+// "5m ago" / "3h ago" / "2d ago" — used by the Deals page "last updated" stamp.
+const timeAgo = (ts) => {
+  if (!ts) return "";
+  const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
+  if (s < 60)        return `${s}s ago`;
+  if (s < 3600)      return `${Math.round(s/60)}m ago`;
+  if (s < 86400)     return `${Math.round(s/3600)}h ago`;
+  return `${Math.round(s/86400)}d ago`;
+};
+
 // -- Activity timeline helpers -------------------------------------------------
 // Day divider label: "Today" / "Yesterday" / "Monday" / "May 21" / "May 21, 2024".
 const dayHeader = (d) => {
@@ -3891,6 +3901,30 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
           <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:2}}>
             {deal.source} · {deal.sourcedAt ? new Date(deal.sourcedAt+"T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric"}) : ""}
           </div>
+          {/* Seller contact — Pro only, only when present on the deal */}
+          {isPro && deal.seller && (deal.seller.phone || deal.seller.email) && (
+            <div style={{marginTop:8, display:"flex", flexWrap:"wrap", gap:8, alignItems:"center"}}>
+              {deal.seller.phone && (
+                <a href={`tel:${deal.seller.phone}`} onClick={e=>e.stopPropagation()}
+                  style={{fontSize:12, color:C.greenDark, fontFamily:F, fontWeight:600,
+                    textDecoration:"none", display:"inline-flex", alignItems:"center", gap:5,
+                    background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+                    padding:"3px 9px", borderRadius:9999}}>
+                  <I.phone size={11} stroke={2.4}/> {deal.seller.phone}
+                </a>
+              )}
+              {deal.seller.email && (
+                <a href={`mailto:${deal.seller.email}`} onClick={e=>e.stopPropagation()}
+                  style={{fontSize:12, color:C.blueDark, fontFamily:F, fontWeight:600,
+                    textDecoration:"none", display:"inline-flex", alignItems:"center", gap:5,
+                    background:C.blueSubtle, border:"1px solid "+C.blueBorder,
+                    padding:"3px 9px", borderRadius:9999,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:200}}>
+                  <I.message size={11} stroke={2.4}/> {deal.seller.email}
+                </a>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Hero metric */}
@@ -3932,17 +3966,46 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
   );
 }
 
-function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile}) {
+function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) {
   const [market, setMarket]     = useState("all");
   const [strategy, setStrategy] = useState("all"); // all | buyhold | flip
   const [maxPrice, setMaxPrice] = useState(0);
+  // Live feed from /deals (populated by the nightly Cloud Function). When the
+  // fetch hasn't returned yet (or hasn't been seeded), we fall back to
+  // SAMPLE_DEALS so the page is never empty during dev / pre-Phase-1 deploys.
+  const [feed, setFeed]         = useState(null);   // {items, updatedAt} | null
+  const [feedErr, setFeedErr]   = useState(false);
   const isWide = useIsWide();
   const isPro  = tier === "pro";
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
-  // Filter sample deals through classification + user filters.
-  const classified = SAMPLE_DEALS
+  // Fetch the curated feed from Firebase. DB rules require auth, so we pass
+  // the user's ID token. If the read fails or returns nothing, we show the
+  // sample deals (and a "feed not seeded yet" indicator).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const url = `${FB_DB_URL}/deals.json` + (token ? `?auth=${token}` : "");
+        const r = await fetch(url);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const data = await r.json();
+        if (alive) setFeed(data || {items: {}, updatedAt: 0});
+      } catch {
+        if (alive) { setFeedErr(true); setFeed({items: {}, updatedAt: 0}); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [token]);
+
+  // Use the live feed when it has items, otherwise sample fallback.
+  const liveItems   = feed && feed.items ? Object.values(feed.items) : [];
+  const sourceDeals = liveItems.length > 0 ? liveItems : SAMPLE_DEALS;
+  const usingLive   = liveItems.length > 0;
+
+  // Filter through classification + user filters.
+  const classified = sourceDeals
     .filter(isResidential)
     .map(d => ({d, c: classifyDeal(d)}))
     .filter(({c}) => c.tags.length > 0);
@@ -3973,24 +4036,41 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile}) {
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
         gap:16, flexWrap:"wrap", marginBottom:20}}>
         <div style={{minWidth:0}}>
-          <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
             <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
               Deals
             </h1>
-            <span style={{
-              display:"inline-flex", alignItems:"center", gap:4,
-              background:C.greenSubtle, color:C.greenDark, border:"1px solid "+C.greenBorder,
-              padding:"2px 8px", borderRadius:9999, fontSize:10, fontWeight:700, fontFamily:F,
-              letterSpacing:".06em", textTransform:"uppercase",
-            }}>
-              <span style={{width:5, height:5, borderRadius:"50%", background:C.green}} className="dh-pulse"/>
-              Fresh
-            </span>
+            {usingLive ? (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:4,
+                background:C.greenSubtle, color:C.greenDark, border:"1px solid "+C.greenBorder,
+                padding:"2px 8px", borderRadius:9999, fontSize:10, fontWeight:700, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase",
+              }}>
+                <span style={{width:5, height:5, borderRadius:"50%", background:C.green}} className="dh-pulse"/>
+                Live
+              </span>
+            ) : (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:4,
+                background:C.amberSubtle, color:C.amberDark, border:"1px solid "+C.amberBorder,
+                padding:"2px 8px", borderRadius:9999, fontSize:10, fontWeight:700, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase",
+              }}>
+                Preview data
+              </span>
+            )}
           </div>
           <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
             {filtered.length === 0
               ? "No deals match your filters right now."
               : `${filtered.length} wholesale deal${filtered.length===1?"":"s"} across cash-flow markets · ${buyHoldCount} buy-and-hold · ${flipCount} flip`}
+            {usingLive && feed?.updatedAt && (
+              <span style={{color:C.textMuted}}> · Updated {timeAgo(feed.updatedAt)}</span>
+            )}
+            {!usingLive && !feedErr && (
+              <span style={{color:C.textMuted}}> · Live feed seeds after the first nightly pull</span>
+            )}
           </p>
         </div>
         {!isPro && (
@@ -5514,7 +5594,8 @@ export default function App() {
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deals" ? (
           <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
-            onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket} mobile={mobile} />
+            onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
+            token={user.idToken} mobile={mobile} />
         ) : page==="deal" ? (
           <DealAnalyzer {...dealAnalyzerProps} />
         ) : page==="comps" ? (
@@ -5551,7 +5632,8 @@ export default function App() {
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deals" ? (
               <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
-                onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket} mobile={mobile} />
+                onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
+                token={user.idToken} mobile={mobile} />
             ) : page==="deal" ? (
               <DealAnalyzer {...dealAnalyzerProps} />
             ) : page==="comps" ? (

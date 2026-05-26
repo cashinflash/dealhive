@@ -19,3 +19,11 @@ yarn-error.log*
 pnpm-debug.log*
 
 .netlify
+
+# Firebase Functions
+functions/node_modules
+functions/.env
+functions/.env.local
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
