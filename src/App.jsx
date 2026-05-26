@@ -3809,7 +3809,7 @@ const STRATEGY_LABELS = {
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
 };
 
-function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
+function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile}) {
   const c = classifyDeal(deal);
   if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
 
@@ -3837,7 +3837,9 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
   const onSecondaryClick = isPro ? onSave : onUpgrade;
 
   return (
-    <Card hover style={{display:"flex", flexDirection:"column"}} padding={0}>
+    <Card hover style={{display:"flex", flexDirection:"column", cursor: onOpen ? "pointer" : "default"}}
+      padding={0}
+      onClick={onOpen ? () => onOpen(deal) : undefined}>
       {/* Photo + badges */}
       <div style={{position:"relative", height:170, background:C.bgSubtle, overflow:"hidden"}}>
         {photo
@@ -3954,8 +3956,9 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
           </div>
         </div>
 
-        {/* Actions */}
-        <div style={{display:"flex", gap:8, marginTop:"auto"}}>
+        {/* Actions — stopPropagation so the card-level onClick doesn't fire */}
+        <div style={{display:"flex", gap:8, marginTop:"auto"}}
+          onClick={e => e.stopPropagation()}>
           <button onClick={onPrimaryClick} {...btnStyle("primary","md", {flex:1})}>
             {isPro ? <><I.search size={13}/> Analyze</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
           </button>
@@ -3970,6 +3973,297 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
   );
 }
 
+// Detail modal — opens when a deal card is tapped. Pro members get the full
+// description, ARV math, wholesaler info, and an outbound link to the source
+// (InvestorLift, where they can request the actual address and contact the
+// wholesaler). Free members see the photo, basic stats, and an upgrade CTA.
+function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile}) {
+  const c       = classifyDeal(deal);
+  const primary = c.tags.length > 1
+    ? "multi"
+    : c.tags.includes("buyhold") && c.flipScore <= c.buyHoldScore
+      ? "buyhold"
+      : c.tags.includes("flip") && c.flipScore > c.buyHoldScore
+        ? "flip"
+        : c.tags[0] || "buyhold";
+  const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
+
+  // Escape closes; body scroll lock while open.
+  useEffect(() => {
+    document.body.classList.add("dh-scroll-locked");
+    const handler = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => {
+      document.body.classList.remove("dh-scroll-locked");
+      window.removeEventListener("keydown", handler);
+    };
+  }, [onClose]);
+
+  const photo  = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 1200, 480) : null);
+  const arv    = deal.arv || Math.round((deal.price || 0) * 1.35);
+  const spread = arv - (deal.price || 0) - (deal.repair || 0);
+  const spreadPct = deal.price > 0 ? (spread / deal.price) * 100 : 0;
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
+       display:"flex", alignItems:"flex-end",
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%",
+       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:640,
+       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+
+  const sectionPad = mobile ? "16px 18px" : "20px 24px";
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        {/* Hero photo */}
+        <div style={{position:"relative", height: mobile?220:280, background:C.bgSubtle, overflow:"hidden"}}>
+          {photo
+            ? <img src={photo} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+            : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
+                <I.building size={36}/>
+              </div>}
+          <div style={{position:"absolute", inset:0,
+            background:"linear-gradient(to bottom, transparent 50%, rgba(9,9,11,.55))"}}/>
+          <button onClick={onClose} aria-label="Close"
+            style={{position:"absolute", top:14, right:14, width:36, height:36, borderRadius:"50%",
+              background:"rgba(255,255,255,.92)", border:"none", cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
+            <I.x size={16} stroke={2.5}/>
+          </button>
+          <div style={{position:"absolute", top:14, left:14, display:"flex", gap:6, flexWrap:"wrap"}}>
+            <span style={{
+              display:"inline-flex", alignItems:"center", gap:5,
+              background:strat.bg, color:strat.color, border:"1px solid "+strat.border,
+              padding:"4px 10px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+              letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
+            }}>
+              <span style={{width:6, height:6, borderRadius:"50%", background:strat.dot}}/>
+              {strat.label}
+            </span>
+            {deal.hotness && (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:5,
+                background:C.redSubtle, color:C.redDark, border:"1px solid "+C.redBorder,
+                padding:"4px 10px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+                letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
+              }}>
+                🔥 Hot
+              </span>
+            )}
+            {deal.daysListed > 0 && deal.daysListed <= 7 && (
+              <span style={{
+                background:"rgba(9,9,11,.65)", color:"#fff",
+                padding:"4px 10px", borderRadius:9999, fontSize:11, fontWeight:600, fontFamily:F,
+                letterSpacing:"-0.005em",
+              }}>
+                New · {deal.daysListed}d ago
+              </span>
+            )}
+          </div>
+          {/* Bottom-left price overlay */}
+          <div style={{position:"absolute", bottom:16, left:18, right:18,
+            display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, color:"#fff", fontFamily:F}}>
+            <div>
+              <div style={{fontSize:11, color:"rgba(255,255,255,.85)", fontWeight:600, letterSpacing:".04em", textTransform:"uppercase"}}>
+                Asking
+              </div>
+              <div style={{fontSize:28, fontWeight:700, letterSpacing:"-0.025em",
+                fontVariantNumeric:"tabular-nums", lineHeight:1}}>{$(deal.price)}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:11, color:"rgba(255,255,255,.85)", fontWeight:600, letterSpacing:".04em", textTransform:"uppercase"}}>
+                ARV
+              </div>
+              <div style={{fontSize:20, fontWeight:600, letterSpacing:"-0.02em",
+                fontVariantNumeric:"tabular-nums"}}>{$(arv)}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Title + location */}
+        <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
+          <h2 style={{margin:0, fontSize: mobile?17:19, fontWeight:700, color:C.text, fontFamily:F,
+            letterSpacing:"-0.01em", lineHeight:1.3}}>
+            {isPro
+              ? (deal.address || `Off-market deal in ${deal.city}`)
+              : `Off-market deal in ${deal.city}, ${deal.state}`}
+          </h2>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap"}}>
+            <span style={{fontSize:13, color:C.textSub, fontFamily:F}}>
+              {deal.city}{deal.state ? `, ${deal.state}` : ""}{isPro && deal.zip ? ` ${deal.zip}` : ""}
+            </span>
+            <span style={{color:C.textMuted}}>·</span>
+            <span style={{fontSize:13, color:C.textMuted, fontFamily:F}}>
+              {deal.source}
+              {deal.sourcedAt && ` · Listed ${new Date(deal.sourcedAt+"T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric"})}`}
+            </span>
+          </div>
+        </div>
+
+        {/* Quick stats */}
+        <div style={{padding: mobile?"12px 18px":"14px 24px", borderBottom:"1px solid "+C.border,
+          display:"grid", gridTemplateColumns: mobile?"repeat(2, 1fr)":"repeat(4, 1fr)", gap:14}}>
+          {[
+            ["Beds",   deal.beds || "—"],
+            ["Baths",  deal.baths || "—"],
+            ["Sqft",   deal.sqft ? deal.sqft.toLocaleString() : "—"],
+            ["Year",   deal.yearBuilt || "—"],
+            ["Type",   deal.type || "—"],
+            ...(deal.condition ? [["Condition", deal.condition]] : []),
+          ].map(([l, v]) => (
+            <div key={l}>
+              <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
+              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", marginTop:2,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Spread / financials card */}
+        <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
+          <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+            letterSpacing:".06em", textTransform:"uppercase", marginBottom:10}}>
+            The numbers
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:0,
+            border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+            background:C.border}}>
+            {[
+              ["Asking price",  $(deal.price),   C.text],
+              ["ARV estimate",  $(arv),          C.text],
+              ["Potential spread", $(spread),    spread > 0 ? cfC(spread) : C.textMuted],
+              ["Spread %",      pct(spreadPct),  spread > 0 ? cfC(spread) : C.textMuted],
+            ].map(([l, v, color]) => (
+              <div key={l} style={{padding:"12px 14px", background:C.card}}>
+                <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                  letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
+                <div style={{fontSize:16, fontWeight:700, color, fontFamily:F, marginTop:2,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Description — Pro only */}
+        {deal.description && (
+          <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
+              About this deal
+            </div>
+            {isPro ? (
+              <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
+                {deal.description}
+              </div>
+            ) : (
+              <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
+                background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
+                padding:"12px 14px", display:"flex", alignItems:"center", gap:10}}>
+                <I.lock size={14} stroke={2.2} style={{color:C.textMuted, flexShrink:0}}/>
+                <span>Deal description, full address, and wholesaler contact unlocked with DealHive Pro.</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Wholesaler / source card — Pro only */}
+        {(deal.seller?.company || deal.seller?.name || deal.sourceUrl) && (
+          <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
+              How to take this deal
+            </div>
+            {isPro ? (
+              <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
+                padding:"14px 16px"}}>
+                <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
+                  <div style={{
+                    width:38, height:38, borderRadius:C.r3, background:C.card, border:"1px solid "+C.greenBorder,
+                    color:C.greenDark, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+                  }}>
+                    <I.building size={18}/>
+                  </div>
+                  <div style={{minWidth:0, flex:1}}>
+                    {deal.seller?.company && (
+                      <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                        {deal.seller.company}
+                      </div>
+                    )}
+                    {deal.seller?.name && (
+                      <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
+                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                        {deal.seller.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {deal.sourceUrl && (
+                  <a href={deal.sourceUrl} target="_blank" rel="noreferrer"
+                    {...btnStyle("primary","md", {width:"100%"})}>
+                    View full listing &amp; contact <I.externalLink size={13}/>
+                  </a>
+                )}
+                <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:8, lineHeight:1.5}}>
+                  The exact address and wholesaler phone/email live on the source listing — click through to request access.
+                </div>
+              </div>
+            ) : (
+              <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
+                padding:"14px 16px", textAlign:"center"}}>
+                <div style={{
+                  width:40, height:40, borderRadius:"50%", background:C.green, color:"#fff",
+                  display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:8,
+                }}>
+                  <I.star size={18} stroke={2.2}/>
+                </div>
+                <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>
+                  Unlock this deal with DealHive Pro
+                </div>
+                <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:4, lineHeight:1.5}}>
+                  Get the full address, wholesaler contact, and direct link to the source listing.
+                </div>
+                <button onClick={onUpgrade} {...btnStyle("primary","md", {marginTop:12, width:"100%"})}>
+                  <I.star size={13}/> Upgrade to Pro
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bottom actions */}
+        <div style={{padding:sectionPad, display:"flex", gap:8, flexWrap:"wrap"}}>
+          {isPro ? (
+            <>
+              <button onClick={() => { onAnalyze(deal); onClose(); }}
+                {...btnStyle("primary","md", {flex:1})}>
+                <I.search size={13}/> Analyze deal
+              </button>
+              <button onClick={() => { onSave(deal); onClose(); }}
+                {...btnStyle("secondary","md", {flex:1})}>
+                <I.plus size={13}/> Save to portfolio
+              </button>
+            </>
+          ) : (
+            <button onClick={onUpgrade} {...btnStyle("primary","md", {width:"100%"})}>
+              <I.lock size={13} stroke={2.4}/> Unlock with Pro
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) {
   const [market, setMarket]     = useState("all");
   const [strategy, setStrategy] = useState("all"); // all | buyhold | flip
@@ -3979,6 +4273,8 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
   // SAMPLE_DEALS so the page is never empty during dev / pre-Phase-1 deploys.
   const [feed, setFeed]         = useState(null);   // {items, updatedAt} | null
   const [feedErr, setFeedErr]   = useState(false);
+  // Which deal is open in the detail modal (or null).
+  const [selectedId, setSelectedId] = useState(null);
   const isWide = useIsWide();
   const isPro  = tier === "pro";
 
@@ -4013,8 +4309,25 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
     .filter(isResidential)
     .map(d => ({d, c: classifyDeal(d)}))
     .filter(({c}) => c.tags.length > 0);
+
+  // Build the market dropdown options from the actual data — InvestorLift
+  // goes nationwide, so hardcoding 6 markets would hide most of the feed.
+  // Group by state, prefer the curated label if we have one.
+  const marketCountsByState = new Map();
+  classified.forEach(({d}) => {
+    const key = (d.state || "").toUpperCase();
+    if (!key) return;
+    marketCountsByState.set(key, (marketCountsByState.get(key) || 0) + 1);
+  });
+  const availableMarkets = [...marketCountsByState.entries()]
+    .map(([state, count]) => {
+      const curated = DEAL_MARKETS.find(m => m.label.endsWith(", " + state));
+      return {id: state, label: curated ? curated.label : state, count};
+    })
+    .sort((a, b) => b.count - a.count);
+
   const filtered = classified.filter(({d, c}) => {
-    if (market !== "all" && d.market !== market) return false;
+    if (market !== "all" && (d.state || "").toUpperCase() !== market) return false;
     if (maxPrice > 0 && d.price > maxPrice) return false;
     if (strategy === "buyhold" && !c.tags.includes("buyhold")) return false;
     if (strategy === "flip"    && !c.tags.includes("flip"))    return false;
@@ -4107,11 +4420,13 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
           })}
         </div>
 
-        {/* Market dropdown */}
+        {/* Market dropdown — dynamic from actual deal states (InvestorLift goes nationwide). */}
         <select value={market} onChange={e => setMarket(e.target.value)}
-          style={{...iS(mobile), maxWidth: mobile ? "100%" : 200, paddingRight:38}}>
+          style={{...iS(mobile), maxWidth: mobile ? "100%" : 220, paddingRight:38}}>
           <option value="all">All markets</option>
-          {DEAL_MARKETS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {availableMarkets.map(m => (
+            <option key={m.id} value={m.id}>{m.label} ({m.count})</option>
+          ))}
         </select>
 
         {/* Max price */}
@@ -4149,6 +4464,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
                 onAnalyze={() => onAnalyzeDeal(d)}
                 onSave={() => onSaveDeal(d)}
                 onUpgrade={onUpgrade}
+                onOpen={() => setSelectedId(d.id)}
                 mobile={mobile} />
             ))}
           </div>
@@ -4186,6 +4502,23 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
           )}
         </>
       )}
+
+      {/* Detail modal — opens when a card is tapped */}
+      {selectedId && (() => {
+        const entry = classified.find(({d}) => d.id === selectedId);
+        if (!entry) return null;
+        return (
+          <DealDetailModal
+            deal={entry.d}
+            isPro={isPro}
+            onClose={() => setSelectedId(null)}
+            onAnalyze={onAnalyzeDeal}
+            onSave={onSaveDeal}
+            onUpgrade={onUpgrade}
+            mobile={mobile}
+          />
+        );
+      })()}
     </div>
   );
 }
