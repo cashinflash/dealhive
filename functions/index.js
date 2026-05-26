@@ -99,44 +99,56 @@ async function pullFromApify(token, maxItems) {
   };
 }
 
-// Apify actors don't have a stable output schema — third-party scrapers can
-// shape data however they like, and the maintainer can change it any time.
-// We try the obvious field names and bail (return null) when we can't get
-// enough to render a card. dedupByAddress + the rest of the pipeline naturally
-// drop the nulls.
+// Maps an InvestorLift item (via Apify) into our internal deal shape.
+// InvestorLift only exposes city/state/zip publicly — exact street addresses
+// are gated behind their login + NDA, so the actor returns a marketing
+// `title` instead and the wholesaler's name/company as the contact. We
+// surface that on the card; users click through to InvestorLift to get the
+// address and contact info after expressing interest.
 function mapApifyDeal(raw) {
-  const address = raw.address || raw.streetAddress || raw.propertyAddress || raw.fullAddress || "";
-  const price   = Number(raw.price || raw.askingPrice || raw.listPrice || raw.askPrice || 0);
-  if (!address || !price) return null;
+  const price = Number(raw.price || 0);
+  const city  = raw.city || "";
+  const state = normalizeState(raw.state_code || raw.state);
+  if (!price || !city) return null;
 
-  const photo = pickFirst(raw.photos) || raw.photoUrl || raw.imageUrl || raw.image || null;
   return {
-    id:        hashId("il-" + address),
+    id:        "il-" + (raw.id || hashId(`${raw.title || ""}|${city}|${raw.zip || ""}`)),
     source:    "DealHive Network", // do NOT surface "InvestorLift" on public cards
-    sourceUrl: raw.url || raw.detailUrl || raw.listingUrl || null,
-    sourcedAt: today(),
-    address,
-    city:      raw.city || "",
-    state:     normalizeState(raw.state),
-    zip:       String(raw.zip || raw.zipCode || raw.postalCode || ""),
-    lat:       num(raw.latitude  || raw.lat),
-    lng:       num(raw.longitude || raw.lng || raw.lon),
-    type:      normalizeType(raw.propertyType || raw.type || raw.category),
-    beds:      int(raw.bedrooms || raw.beds),
-    baths:     num(raw.bathrooms || raw.baths),
-    sqft:      int(raw.squareFootage || raw.sqft || raw.livingArea),
-    yearBuilt: int(raw.yearBuilt),
+    sourceUrl: raw.property_page_url || null,
+    // `published_at` is ISO ("2026-05-26T12:34:56Z") — slice to date for display.
+    sourcedAt: raw.published_at ? String(raw.published_at).slice(0, 10) : today(),
+    // Title is a marketing line ("Cleveland off-market BRRRR opportunity") —
+    // the most location info available since the street address is gated.
+    address:   raw.title || `Off-market deal in ${city}`,
+    city,
+    state,
+    zip:       String(raw.zip || ""),
+    lat:       num(raw.latitude),
+    lng:       num(raw.longitude),
+    type:      normalizeType(raw.property_type),
+    beds:      int(raw.bedrooms),
+    baths:     num(raw.bathrooms),
+    sqft:      int(raw.sq_footage),
+    yearBuilt: int(raw.year_built),
     price,
-    repair:    int(raw.estimatedRepairs || raw.rehabBudget || raw.repairs),
-    rent:      int(raw.estimatedRent || raw.rentEstimate || raw.rent),
-    arv:       int(raw.arv || raw.afterRepairValue || raw.valueEstimate),
-    photo,
+    repair:    0, // InvestorLift doesn't publish a rehab number; user runs it through the analyzer
+    rent:      0, // 1% rule fallback in classifyDeal fills this for the buyhold score
+    arv:       int(raw.arv_estimate),
+    photo:     raw.img_url || null,
     seller: {
-      name:  raw.sellerName  || raw.contactName  || raw.agentName  || null,
-      phone: raw.sellerPhone || raw.contactPhone || raw.agentPhone || null,
-      email: raw.sellerEmail || raw.contactEmail || raw.agentEmail || null,
+      name:    raw.wholesaler_name || raw.account_title || null,
+      company: raw.wholesaler_company || null,
+      // InvestorLift gates phone/email behind their login — clicking the
+      // sourceUrl is how the buyer actually gets in touch.
+      phone:   null,
+      email:   null,
     },
-    market: marketIdForState(normalizeState(raw.state)),
+    market: marketIdForState(state),
+    // Bonus metadata the Deals page can surface to make Network cards stand
+    // out vs. RentCast listings (description, freshness, "hotness" hint).
+    description:  raw.description ? String(raw.description).slice(0, 500) : null,
+    daysListed:   int(raw.days_on_il),
+    hotness:      raw.hotness || null,
   };
 }
 
