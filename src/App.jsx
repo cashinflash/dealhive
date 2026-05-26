@@ -3118,6 +3118,10 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
   // When set (YYYY-MM-DD), the page enters a focused "day view" showing only
   // items due that day, and the calendar highlights the selection.
   const [selectedDate, setSelectedDate] = useState(null);
+
+  // Start at the top of the page every time Projects opens — without this,
+  // the window keeps its scroll position from whatever page was just shown.
+  useEffect(() => { window.scrollTo(0, 0); }, []);
   // Persist contractor selection in URL ?contractor=...
   const [contractor, setContractor] = useState(() => {
     try { return new URLSearchParams(window.location.search).get("contractor") || ""; } catch { return ""; }
