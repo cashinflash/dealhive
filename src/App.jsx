@@ -129,7 +129,8 @@ const clearAuth = () => { try { localStorage.removeItem("dh_auth"); } catch {} }
 // -- Seed ----------------------------------------------------------------------
 const SEED = {
   rentcastKey:"", llcs:["My LLC"], deals:[], auctions:[],
-  renoRates:{light:7, medium:13, full:45}, properties:[]
+  renoRates:{light:7, medium:13, full:45}, properties:[],
+  tier:"free",
 };
 
 // -- Finance -------------------------------------------------------------------
@@ -460,6 +461,8 @@ const I = {
   arrowRight:  p => <IconSvg {...p} d={<g><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></g>}/>,
   chevronRight:p => <IconSvg {...p} d="M9 18l6-6-6-6"/>,
   chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
+  lock:        p => <IconSvg {...p} d={<g><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></g>}/>,
+  star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
   chevronDown: p => <IconSvg {...p} d="M6 9l6 6 6-6"/>,
   trash:       p => <IconSvg {...p} d={<g><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></g>}/>,
   edit:        p => <IconSvg {...p} d={<g><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>,
@@ -3644,12 +3647,466 @@ function ExpensesTab({p, set, mobile}) {
   );
 }
 
+// -- Deals (curated wholesale list) -------------------------------------------
+// Cash-flow markets we currently source from. Filter pills + the deal feed are
+// scoped to this set; expand as new market pulls come online.
+const DEAL_MARKETS = [
+  {id:"cle", label:"Cleveland, OH"},
+  {id:"det", label:"Detroit, MI"},
+  {id:"mem", label:"Memphis, TN"},
+  {id:"bhm", label:"Birmingham, AL"},
+  {id:"ind", label:"Indianapolis, IN"},
+  {id:"kcm", label:"Kansas City, MO"},
+];
+
+// Classify a deal against two pro forma strategies (buy-and-hold and fix-and-
+// flip) and surface tags + scores so the card can show the right hero numbers.
+// A deal can carry both tags ("multi-strategy") or neither (skipped from feed).
+const classifyDeal = (deal) => {
+  // Buy-and-hold pro forma uses the same calc() the analyzer uses, with
+  // sensible default ops expenses derived from price/rent.
+  const monthlyTax = Math.round((deal.price * 0.0233) / 12); // ~OH-ish 2.33%/yr
+  const buyHoldInputs = {
+    purchasePrice: deal.price || 0,
+    repairCosts:   deal.repair || 0,
+    rentAmount:    deal.rent   || 0,
+    expPropTax:    monthlyTax,
+    expInsurance:  100,
+    expManagement: Math.round((deal.rent || 0) * 0.08), // 8% PM
+    expUtilities:  0,
+    vacancyRate:   5,
+    downPaymentPct: 20,
+    interestRate:  7.5,
+    closingCosts:  DEFAULT_CLOSING,
+    chosenStrategy:"finance",
+  };
+  const buyHold = calc(buyHoldInputs);
+
+  // Fix-and-flip: ARV − total in − agent fee − closing on sale − 6 months holding.
+  const arv          = deal.arv || Math.round(deal.price * 1.35);
+  const totalIn      = (deal.price || 0) + (deal.repair || 0);
+  const agentFee     = arv * 0.06;
+  const sellClosing  = arv * 0.02;
+  const holdingCost  = 6 * 600; // ~$600/mo carrying for 6 mos (tax, ins, utils)
+  const flipProfit   = Math.round(arv - totalIn - agentFee - sellClosing - holdingCost);
+  const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
+
+  // What is this deal good for?
+  const tags = [];
+  if (buyHold.finCap >= 7 && buyHold.finCF > 50)   tags.push("buyhold");
+  if (flipROI    >= 15 && flipProfit >= 20000)     tags.push("flip");
+
+  // Score is used to pick the "primary" strategy when both fit.
+  const buyHoldScore = (buyHold.finCF > 0 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
+  const flipScore    = (flipROI   > 15 ? 30 : 0) + Math.min(flipROI, 50);
+
+  return {
+    tags, buyHoldScore, flipScore,
+    buyHold,
+    flip: {arv, totalIn, profit:flipProfit, roi:flipROI},
+  };
+};
+
+// Convert a curated deal record into the shape DealAnalyzer/portfolio expects.
+const dealToProForma = (deal) => ({
+  ...newDeal(),
+  address:      deal.address,
+  city:         deal.city,
+  state:        deal.state,
+  zip:          deal.zip,
+  lat:          deal.lat,
+  lng:          deal.lng,
+  fullAddress:  `${deal.address}, ${deal.city}, ${deal.state} ${deal.zip}`,
+  type:         deal.type || "Single Family",
+  beds:         deal.beds || 0,
+  baths:        deal.baths || 0,
+  sqft:         deal.sqft || 0,
+  yearBuilt:    deal.yearBuilt || 0,
+  purchasePrice: deal.price || 0,
+  repairCosts:   deal.repair || 0,
+  rentAmount:    deal.rent || 0,
+  rentEstimate:  deal.rent || 0,
+  homeValueMedian: deal.arv || Math.round((deal.price||0) * 1.3),
+  homeValueHigh:   deal.arv || Math.round((deal.price||0) * 1.35),
+  homeValueLow:    Math.round((deal.arv || deal.price * 1.3) * 0.9),
+  flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
+  expPropTax:      Math.round((deal.price || 0) * 0.0233 / 12),
+  expInsurance:    100,
+  expManagement:   Math.round((deal.rent || 0) * 0.08),
+});
+
+// Sample deals — Phase 0 placeholder until the listings pipeline lands.
+// Real lat/lng so Street View renders authentically per card.
+const SAMPLE_DEALS = [
+  {id:"sd1",  market:"cle", address:"3214 W 65th Street",      city:"Cleveland",    state:"OH", zip:"44102",
+   lat:41.4641, lng:-81.7345, beds:3, baths:1, sqft:1240, yearBuilt:1922,
+   price:79900,  repair:18000, rent:1150, arv:142000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd2",  market:"cle", address:"4128 East 116th Street",  city:"Cleveland",    state:"OH", zip:"44105",
+   lat:41.4596, lng:-81.6133, beds:4, baths:2, sqft:1560, yearBuilt:1918,
+   price:62500,  repair:42000, rent:1300, arv:158000, source:"Auction.com", sourcedAt:"2026-05-25"},
+  {id:"sd3",  market:"cle", address:"1429 West 95th Street",   city:"Cleveland",    state:"OH", zip:"44102",
+   lat:41.4866, lng:-81.7560, beds:3, baths:2, sqft:1380, yearBuilt:1925,
+   price:115000, repair:8000,  rent:1450, arv:152000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd4",  market:"det", address:"15843 Mansfield Street",  city:"Detroit",      state:"MI", zip:"48227",
+   lat:42.4002, lng:-83.2034, beds:3, baths:1, sqft:1180, yearBuilt:1948,
+   price:52000,  repair:28000, rent:1150, arv:118000, source:"Sheriff Sale", sourcedAt:"2026-05-25"},
+  {id:"sd5",  market:"det", address:"19211 Strathmoor Street", city:"Detroit",      state:"MI", zip:"48235",
+   lat:42.4366, lng:-83.1958, beds:4, baths:2, sqft:1540, yearBuilt:1942,
+   price:84500,  repair:12000, rent:1450, arv:135000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd6",  market:"mem", address:"3447 Park Avenue",        city:"Memphis",      state:"TN", zip:"38111",
+   lat:35.1241, lng:-89.9417, beds:3, baths:2, sqft:1320, yearBuilt:1955,
+   price:78500,  repair:14000, rent:1200, arv:128000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd7",  market:"mem", address:"1238 Tutwiler Avenue",    city:"Memphis",      state:"TN", zip:"38107",
+   lat:35.1697, lng:-90.0148, beds:2, baths:1, sqft:980,  yearBuilt:1940,
+   price:42000,  repair:24000, rent:925,  arv:88000,  source:"Auction.com", sourcedAt:"2026-05-25"},
+  {id:"sd8",  market:"bhm", address:"5612 33rd Avenue North",  city:"Birmingham",   state:"AL", zip:"35207",
+   lat:33.5616, lng:-86.8311, beds:3, baths:1, sqft:1100, yearBuilt:1952,
+   price:48000,  repair:22000, rent:1050, arv:108000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd9",  market:"ind", address:"821 N New Jersey Street", city:"Indianapolis", state:"IN", zip:"46202",
+   lat:39.7794, lng:-86.1556, beds:3, baths:2, sqft:1380, yearBuilt:1908,
+   price:124000, repair:18000, rent:1500, arv:182000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd10", market:"ind", address:"4128 Carrollton Avenue",  city:"Indianapolis", state:"IN", zip:"46205",
+   lat:39.8266, lng:-86.1444, beds:2, baths:1, sqft:920,  yearBuilt:1925,
+   price:75000,  repair:12000, rent:1100, arv:118000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd11", market:"kcm", address:"4218 Bellefontaine Ave",  city:"Kansas City",  state:"MO", zip:"64130",
+   lat:39.0488, lng:-94.5444, beds:3, baths:2, sqft:1180, yearBuilt:1948,
+   price:58000,  repair:20000, rent:1100, arv:115000, source:"RentCast", sourcedAt:"2026-05-25"},
+  {id:"sd12", market:"kcm", address:"3315 Wabash Avenue",      city:"Kansas City",  state:"MO", zip:"64109",
+   lat:39.0697, lng:-94.5536, beds:4, baths:2, sqft:1620, yearBuilt:1915,
+   price:95000,  repair:32000, rent:1400, arv:172000, source:"Auction.com", sourcedAt:"2026-05-25"},
+];
+
+const FREE_PREVIEW_COUNT = 5;
+const STRATEGY_LABELS = {
+  buyhold: {label:"Buy & Hold",   color:C.greenDark, bg:C.greenSubtle, border:C.greenBorder, dot:C.green},
+  flip:    {label:"Fix & Flip",   color:C.amberDark, bg:C.amberSubtle, border:C.amberBorder, dot:C.amber},
+  multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
+};
+
+function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, mobile}) {
+  const c = classifyDeal(deal);
+  if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
+
+  const primary = c.tags.length > 1
+    ? "multi"
+    : c.tags.includes("buyhold") && c.flipScore <= c.buyHoldScore
+      ? "buyhold"
+      : c.tags.includes("flip") && c.flipScore > c.buyHoldScore
+        ? "flip"
+        : c.tags[0];
+  const strat = STRATEGY_LABELS[primary];
+
+  // Hero metrics depend on the primary strategy.
+  const heroNumber = primary === "flip"
+    ? {label:"Est. profit", value:$(c.flip.profit),                color:cfC(c.flip.profit)}
+    : {label:"Cash flow",   value:$mo(c.buyHold.finCF),            color:cfC(c.buyHold.finCF)};
+
+  const secondaryMetrics = primary === "flip"
+    ? [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["All in", $(c.flip.totalIn)]]
+    : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC)], ["Down", $(c.buyHold.down)]];
+
+  const photo = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
+
+  const onPrimaryClick = isPro ? onAnalyze : onUpgrade;
+  const onSecondaryClick = isPro ? onSave : onUpgrade;
+
+  return (
+    <Card hover style={{display:"flex", flexDirection:"column"}} padding={0}>
+      {/* Photo + badges */}
+      <div style={{position:"relative", height:170, background:C.bgSubtle, overflow:"hidden"}}>
+        {photo
+          ? <img src={photo} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+          : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
+              <I.building size={28}/>
+            </div>}
+        <div style={{position:"absolute", inset:0,
+          background:"linear-gradient(to bottom, transparent 55%, rgba(9,9,11,.55))"}}/>
+        <div style={{position:"absolute", top:10, left:10, right:10,
+          display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8}}>
+          <span style={{
+            display:"inline-flex", alignItems:"center", gap:5,
+            background: strat.bg, color: strat.color, border:"1px solid "+strat.border,
+            padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+            letterSpacing:"-0.005em", boxShadow: "0 1px 2px rgba(9,9,11,.15)",
+          }}>
+            <span style={{width:6, height:6, borderRadius:"50%", background:strat.dot}}/>
+            {strat.label}
+          </span>
+          {!isPro && (
+            <span title="Upgrade to see full details"
+              style={{display:"inline-flex", alignItems:"center", gap:4,
+                background:"rgba(9,9,11,.65)", color:"#fff", padding:"3px 8px",
+                borderRadius:9999, fontSize:11, fontWeight:600, fontFamily:F,
+                letterSpacing:"-0.005em"}}>
+              <I.lock size={11} stroke={2.4}/> Pro
+            </span>
+          )}
+        </div>
+        <div style={{position:"absolute", bottom:10, left:14, right:14,
+          color:"#fff", fontFamily:F, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:8}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:18, fontWeight:700, letterSpacing:"-0.02em",
+              fontVariantNumeric:"tabular-nums", lineHeight:1.1}}>{$(deal.price)}</div>
+            <div style={{fontSize:12, color:"rgba(255,255,255,.85)", marginTop:2,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {deal.city}, {deal.state}
+            </div>
+          </div>
+          <span style={{
+            background:"rgba(255,255,255,.92)", color:C.text,
+            padding:"3px 8px", borderRadius:C.r1, fontSize:11, fontWeight:600,
+            fontVariantNumeric:"tabular-nums", flexShrink:0, letterSpacing:"-0.005em",
+          }}>
+            {deal.beds}bd · {deal.baths}ba · {(deal.sqft/1000).toFixed(1)}k
+          </span>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px", display:"flex", flexDirection:"column", gap:12, flex:1}}>
+        {/* Address — gated */}
+        <div>
+          {isPro ? (
+            <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {deal.address}
+            </div>
+          ) : (
+            <div style={{fontSize:13, color:C.textMuted, fontFamily:F,
+              display:"inline-flex", alignItems:"center", gap:6}}>
+              <I.lock size={12} stroke={2.2}/> Address unlocked with Pro
+            </div>
+          )}
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:2}}>
+            {deal.source} · {deal.sourcedAt ? new Date(deal.sourcedAt+"T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric"}) : ""}
+          </div>
+        </div>
+
+        {/* Hero metric */}
+        <div style={{background:C.bgSubtle, borderRadius:C.r2, padding:"10px 12px",
+          display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
+          <div>
+            <div style={{fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
+              letterSpacing:".04em", textTransform:"uppercase"}}>{heroNumber.label}</div>
+            <div style={{fontSize:18, fontWeight:700, color:heroNumber.color, fontFamily:F,
+              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em", marginTop:2}}>
+              {heroNumber.value}
+            </div>
+          </div>
+          <div style={{display:"flex", gap:14, flexShrink:0, flexWrap:"wrap", justifyContent:"flex-end"}}>
+            {secondaryMetrics.map(([l, v]) => (
+              <div key={l} style={{textAlign:"right"}}>
+                <div style={{fontSize:10, color:C.textMuted, fontWeight:500, fontFamily:F,
+                  letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", marginTop:1}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={{display:"flex", gap:8, marginTop:"auto"}}>
+          <button onClick={onPrimaryClick} {...btnStyle("primary","md", {flex:1})}>
+            {isPro ? <><I.search size={13}/> Analyze</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
+          </button>
+          {isPro && (
+            <button onClick={onSecondaryClick} {...btnStyle("secondary","md")} aria-label="Save to portfolio">
+              <I.plus size={13}/> Save
+            </button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile}) {
+  const [market, setMarket]     = useState("all");
+  const [strategy, setStrategy] = useState("all"); // all | buyhold | flip
+  const [maxPrice, setMaxPrice] = useState(0);
+  const isWide = useIsWide();
+  const isPro  = tier === "pro";
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  // Filter sample deals through classification + user filters.
+  const classified = SAMPLE_DEALS
+    .map(d => ({d, c: classifyDeal(d)}))
+    .filter(({c}) => c.tags.length > 0);
+  const filtered = classified.filter(({d, c}) => {
+    if (market !== "all" && d.market !== market) return false;
+    if (maxPrice > 0 && d.price > maxPrice) return false;
+    if (strategy === "buyhold" && !c.tags.includes("buyhold")) return false;
+    if (strategy === "flip"    && !c.tags.includes("flip"))    return false;
+    return true;
+  });
+
+  // Rank by best score, so the "loudest" deals lead.
+  filtered.sort((a, b) => {
+    const aBest = Math.max(a.c.buyHoldScore, a.c.flipScore);
+    const bBest = Math.max(b.c.buyHoldScore, b.c.flipScore);
+    return bBest - aBest;
+  });
+
+  const visible = isPro ? filtered : filtered.slice(0, FREE_PREVIEW_COUNT);
+  const lockedCount = filtered.length - visible.length;
+
+  // KPI counts for the header chip.
+  const buyHoldCount = filtered.filter(({c}) => c.tags.includes("buyhold")).length;
+  const flipCount    = filtered.filter(({c}) => c.tags.includes("flip")).length;
+
+  return (
+    <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+        gap:16, flexWrap:"wrap", marginBottom:20}}>
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex", alignItems:"center", gap:8}}>
+            <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+              Deals
+            </h1>
+            <span style={{
+              display:"inline-flex", alignItems:"center", gap:4,
+              background:C.greenSubtle, color:C.greenDark, border:"1px solid "+C.greenBorder,
+              padding:"2px 8px", borderRadius:9999, fontSize:10, fontWeight:700, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase",
+            }}>
+              <span style={{width:5, height:5, borderRadius:"50%", background:C.green}} className="dh-pulse"/>
+              Fresh
+            </span>
+          </div>
+          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
+            {filtered.length === 0
+              ? "No deals match your filters right now."
+              : `${filtered.length} wholesale deal${filtered.length===1?"":"s"} across cash-flow markets · ${buyHoldCount} buy-and-hold · ${flipCount} flip`}
+          </p>
+        </div>
+        {!isPro && (
+          <button onClick={onUpgrade} {...btnStyle("primary","md")}>
+            <I.star size={13}/> Unlock all deals
+          </button>
+        )}
+      </div>
+
+      {/* Filter bar */}
+      <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center"}}>
+        {/* Strategy segmented control */}
+        <div style={{display:"flex", padding:3, background:C.bgSubtle,
+          border:"1px solid "+C.border, borderRadius:C.r2}}>
+          {[["all","All"],["buyhold","Buy & Hold"],["flip","Fix & Flip"]].map(([id,label]) => {
+            const active = strategy === id;
+            return (
+              <button key={id} onClick={()=>setStrategy(id)}
+                style={{
+                  padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active?600:500, fontSize:12, fontFamily:F,
+                  letterSpacing:"-0.005em",
+                  boxShadow: active ? C.sh1 : "none",
+                  transition:"background .12s, color .12s, box-shadow .12s",
+                  whiteSpace:"nowrap",
+                }}>{label}</button>
+            );
+          })}
+        </div>
+
+        {/* Market dropdown */}
+        <select value={market} onChange={e => setMarket(e.target.value)}
+          style={{...iS(mobile), maxWidth: mobile ? "100%" : 200, paddingRight:38}}>
+          <option value="all">All markets</option>
+          {DEAL_MARKETS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+
+        {/* Max price */}
+        <div style={{position:"relative", flex:1, minWidth:140}}>
+          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
+            color:C.textMuted, fontSize:14, fontFamily:F, pointerEvents:"none"}}>$</span>
+          <input
+            type="text" inputMode="decimal"
+            value={maxPrice ? Number(maxPrice).toLocaleString() : ""}
+            onChange={e => {
+              const raw = e.target.value.replace(/[^0-9]/g, "");
+              setMaxPrice(raw === "" ? 0 : parseInt(raw, 10));
+            }}
+            placeholder="Max price"
+            style={{...iS(mobile), paddingLeft:24}} />
+        </div>
+      </div>
+
+      {/* Deal grid */}
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={<I.search size={20}/>}
+          title="No deals match your filters"
+          body="Try widening your price range or switching markets — fresh deals come in throughout the week."
+        />
+      ) : (
+        <>
+          <div style={{
+            display:"grid",
+            gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
+            gap:16,
+          }}>
+            {visible.map(({d}) => (
+              <DealCard key={d.id} deal={d} isPro={isPro}
+                onAnalyze={() => onAnalyzeDeal(d)}
+                onSave={() => onSaveDeal(d)}
+                onUpgrade={onUpgrade}
+                mobile={mobile} />
+            ))}
+          </div>
+
+          {/* Upgrade CTA for free users */}
+          {!isPro && lockedCount > 0 && (
+            <Card style={{
+              marginTop:20, padding: mobile ? "20px 18px" : "24px 28px",
+              background:`linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 65%)`,
+              borderColor:C.greenBorder,
+            }}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+                gap:16, flexWrap:"wrap"}}>
+                <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0, flex:1}}>
+                  <div style={{
+                    width:42, height:42, borderRadius:C.r3, background:C.green, color:"#fff",
+                    display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+                  }}>
+                    <I.star size={20} stroke={2.2}/>
+                  </div>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                      {lockedCount} more deal{lockedCount===1?"":"s"} waiting
+                    </div>
+                    <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+                      Upgrade to DealHive Pro for the full feed, exact addresses, photos, and the analyzer pre-filled.
+                    </div>
+                  </div>
+                </div>
+                <button onClick={onUpgrade} {...btnStyle("primary","lg")}>
+                  <I.star size={14}/> Upgrade to Pro
+                </button>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey}) {
-  const [d, setD]       = useState(() => newDeal());
+function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial}) {
+  // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
+  // on mount and then tell App to clear its prefill so a fresh visit later gets
+  // a blank form again.
+  const [d, setD]       = useState(() => initial ? {...newDeal(), ...initial} : newDeal());
   const [loading, setL] = useState(false);
   const [err, setErr]   = useState("");
   const u = (f,v) => setD(prev => ({...prev, [f]:v}));
+
+  useEffect(() => {
+    if (initial && onConsumeInitial) onConsumeInitial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const runSearch = async () => {
     if (!d.address) { setErr("Enter an address first."); return; }
@@ -4498,6 +4955,7 @@ const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
   {id:"properties", Icon:I.building,       label:"Properties"},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
+  {id:"deals",      Icon:I.star,           label:"Deals"},
   {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
   {id:"comps",      Icon:I.chart,          label:"Comps"},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
@@ -4575,8 +5033,9 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
 function MobileNav({page, setPage, alertCount}) {
   const tabs = [
     {id:"dashboard",  Icon:I.home,           label:"Home"},
+    {id:"deals",      Icon:I.star,           label:"Deals"},
     {id:"properties", Icon:I.building,       label:"Props"},
-    {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
+    {id:"projects",   Icon:I.clipboardCheck, label:"Tasks"},
     {id:"deal",       Icon:I.search,         label:"Analyze"},
     {id:"comps",      Icon:I.chart,          label:"Comps"},
     {id:"settings",   Icon:I.settings,       label:"More"},
@@ -4621,7 +5080,7 @@ function MobileHeader({page, onBack, toast}) {
   const showBack = page==="property";
   const titles = {
     dashboard:"Portfolio", properties:"Properties", projects:"Projects",
-    deal:"Deal Analyzer", comps:"Comps",
+    deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:"Property"
   };
   return (
@@ -4671,7 +5130,7 @@ function MobileHeader({page, onBack, toast}) {
 function DesktopTopBar({page, propAddress, toast}) {
   const titles = {
     dashboard:"Dashboard", properties:"Properties", projects:"Projects",
-    deal:"Deal Analyzer", comps:"Comps",
+    deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:propAddress||"Property"
   };
   return (
@@ -4703,6 +5162,10 @@ export default function App() {
   const [toast,  setToast]  = useState("");
   const [daysLeft,setDL]    = useState(null);
   const [authLoading,setAL] = useState(true);
+  // Set by the Deals page when the user hits "Analyze" on a deal card; the
+  // DealAnalyzer consumes it on mount and clears it via onConsumeInitial so
+  // a fresh visit later starts with a blank form.
+  const [prefilledDeal, setPrefilledDeal] = useState(null);
   const mobile = useIsMobile();
 
   // Always-current user for async cloud calls (avoids stale-closure tokens).
@@ -4923,6 +5386,29 @@ export default function App() {
     setToast("Deal added to My Properties! OK"); setTimeout(()=>setToast(""),2000);
   };
 
+  // Deals page → Analyzer: prefill the analyzer with the deal's numbers.
+  const analyzeDealFromMarket = deal => {
+    setPrefilledDeal(dealToProForma(deal));
+    setPage("deal");
+  };
+  // Deals page → portfolio: save straight to My Properties without going
+  // through the analyzer (one-click "this is the deal, track it").
+  const saveDealFromMarket = deal => {
+    const p = newProp({
+      ...dealToProForma(deal), id:"p"+Date.now(),
+      projects:[], occupied:false, tenantStatus:"Vacant",
+    });
+    persist({...data, properties:[...data.properties, p]});
+    setPropId(p.id); setPage("property");
+    setToast("Saved to My Properties"); setTimeout(()=>setToast(""), 2000);
+  };
+  // Stripe / paid-tier checkout will live behind this — for now just a toast
+  // so the upgrade affordances aren't dead.
+  const handleUpgrade = () => {
+    setToast("Pro upgrade coming soon");
+    setTimeout(()=>setToast(""), 2500);
+  };
+
   const alerts     = (data.properties||[]).filter(p => {
     const d = dU(p.leaseEnd);
     return p.tenantStatus==="Late" || (d!=null && d<=60 && d>=0);
@@ -4936,6 +5422,15 @@ export default function App() {
     mobile,
     apiLookup,
     rentcastKey: data.rentcastKey || "",
+  };
+
+  const dealAnalyzerProps = {
+    deals: data.deals || [],
+    onSave: saveDeals,
+    onMoveToPortfolio: moveDealToPortfolio,
+    initial: prefilledDeal,
+    onConsumeInitial: () => setPrefilledDeal(null),
+    ...sharedProps,
   };
 
   // Mobile layout
@@ -4953,8 +5448,11 @@ export default function App() {
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" ? (
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
+        ) : page==="deals" ? (
+          <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
+            onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket} mobile={mobile} />
         ) : page==="deal" ? (
-          <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
+          <DealAnalyzer {...dealAnalyzerProps} />
         ) : page==="comps" ? (
           <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
         ) : page==="settings" ? (
@@ -4986,8 +5484,11 @@ export default function App() {
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" ? (
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
+            ) : page==="deals" ? (
+              <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
+                onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket} mobile={mobile} />
             ) : page==="deal" ? (
-              <DealAnalyzer deals={data.deals||[]} onSave={saveDeals} onMoveToPortfolio={moveDealToPortfolio} {...sharedProps} />
+              <DealAnalyzer {...dealAnalyzerProps} />
             ) : page==="comps" ? (
               <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
             ) : page==="settings" ? (
