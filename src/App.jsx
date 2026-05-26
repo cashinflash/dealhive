@@ -3977,6 +3977,105 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile}) {
 // description, ARV math, wholesaler info, and an outbound link to the source
 // (InvestorLift, where they can request the actual address and contact the
 // wholesaler). Free members see the photo, basic stats, and an upgrade CTA.
+// Photo carousel with prev/next arrows, dots, counter, and touch-swipe. Falls
+// back to a Street View image of the deal's lat/lng when no photos provided
+// (handy for sample/RentCast deals that don't have hosted images).
+function PhotoCarousel({photos = [], fallbackLat, fallbackLng, height = 280, mobile}) {
+  const [index, setIndex] = useState(0);
+  const touchX = useRef(null);
+
+  const effective = (Array.isArray(photos) && photos.length > 0)
+    ? photos
+    : (fallbackLat && fallbackLng ? [svUrl(fallbackLat, fallbackLng, 1200, 480)] : []);
+  const total = effective.length;
+
+  // Clamp index if photos prop ever shrinks.
+  useEffect(() => { if (index >= total) setIndex(0); }, [total, index]);
+
+  if (total === 0) {
+    return (
+      <div style={{height, background:C.bgSubtle, display:"flex", alignItems:"center",
+        justifyContent:"center", color:C.textMuted}}>
+        <I.building size={36}/>
+      </div>
+    );
+  }
+
+  const goPrev = () => setIndex(i => (i - 1 + total) % total);
+  const goNext = () => setIndex(i => (i + 1) % total);
+
+  const onTouchStart = e => { touchX.current = e.touches[0].clientX; };
+  const onTouchEnd   = e => {
+    if (touchX.current == null) return;
+    const dx = e.changedTouches[0].clientX - touchX.current;
+    if (Math.abs(dx) > 40) (dx > 0 ? goPrev : goNext)();
+    touchX.current = null;
+  };
+
+  const arrow = (side, icon, onClick, label) => (
+    <button onClick={e => { e.stopPropagation(); onClick(); }} aria-label={label}
+      style={{
+        position:"absolute", top:"50%", [side]:12, transform:"translateY(-50%)",
+        width:36, height:36, borderRadius:"50%",
+        background:"rgba(255,255,255,.92)", border:"none", cursor:"pointer", color:C.text,
+        display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2,
+        zIndex:2,
+      }}>
+      {icon}
+    </button>
+  );
+
+  return (
+    <div style={{position:"relative", height, overflow:"hidden", background:C.bgSubtle}}
+      onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <img src={effective[index]} alt=""
+        style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}
+        onError={e => { e.currentTarget.style.opacity = "0.4"; }} />
+
+      {total > 1 && (
+        <>
+          {/* Show arrows on desktop, hide on mobile where swipe is the primary UX */}
+          {!mobile && (
+            <>
+              {arrow("left",  <I.chevronLeft  size={18}/>, goPrev, "Previous photo")}
+              {arrow("right", <I.chevronRight size={18}/>, goNext, "Next photo")}
+            </>
+          )}
+
+          {/* Counter pill top-right (offset from the close button) */}
+          <div style={{
+            position:"absolute", top:14, right: mobile ? 60 : 14,
+            background:"rgba(9,9,11,.65)", color:"#fff",
+            padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:600,
+            fontVariantNumeric:"tabular-nums", fontFamily:F,
+            pointerEvents:"none", zIndex:2,
+          }}>
+            {index + 1} / {total}
+          </div>
+
+          {/* Dots */}
+          <div style={{
+            position:"absolute", bottom:10, left:0, right:0,
+            display:"flex", justifyContent:"center", gap:6, zIndex:2,
+          }}>
+            {effective.map((_, i) => (
+              <button key={i} onClick={e => { e.stopPropagation(); setIndex(i); }}
+                aria-label={`Go to photo ${i + 1}`}
+                style={{
+                  width: i === index ? 22 : 7, height:7, borderRadius:9999,
+                  background: i === index ? "#fff" : "rgba(255,255,255,.55)",
+                  border:"none", cursor:"pointer", padding:0,
+                  transition:"width .15s, background .15s",
+                  boxShadow:"0 1px 2px rgba(9,9,11,.25)",
+                }} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile}) {
   const c       = classifyDeal(deal);
   const primary = c.tags.length > 1
@@ -3999,7 +4098,6 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
     };
   }, [onClose]);
 
-  const photo  = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 1200, 480) : null);
   const arv    = deal.arv || Math.round((deal.price || 0) * 1.35);
   const spread = arv - (deal.price || 0) - (deal.repair || 0);
   const spreadPct = deal.price > 0 ? (spread / deal.price) * 100 : 0;
@@ -4022,22 +4120,26 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
-        {/* Hero photo */}
-        <div style={{position:"relative", height: mobile?220:280, background:C.bgSubtle, overflow:"hidden"}}>
-          {photo
-            ? <img src={photo} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
-            : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
-                <I.building size={36}/>
-              </div>}
-          <div style={{position:"absolute", inset:0,
+        {/* Hero — photo carousel with overlays */}
+        <div style={{position:"relative"}}>
+          <PhotoCarousel
+            photos={Array.isArray(deal.photos) && deal.photos.length > 0
+              ? deal.photos
+              : (deal.photo ? [deal.photo] : [])}
+            fallbackLat={deal.lat} fallbackLng={deal.lng}
+            height={mobile ? 220 : 280}
+            mobile={mobile} />
+          {/* Dark gradient at the bottom so the price overlay stays legible */}
+          <div style={{position:"absolute", inset:0, pointerEvents:"none",
             background:"linear-gradient(to bottom, transparent 50%, rgba(9,9,11,.55))"}}/>
           <button onClick={onClose} aria-label="Close"
             style={{position:"absolute", top:14, right:14, width:36, height:36, borderRadius:"50%",
               background:"rgba(255,255,255,.92)", border:"none", cursor:"pointer", color:C.text,
-              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2,
+              zIndex:3}}>
             <I.x size={16} stroke={2.5}/>
           </button>
-          <div style={{position:"absolute", top:14, left:14, display:"flex", gap:6, flexWrap:"wrap"}}>
+          <div style={{position:"absolute", top:14, left:14, display:"flex", gap:6, flexWrap:"wrap", zIndex:3}}>
             <span style={{
               display:"inline-flex", alignItems:"center", gap:5,
               background:strat.bg, color:strat.color, border:"1px solid "+strat.border,
@@ -4068,8 +4170,9 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
             )}
           </div>
           {/* Bottom-left price overlay */}
-          <div style={{position:"absolute", bottom:16, left:18, right:18,
-            display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, color:"#fff", fontFamily:F}}>
+          <div style={{position:"absolute", bottom:16, left:18, right:18, zIndex:3,
+            display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10, color:"#fff", fontFamily:F,
+            pointerEvents:"none"}}>
             <div>
               <div style={{fontSize:11, color:"rgba(255,255,255,.85)", fontWeight:600, letterSpacing:".04em", textTransform:"uppercase"}}>
                 Asking
@@ -4169,68 +4272,61 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
                 background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
                 padding:"12px 14px", display:"flex", alignItems:"center", gap:10}}>
                 <I.lock size={14} stroke={2.2} style={{color:C.textMuted, flexShrink:0}}/>
-                <span>Deal description, full address, and wholesaler contact unlocked with DealHive Pro.</span>
+                <span>Description and seller contact unlocked with DealHive Pro.</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Wholesaler / source card — Pro only */}
-        {(deal.seller?.company || deal.seller?.name || deal.sourceUrl) && (
+        {/* Seller card — Pro members see the seller's name/company; free members
+            see a teaser with an upgrade CTA. No outbound links. */}
+        {(deal.seller?.company || deal.seller?.name || !isPro) && (
           <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
-              How to take this deal
+              Seller
             </div>
             {isPro ? (
               <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
                 padding:"14px 16px"}}>
-                <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
+                <div style={{display:"flex", alignItems:"center", gap:12}}>
                   <div style={{
-                    width:38, height:38, borderRadius:C.r3, background:C.card, border:"1px solid "+C.greenBorder,
+                    width:42, height:42, borderRadius:"50%", background:C.card, border:"1px solid "+C.greenBorder,
                     color:C.greenDark, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+                    fontSize:15, fontWeight:700, fontFamily:F,
                   }}>
-                    <I.building size={18}/>
+                    {(deal.seller?.company || deal.seller?.name || "?").charAt(0).toUpperCase()}
                   </div>
                   <div style={{minWidth:0, flex:1}}>
                     {deal.seller?.company && (
-                      <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
+                      <div style={{fontSize:15, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
                         overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
                         {deal.seller.company}
                       </div>
                     )}
                     {deal.seller?.name && (
-                      <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
+                      <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:2,
                         overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
                         {deal.seller.name}
                       </div>
                     )}
                   </div>
                 </div>
-                {deal.sourceUrl && (
-                  <a href={deal.sourceUrl} target="_blank" rel="noreferrer"
-                    {...btnStyle("primary","md", {width:"100%"})}>
-                    View full listing &amp; contact <I.externalLink size={13}/>
-                  </a>
-                )}
-                <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:8, lineHeight:1.5}}>
-                  The exact address and wholesaler phone/email live on the source listing — click through to request access.
-                </div>
               </div>
             ) : (
               <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
-                padding:"14px 16px", textAlign:"center"}}>
+                padding:"16px 18px", textAlign:"center"}}>
                 <div style={{
-                  width:40, height:40, borderRadius:"50%", background:C.green, color:"#fff",
+                  width:42, height:42, borderRadius:"50%", background:C.green, color:"#fff",
                   display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:8,
                 }}>
-                  <I.star size={18} stroke={2.2}/>
+                  <I.lock size={18} stroke={2.2}/>
                 </div>
-                <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>
-                  Unlock this deal with DealHive Pro
+                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>
+                  Unlock to see the seller
                 </div>
                 <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:4, lineHeight:1.5}}>
-                  Get the full address, wholesaler contact, and direct link to the source listing.
+                  DealHive Pro members see the seller's contact details on every deal.
                 </div>
                 <button onClick={onUpgrade} {...btnStyle("primary","md", {marginTop:12, width:"100%"})}>
                   <I.star size={13}/> Upgrade to Pro
