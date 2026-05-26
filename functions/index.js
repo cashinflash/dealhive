@@ -1,4 +1,4 @@
-// DealHive nightly deal-pipeline.
+// DealHive nightly deal-pipeline. v0.2 — debug payload in /pullDealsNow.
 //
 // Runs every night, pulls fresh wholesale + listing data from:
 //   1. Apify InvestorLift scraper (off-market wholesale assignments)
