@@ -5,59 +5,82 @@ Nightly pipeline that pulls fresh wholesale + listing data from Apify
 1–4 unit deals, classifies each, and writes to Firebase Realtime DB at `/deals`.
 The React app reads from there.
 
-## One-time setup (you do this once)
+## Deploy via GitHub Actions (recommended — no local CLI)
+
+The `.github/workflows/deploy-firebase.yml` workflow deploys the functions and
+DB rules for you on every push to `main`. You can also trigger it manually from
+the GitHub Actions tab.
+
+You do this **once**, all in a browser:
 
 ### 1. Upgrade Firebase to the Blaze plan
 
-Cloud Functions with outbound HTTP requires the Blaze (pay-as-you-go) plan.
-At our nightly volume the bill is typically a few cents/month.
+Cloud Functions with outbound HTTP requires Blaze (pay-as-you-go). At our
+nightly volume the bill is typically a few cents per month.
 
 → https://console.firebase.google.com/project/darallc/usage/details
+→ click **Modify plan** → **Blaze**.
 
-### 2. Install the Firebase CLI locally (one time, per machine)
+### 2. Rotate the Apify API key
 
-```sh
-npm install -g firebase-tools
-firebase login
-```
+→ https://console.apify.com/account/integrations
+→ revoke any keys you've previously pasted in chat
+→ generate a new one and copy it (you'll paste it into GitHub in step 4)
 
-### 3. Install function dependencies
+### 3. Generate a Firebase service-account key
 
-```sh
-cd functions
-npm install
-cd ..
-```
+This lets the GitHub workflow authenticate as your Firebase project.
 
-### 4. Set the secrets (one time, stored in Google Secret Manager)
+→ https://console.firebase.google.com/project/darallc/settings/serviceaccounts/adminsdk
+→ click **Generate new private key** → confirm
+→ a `darallc-firebase-adminsdk-xxxxx.json` file downloads — keep this file
+   private and don't commit it to git
 
-```sh
-firebase functions:secrets:set APIFY_API_KEY         # paste your rotated Apify key
-firebase functions:secrets:set RENTCAST_API_KEY      # paste your RentCast key
-firebase functions:secrets:set MANUAL_TRIGGER_SECRET # any random string for the /pullDealsNow endpoint
-```
+Then grant that service account the roles it needs to deploy and manage secrets:
 
-### 5. Deploy DB rules + functions
+→ https://console.cloud.google.com/iam-admin/iam?project=darallc
+→ find the service account named `firebase-adminsdk-xxxxx@darallc.iam.gserviceaccount.com`
+→ click the pencil to edit and add these roles:
+  - **Cloud Functions Admin**
+  - **Service Account User**
+  - **Secret Manager Admin**
+  - **Cloud Scheduler Admin** (needed because `pullDeals` is a scheduled function)
+→ save
 
-```sh
-firebase deploy --only database,functions
-```
+### 4. Add 4 secrets to the GitHub repo
 
-You should see two functions deployed:
-- `pullDeals`     — scheduled, nightly 6am ET
-- `pullDealsNow`  — HTTPS, manual trigger for testing
+→ https://github.com/cashinflash/dealhive/settings/secrets/actions
+→ click **New repository secret** four times and add:
+
+| Name                       | Value                                                            |
+|----------------------------|------------------------------------------------------------------|
+| `FIREBASE_SERVICE_ACCOUNT` | Open the JSON file from step 3, paste the **entire contents**    |
+| `APIFY_API_KEY`            | The newly rotated Apify token from step 2                        |
+| `RENTCAST_API_KEY`         | Your RentCast API key                                            |
+| `MANUAL_TRIGGER_SECRET`    | Any random string (used by the manual-trigger endpoint as a passcode) |
+
+### 5. Run the workflow
+
+→ https://github.com/cashinflash/dealhive/actions/workflows/deploy-firebase.yml
+→ click **Run workflow** → **Run workflow** (confirms)
+→ wait ~3 minutes for it to go green
+
+After this first run, any future push to `main` that touches `functions/`,
+`database.rules.json`, or `firebase.json` deploys automatically.
 
 ### 6. Smoke-test the pipeline
 
-Replace `XXXX` with the value you set for `MANUAL_TRIGGER_SECRET`:
+Visit this URL in a browser, replacing `YOUR_SECRET` with whatever you set
+for `MANUAL_TRIGGER_SECRET` in step 4:
 
-```sh
-curl "https://us-central1-darallc.cloudfunctions.net/pullDealsNow?secret=XXXX"
+```
+https://us-central1-darallc.cloudfunctions.net/pullDealsNow?secret=YOUR_SECRET
 ```
 
-Response shows how many deals were pulled per source and how many survived the
-residential + classification filters. Refresh the Deals page in the app —
-real deals should replace the sample cards.
+You should get a JSON response showing how many deals were pulled from each
+source and how many survived the residential + classification filter. Refresh
+the Deals page on dealhive.io — the **Preview data** pill should flip to
+**Live** with an "Updated 30s ago" timestamp.
 
 ## Tuning daily pull volume
 
@@ -65,7 +88,7 @@ Defaults are tuned for "Conservative ~200 deals/day":
 - Apify InvestorLift: 50 raw / day
 - RentCast: 25 / market × 6 markets = 150 raw / day
 
-To change without redeploying secrets, edit the top of `index.js`:
+To change, edit the top of `index.js` and push to main:
 ```js
 const INVESTORLIFT_MAX        = parseInt(process.env.INVESTORLIFT_MAX        || "50", 10);
 const RENTCAST_MAX_PER_MARKET = parseInt(process.env.RENTCAST_MAX_PER_MARKET || "25", 10);
@@ -81,12 +104,11 @@ Cost watchouts:
 
 ## Watching logs
 
-```sh
-firebase functions:log --only pullDeals
-firebase functions:log --only pullDealsNow --lines 50
-```
+→ https://console.firebase.google.com/project/darallc/functions/logs
 
-Or in the console: https://console.firebase.google.com/project/darallc/functions/logs
+Filter by function name (`pullDeals` for the scheduled runs, `pullDealsNow`
+for manual triggers). Each successful run logs a summary like
+`✓ Wrote 187 deals (raw 203) { investorlift: 47, rentcast: 156 }`.
 
 ## Safety net
 
@@ -94,3 +116,17 @@ If both sources return zero on a given run (Apify scraper went stale, RentCast
 quota maxed), the pipeline **logs and exits without writing** — yesterday's
 deals stay live rather than blanking the page. Watch the logs after each
 nightly run for the first week to catch this early.
+
+## Local CLI (only if you ever want to deploy from a laptop)
+
+Skip this entire section if you're using the GitHub Actions path above.
+
+```sh
+npm install -g firebase-tools
+firebase login
+cd functions && npm install && cd ..
+firebase functions:secrets:set APIFY_API_KEY
+firebase functions:secrets:set RENTCAST_API_KEY
+firebase functions:secrets:set MANUAL_TRIGGER_SECRET
+firebase deploy --only database,functions
+```

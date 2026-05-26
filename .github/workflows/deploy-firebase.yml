@@ -1,0 +1,97 @@
+# Deploys the nightly deal pipeline (functions/) and DB rules to Firebase.
+#
+# Runs automatically on pushes to main that touch functions/, database.rules.json,
+# or firebase.json. Can also be run on demand from the Actions tab via
+# "Run workflow" (workflow_dispatch).
+#
+# One-time setup in the GitHub repo → Settings → Secrets and variables → Actions:
+#   FIREBASE_SERVICE_ACCOUNT  — full JSON content of a Firebase service-account key
+#   APIFY_API_KEY             — rotated Apify token
+#   RENTCAST_API_KEY          — RentCast API key for the listings endpoint
+#   MANUAL_TRIGGER_SECRET     — any random string, guards the /pullDealsNow URL
+#
+# See functions/README.md for the click-by-click on generating each secret.
+
+name: Deploy Firebase (functions + DB rules)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "database.rules.json"
+      - "firebase.json"
+      - ".firebaserc"
+      - ".github/workflows/deploy-firebase.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@latest
+
+      # The service-account JSON gives the Firebase CLI permission to deploy
+      # functions, write secrets, and update DB rules. We write it to a temp
+      # file and point GOOGLE_APPLICATION_CREDENTIALS at it so the CLI picks
+      # it up automatically for every subsequent step.
+      - name: Authenticate Firebase CLI
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA_JSON" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret is not set. See functions/README.md."
+            exit 1
+          fi
+          printf '%s' "$SA_JSON" > "$HOME/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/sa.json" >> "$GITHUB_ENV"
+
+      # Push the three runtime secrets into Google Secret Manager via the
+      # Firebase CLI. Each `secrets:set` creates a new version of the secret;
+      # only the latest is read by the deployed function at runtime.
+      - name: Sync function secrets
+        env:
+          APIFY_KEY:     ${{ secrets.APIFY_API_KEY }}
+          RENTCAST_KEY:  ${{ secrets.RENTCAST_API_KEY }}
+          MANUAL_SECRET: ${{ secrets.MANUAL_TRIGGER_SECRET }}
+        run: |
+          for var in APIFY_KEY RENTCAST_KEY MANUAL_SECRET; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Required secret $var is empty. Add it to GitHub repo secrets."
+              exit 1
+            fi
+          done
+          printf '%s' "$APIFY_KEY"     | firebase functions:secrets:set APIFY_API_KEY         --data-file=- --project darallc --force
+          printf '%s' "$RENTCAST_KEY"  | firebase functions:secrets:set RENTCAST_API_KEY      --data-file=- --project darallc --force
+          printf '%s' "$MANUAL_SECRET" | firebase functions:secrets:set MANUAL_TRIGGER_SECRET --data-file=- --project darallc --force
+
+      - name: Deploy DB rules + functions
+        run: firebase deploy --only database,functions --project darallc --force --non-interactive
+
+      - name: Summarize
+        run: |
+          {
+            echo "### Firebase deploy complete"
+            echo ""
+            echo "- Scheduled: \`pullDeals\` runs every day at 6am ET"
+            echo "- Manual trigger:"
+            echo "  \`curl \"https://us-central1-darallc.cloudfunctions.net/pullDealsNow?secret=YOUR_MANUAL_TRIGGER_SECRET\"\`"
+          } >> "$GITHUB_STEP_SUMMARY"
