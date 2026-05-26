@@ -54,31 +54,49 @@ const INVESTORLIFT_MAX        = parseInt(process.env.INVESTORLIFT_MAX        || 
 const RENTCAST_MAX_PER_MARKET = parseInt(process.env.RENTCAST_MAX_PER_MARKET || "25", 10);
 
 // -- Source: Apify InvestorLift scraper ---------------------------------------
+// Returns {items, debug}. The debug field is surfaced in the /pullDealsNow
+// response so we can diagnose schema/auth/empty-result issues without
+// crawling Cloud Logging.
 async function pullFromApify(token, maxItems) {
-  if (!token) return [];
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
   const actor = "corent1robert~investorlift-scraper";
-  // `run-sync-get-dataset-items` blocks until the actor finishes and streams
-  // the dataset back — fine for a scheduled job, simpler than polling runs.
   const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      maxItems,
-      enrichWithDetails: true, // pulls photos + contact, more compute units
-      dealIds: [],
-    }),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({maxItems, enrichWithDetails: true, dealIds: []}),
+    });
+  } catch (e) {
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+  }
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Apify HTTP ${res.status}: ${body.slice(0, 200)}`);
+    const body = (await res.text()).slice(0, 400);
+    return {items: [], debug: {httpStatus: res.status, body}};
   }
-  const items = await res.json();
-  if (!Array.isArray(items)) {
-    logger.warn("Apify returned non-array payload", {keys: Object.keys(items || {})});
-    return [];
+  let parsed;
+  try { parsed = await res.json(); } catch (e) {
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
   }
-  return items.map(mapApifyDeal).filter(Boolean);
+  if (!Array.isArray(parsed)) {
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+  }
+  const rawCount = parsed.length;
+  // Capture the shape of the first item — field names only, no values, so we
+  // can update mapApifyDeal without exposing scraped seller data in chat.
+  const sampleKeys = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
+  const items = parsed.map(mapApifyDeal).filter(Boolean);
+  return {
+    items,
+    debug: {
+      httpStatus: res.status,
+      rawCount,
+      mappedCount: items.length,
+      droppedCount: rawCount - items.length,
+      sampleKeys,
+    },
+  };
 }
 
 // Apify actors don't have a stable output schema — third-party scrapers can
@@ -281,21 +299,26 @@ function hashId(s) {
 // -- Pipeline -----------------------------------------------------------------
 async function runPipeline(apifyKey, rentcastKey) {
   const sources = {investorlift: 0, rentcast: 0};
+  const debug   = {};
   const raw     = [];
 
   // 1. Apify InvestorLift — wrap in try/catch so one bad source can't take
-  // the whole nightly down.
+  // the whole nightly down. pullFromApify returns its own debug payload
+  // (http status, raw count, sample of field names) so the /pullDealsNow
+  // response can carry it back without needing log spelunking.
   if (apifyKey) {
     try {
-      const items = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
+      const {items, debug: apifyDebug} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
       sources.investorlift = items.length;
       raw.push(...items);
-      logger.info(`Pulled ${items.length} from Apify InvestorLift`);
+      debug.apify = apifyDebug;
+      logger.info(`Apify: ${apifyDebug.rawCount || 0} raw, ${items.length} mapped`, apifyDebug);
     } catch (e) {
+      debug.apify = {error: e.message};
       logger.error("Apify pull failed", {error: e.message});
     }
   } else {
-    logger.warn("APIFY_API_KEY not set — skipping InvestorLift");
+    debug.apify = {error: "APIFY_API_KEY not set"};
   }
 
   // 2. RentCast per market.
@@ -325,7 +348,7 @@ async function runPipeline(apifyKey, rentcastKey) {
   // existing /deals — yesterday's data is better than no data.
   if (raw.length === 0) {
     logger.warn("All sources empty — leaving existing /deals untouched.");
-    return {written: 0, raw: 0, sources, skipped: true};
+    return {written: 0, raw: 0, sources, debug, skipped: true};
   }
 
   const itemsMap = Object.fromEntries(deduped.map(d => [d.id, d]));
@@ -337,7 +360,7 @@ async function runPipeline(apifyKey, rentcastKey) {
   });
 
   logger.info(`✓ Wrote ${deduped.length} deals (raw ${raw.length})`, sources);
-  return {written: deduped.length, raw: raw.length, sources, skipped: false};
+  return {written: deduped.length, raw: raw.length, sources, debug, skipped: false};
 }
 
 // -- Triggers -----------------------------------------------------------------
