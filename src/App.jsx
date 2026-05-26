@@ -2907,8 +2907,61 @@ function ContractorChip({label, active, onClick}) {
   );
 }
 
+// Group an array of {pr, property} rows by property, preserving the order
+// each property first appeared in. Returns [{property, prs:[pr,…]}, …].
+const groupByProperty = (rows) => {
+  const groups = [];
+  const seen = new Map();
+  for (const {pr, property} of rows) {
+    if (!seen.has(property.id)) {
+      const g = {property, prs: []};
+      seen.set(property.id, g);
+      groups.push(g);
+    }
+    seen.get(property.id).prs.push(pr);
+  }
+  return groups;
+};
+
+// Property "subheader" used to label a group of follow-ups in a Due-Now bucket
+// or the day-view. Clickable: navigates to the matching property card below.
+function PropertyGroupHeader({property, onClick, mobile, isFirst}) {
+  return (
+    <button onClick={onClick}
+      className="dh-prop-subheader"
+      style={{
+        width:"100%", padding: mobile ? "10px 14px 8px" : "11px 18px 8px",
+        background:"transparent", border:"none",
+        borderTop: isFirst ? "none" : "1px solid "+C.border,
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        cursor:"pointer", textAlign:"left", gap:8,
+        transition:"background .12s",
+      }}>
+      <div style={{display:"flex", alignItems:"baseline", gap:8, minWidth:0, flex:1}}>
+        <span style={{
+          fontSize: mobile ? 13 : 14, fontWeight:600, color:C.text, fontFamily:F,
+          letterSpacing:"-0.005em",
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+        }}>
+          {property.address}
+        </span>
+        {property.city && (
+          <span style={{
+            fontSize:12, color:C.textMuted, fontFamily:F, flexShrink:0,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+          }}>
+            {property.city}{property.state ? `, ${property.state}` : ""}
+          </span>
+        )}
+      </div>
+      <I.chevronRight size={14} style={{color:C.textMuted, flexShrink:0}}/>
+    </button>
+  );
+}
+
 function DueNowSection({title, items, tone, onPropertyClick, onRowChange, onRowDelete, onAddExpense, mobile, contractors}) {
   if (!items.length) return null;
+  const groups = groupByProperty(items);
   return (
     <div>
       <header style={{
@@ -2934,15 +2987,19 @@ function DueNowSection({title, items, tone, onPropertyClick, onRowChange, onRowD
         </span>
       </header>
       <div>
-        {items.map(({pr, property}) => (
-          <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
-            propLabel={property.address} propId={property.id} showProperty
-            onPropertyClick={() => onPropertyClick(property.id)}
-            onChange={updated => onRowChange(property, updated)}
-            onDelete={() => onRowDelete(property, pr.id)}
-            onAddExpense={exp => onAddExpense(property, exp)}
-            isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
-            mobile={mobile} contractors={contractors} />
+        {groups.map(({property, prs}, idx) => (
+          <React.Fragment key={property.id}>
+            <PropertyGroupHeader property={property} mobile={mobile} isFirst={idx === 0}
+              onClick={() => onPropertyClick(property.id)} />
+            {prs.map(pr => (
+              <FollowupRow key={pr.id} pr={pr} showProperty={false}
+                onChange={updated => onRowChange(property, updated)}
+                onDelete={() => onRowDelete(property, pr.id)}
+                onAddExpense={exp => onAddExpense(property, exp)}
+                isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
+                mobile={mobile} contractors={contractors} />
+            ))}
+          </React.Fragment>
         ))}
       </div>
     </div>
@@ -3313,14 +3370,19 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
               </div>
             </div>
           ) : (
-            selectedDayItems.map(({pr, property}) => (
-              <FollowupRow key={`${property.id}-${pr.id}`} pr={pr}
-                propLabel={property.address} propId={property.id} showProperty
-                onChange={updated => handleRowChange(property, updated)}
-                onDelete={() => handleRowDelete(property, pr.id)}
-                onAddExpense={exp => handleAddExpense(property, exp)}
-                isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
-                mobile={mobile} contractors={contractors} />
+            groupByProperty(selectedDayItems).map(({property, prs}, idx) => (
+              <React.Fragment key={property.id}>
+                <PropertyGroupHeader property={property} mobile={mobile} isFirst={idx === 0}
+                  onClick={() => { setSelectedDate(null); setTimeout(() => scrollToProperty(property.id), 0); }} />
+                {prs.map(pr => (
+                  <FollowupRow key={pr.id} pr={pr} showProperty={false}
+                    onChange={updated => handleRowChange(property, updated)}
+                    onDelete={() => handleRowDelete(property, pr.id)}
+                    onAddExpense={exp => handleAddExpense(property, exp)}
+                    isExpensed={(property.expenses||[]).some(e => e.fromFollowup === pr.id)}
+                    mobile={mobile} contractors={contractors} />
+                ))}
+              </React.Fragment>
             ))
           )}
         </Card>
@@ -4734,6 +4796,7 @@ export default function App() {
       .dh-cal-nav:hover{background:${C.bgSubtle}!important;color:${C.text}!important;}
       .dh-cal-day:hover{background:${C.bgSubtle};}
       .dh-cal-day[aria-pressed="true"]:hover{background:${C.greenHover}!important;}
+      .dh-prop-subheader:hover{background:${C.bgSubtle}!important;}
       @keyframes dh-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
       .dh-pulse{animation:dh-pulse 2s ease-in-out infinite;}
       .dh-nav-item{transition:background-color .12s,color .12s;}
