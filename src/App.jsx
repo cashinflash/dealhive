@@ -3672,16 +3672,40 @@ const DEAL_MARKETS = [
 // Classify a deal against two pro forma strategies (buy-and-hold and fix-and-
 // flip) and surface tags + scores so the card can show the right hero numbers.
 // A deal can carry both tags ("multi-strategy") or neither (skipped from feed).
+// Effective property-tax rates by state (annual % of value). Kept in sync
+// with the matching table in functions/index.js — both classifiers must
+// agree or the client will hide deals the server accepted (and vice versa).
+const STATE_TAX_RATES = {
+  AL:0.0041, AK:0.0119, AZ:0.0066, AR:0.0061, CA:0.0075,
+  CO:0.0051, CT:0.0214, DE:0.0061, DC:0.0056, FL:0.0089,
+  GA:0.0092, HI:0.0028, ID:0.0069, IL:0.0227, IN:0.0085,
+  IA:0.0157, KS:0.0141, KY:0.0086, LA:0.0055, ME:0.0136,
+  MD:0.0109, MA:0.0123, MI:0.0154, MN:0.0112, MS:0.0081,
+  MO:0.0097, MT:0.0084, NE:0.0173, NV:0.0060, NH:0.0218,
+  NJ:0.0249, NM:0.0080, NY:0.0173, NC:0.0084, ND:0.0098,
+  OH:0.0156, OK:0.0090, OR:0.0093, PA:0.0158, RI:0.0163,
+  SC:0.0057, SD:0.0132, TN:0.0071, TX:0.0181, UT:0.0066,
+  VT:0.0190, VA:0.0082, WA:0.0098, WV:0.0058, WI:0.0185, WY:0.0061,
+};
+const DEFAULT_TAX_RATE = 0.011;
+
 const classifyDeal = (deal) => {
-  // 1% rule fallback for listings without a rent estimate (RentCast active
-  // listings don't include one). Conservative proxy; the analyzer uses real
-  // comps when the user opens a specific deal. Keep this in sync with the
-  // matching helper in functions/index.js.
-  const rent       = deal.rent && deal.rent > 0 ? deal.rent : Math.round((deal.price || 0) * 0.01);
-  const monthlyTax = Math.round((deal.price * 0.0233) / 12); // ~OH-ish 2.33%/yr
+  // Rent — 1% rule fallback capped at $2,200 so a $400k property doesn't
+  // assume $4,000/mo rent (which would auto-pass even mediocre listings).
+  const rent       = deal.rent && deal.rent > 0
+    ? deal.rent
+    : Math.min(2200, Math.round((deal.price || 0) * 0.01));
+  // ARV — prefer scraped, else 30% margin over asking.
+  const arv        = deal.arv && deal.arv > 0 ? deal.arv : Math.round((deal.price || 0) * 1.30);
+  // Repair budget — wholesale needs work; assume 15% of ARV when not provided.
+  const repair     = deal.repair && deal.repair > 0 ? deal.repair : Math.round(arv * 0.15);
+  // State-specific tax — was hardcoded to Ohio's 2.33% on every deal.
+  const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
+  const monthlyTax = Math.round((deal.price * taxRate) / 12);
+
   const buyHoldInputs = {
     purchasePrice: deal.price || 0,
-    repairCosts:   deal.repair || 0,
+    repairCosts:   repair,
     rentAmount:    rent,
     expPropTax:    monthlyTax,
     expInsurance:  100,
@@ -3695,24 +3719,22 @@ const classifyDeal = (deal) => {
   };
   const buyHold = calc(buyHoldInputs);
 
-  // Fix-and-flip: ARV − total in − agent fee − closing on sale − 6 months holding.
-  const arv          = deal.arv || Math.round(deal.price * 1.35);
-  const totalIn      = (deal.price || 0) + (deal.repair || 0);
+  // Fix-and-flip — ARV − total in − 8% selling − 6 months holding (taxes + ins).
+  const totalIn      = (deal.price || 0) + repair;
   const agentFee     = arv * 0.06;
   const sellClosing  = arv * 0.02;
-  const holdingCost  = 6 * 600; // ~$600/mo carrying for 6 mos (tax, ins, utils)
+  const holdingCost  = 6 * (monthlyTax + 500);
   const flipProfit   = Math.round(arv - totalIn - agentFee - sellClosing - holdingCost);
   const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
-  // Thresholds tuned for cash-flow markets where wholesale prices cluster at
-  // $40-100k — a $20k flip-profit gate filtered out the entire feed there.
+  // Tighter gates — no $30/mo cash-flow noise. Only "good" deals pass.
   const tags = [];
-  if (buyHold.finCap >= 6  && buyHold.finCF > 0)      tags.push("buyhold");
-  if (flipROI       >= 12 && flipProfit     >= 10000) tags.push("flip");
+  if (buyHold.finCap >= 8  && buyHold.finCF >= 200)   tags.push("buyhold");
+  if (flipROI       >= 18 && flipProfit     >= 25000) tags.push("flip");
 
-  // Score is used to pick the "primary" strategy when both fit.
-  const buyHoldScore = (buyHold.finCF > 0 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
-  const flipScore    = (flipROI   > 12 ? 30 : 0) + Math.min(flipROI, 50);
+  // Score picks the "primary" strategy when both fit.
+  const buyHoldScore = (buyHold.finCF >= 200 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
+  const flipScore    = (flipROI       >= 18 ? 30 : 0) + Math.min(flipROI, 50);
 
   return {
     tags, buyHoldScore, flipScore,
