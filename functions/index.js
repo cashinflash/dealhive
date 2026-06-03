@@ -46,12 +46,52 @@ const RESIDENTIAL_TYPES = new Set([
   "Single Family", "Multi-Family", "Townhouse", "Condo",
 ]);
 
-// Pull caps tuned for "Conservative ~200 deals/day":
-//   InvestorLift: 50 raw / day (after dedup ~30-50)
-//   RentCast:     25 / market × 6 markets = 150 raw / day
+// Pull caps tuned for "Abundant ~300 deals/day across three sources":
+//   InvestorLift (Apify):  50 raw / day
+//   DealHive2  (seibs.co):  25 / location × 7 locations = 175 raw / day
+//   DealHive 3 (propwire):  100 raw / day
 // Both override-able via env vars for live tuning without redeploy.
-const INVESTORLIFT_MAX        = parseInt(process.env.INVESTORLIFT_MAX        || "50", 10);
-const RENTCAST_MAX_PER_MARKET = parseInt(process.env.RENTCAST_MAX_PER_MARKET || "25", 10);
+const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
+const SEIBS_PER_LOCATION = parseInt(process.env.SEIBS_PER_LOCATION || "25", 10);
+const PROPWIRE_MAX      = parseInt(process.env.PROPWIRE_MAX      || "100", 10);
+
+// Locations the seibs.co actor scans (it requires explicit "City, State" strings).
+const SEIBS_LOCATIONS = (process.env.SEIBS_LOCATIONS || [
+  "Cleveland, OH",
+  "Detroit, MI",
+  "Memphis, TN",
+  "Birmingham, AL",
+  "Indianapolis, IN",
+  "Kansas City, MO",
+  "Austin, TX",
+].join("|")).split("|").map(s => s.trim()).filter(Boolean);
+
+// Effective property-tax rates by state (annual % of value). Used by
+// classifyDeal — the previous code applied Ohio's 2.33% to every deal, which
+// wildly distorted buy-and-hold math in low-tax states (AL 0.41%, CO 0.51%).
+const STATE_TAX_RATES = {
+  AL:0.0041, AK:0.0119, AZ:0.0066, AR:0.0061, CA:0.0075,
+  CO:0.0051, CT:0.0214, DE:0.0061, DC:0.0056, FL:0.0089,
+  GA:0.0092, HI:0.0028, ID:0.0069, IL:0.0227, IN:0.0085,
+  IA:0.0157, KS:0.0141, KY:0.0086, LA:0.0055, ME:0.0136,
+  MD:0.0109, MA:0.0123, MI:0.0154, MN:0.0112, MS:0.0081,
+  MO:0.0097, MT:0.0084, NE:0.0173, NV:0.0060, NH:0.0218,
+  NJ:0.0249, NM:0.0080, NY:0.0173, NC:0.0084, ND:0.0098,
+  OH:0.0156, OK:0.0090, OR:0.0093, PA:0.0158, RI:0.0163,
+  SC:0.0057, SD:0.0132, TN:0.0071, TX:0.0181, UT:0.0066,
+  VT:0.0190, VA:0.0082, WA:0.0098, WV:0.0058, WI:0.0185, WY:0.0061,
+};
+const DEFAULT_TAX_RATE = 0.011; // national avg, fallback when state unknown
+
+// Clean, consistent display title for a deal — replaces source-specific
+// marketing titles (InvestorLift uses emojis + ALL CAPS, propwire/seibs may
+// have their own quirks). Format: "{beds}-bed {type} in {City}, {ST}".
+function generateDealTitle({beds, type, city, state}) {
+  const t    = type || "Property";
+  const lead = beds && beds > 0 ? `${beds}-bed ${t}` : t;
+  const loc  = city ? ` in ${city}${state ? `, ${state}` : ""}` : "";
+  return `${lead}${loc}`;
+}
 
 // -- Source: Apify InvestorLift scraper ---------------------------------------
 // Returns {items, debug}. The debug field is surfaced in the /pullDealsNow
@@ -135,7 +175,14 @@ function mapApifyDeal(raw) {
     sourcedAt: raw.published_at ? String(raw.published_at).slice(0, 10) : today(),
     // Title is a marketing line ("Cleveland off-market BRRRR opportunity") —
     // the most location info available since the street address is gated.
-    address:   raw.title || `Off-market deal in ${city}`,
+    // Clean, consistent display title — we generate our own rather than
+    // surfacing InvestorLift's marketing copy (emojis, ALL CAPS).
+    address:   generateDealTitle({
+      beds:  int(raw.bedrooms),
+      type:  normalizeType(raw.property_type),
+      city,
+      state,
+    }),
     city,
     state,
     zip:       String(raw.zip || ""),
@@ -170,6 +217,208 @@ function mapApifyDeal(raw) {
     daysListed:   int(raw.days_on_il),
     hotness:      raw.hotness || null,
   };
+}
+
+// -- Source: DealHive2 (seibs.co/house-flipper-leads via Apify) ---------------
+async function pullFromSeibs(token, locations, maxPerLocation) {
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
+  const actor = "seibs.co~house-flipper-leads";
+  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        locations,
+        preset_filter:           "flipper_classic",
+        min_flip_score:          60,
+        max_results_per_location: maxPerLocation,
+      }),
+    });
+  } catch (e) {
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 400);
+    return {items: [], debug: {httpStatus: res.status, body}};
+  }
+  let parsed;
+  try { parsed = await res.json(); } catch (e) {
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
+  }
+  if (!Array.isArray(parsed)) {
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+  }
+  const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
+  const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
+  const items = parsed.map(mapSeibsDeal).filter(Boolean);
+  return {
+    items,
+    debug: {
+      httpStatus:   res.status,
+      rawCount:     parsed.length,
+      mappedCount:  items.length,
+      droppedCount: parsed.length - items.length,
+      sampleKeys, sampleValues,
+    },
+  };
+}
+
+function mapSeibsDeal(raw) {
+  const price   = parseLoose(raw.price || raw.list_price || raw.listPrice || raw.asking_price);
+  const city    = raw.city || "";
+  const state   = normalizeState(raw.state || raw.state_code || raw.state_abbreviation);
+  if (!price || !city) return null;
+
+  const photos = pickPhotos(raw);
+  const beds   = int(raw.bedrooms || raw.beds);
+  const type   = normalizeType(raw.property_type || raw.type);
+
+  return {
+    id:        "s2-" + (raw.id || raw.mls_id || raw.mlsId || hashId(`${raw.address || ""}|${city}|${state}`)),
+    source:    "DealHive2",
+    sourceUrl: null, // never link out
+    sourcedAt: today(),
+    address:   generateDealTitle({beds, type, city, state}),
+    city,
+    state,
+    zip:       String(raw.zip || raw.zipcode || raw.zip_code || ""),
+    lat:       num(raw.latitude  || raw.lat),
+    lng:       num(raw.longitude || raw.lng),
+    type,
+    beds,
+    baths:     num(raw.bathrooms || raw.baths),
+    sqft:      int(raw.sqft || raw.square_footage || raw.living_area),
+    yearBuilt: int(raw.year_built || raw.yearBuilt),
+    price,
+    repair:    int(raw.estimated_repairs || raw.repair_cost || raw.rehab_budget),
+    rent:      int(raw.rent_estimate || raw.estimated_rent),
+    arv:       int(raw.arv || raw.arv_estimate || raw.after_repair_value),
+    photo:     photos[0] || null,
+    photos,
+    seller: {
+      // house-flipper-leads are MLS/discovery leads, not contracted assignments —
+      // no wholesaler attached. Owner-of-record could be added later if exposed.
+      name: null, company: null, phone: null, email: null,
+    },
+    market:      marketIdForState(state),
+    description: raw.description ? String(raw.description).slice(0, 500) : null,
+    flipScore:   int(raw.flip_score || raw.flipScore),
+  };
+}
+
+// -- Source: DealHive 3 (crawlerbros/propwire-leads-scraper via Apify) --------
+async function pullFromPropwire(token, locations, maxItems) {
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
+  const actor = "crawlerbros~propwire-leads-scraper";
+  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
+  let res;
+  try {
+    // Best-guess input — adjust once we see the actor's schema on first run.
+    res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({locations, maxItems}),
+    });
+  } catch (e) {
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 400);
+    return {items: [], debug: {httpStatus: res.status, body}};
+  }
+  let parsed;
+  try { parsed = await res.json(); } catch (e) {
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
+  }
+  if (!Array.isArray(parsed)) {
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+  }
+  const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
+  const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
+  const items = parsed.map(mapPropwireDeal).filter(Boolean);
+  return {
+    items,
+    debug: {
+      httpStatus:   res.status,
+      rawCount:     parsed.length,
+      mappedCount:  items.length,
+      droppedCount: parsed.length - items.length,
+      sampleKeys, sampleValues,
+    },
+  };
+}
+
+function mapPropwireDeal(raw) {
+  const price = parseLoose(raw.price || raw.list_price || raw.listPrice || raw.asking_price);
+  const city  = raw.city || "";
+  const state = normalizeState(raw.state || raw.state_code || raw.state_abbreviation);
+  if (!price || !city) return null;
+
+  const photos = pickPhotos(raw);
+  const beds   = int(raw.bedrooms || raw.beds);
+  const type   = normalizeType(raw.property_type || raw.type);
+
+  return {
+    id:        "s3-" + (raw.id || raw.mls_id || raw.mlsId || hashId(`${raw.address || ""}|${city}|${state}`)),
+    source:    "DealHive 3",
+    sourceUrl: null,
+    sourcedAt: today(),
+    address:   generateDealTitle({beds, type, city, state}),
+    city,
+    state,
+    zip:       String(raw.zip || raw.zipcode || raw.zip_code || ""),
+    lat:       num(raw.latitude  || raw.lat),
+    lng:       num(raw.longitude || raw.lng),
+    type,
+    beds,
+    baths:     num(raw.bathrooms || raw.baths),
+    sqft:      int(raw.sqft || raw.square_footage || raw.living_area),
+    yearBuilt: int(raw.year_built || raw.yearBuilt),
+    price,
+    repair:    int(raw.estimated_repairs || raw.repair_cost || raw.rehab_budget),
+    rent:      int(raw.rent_estimate || raw.estimated_rent),
+    arv:       int(raw.arv || raw.arv_estimate || raw.after_repair_value),
+    photo:     photos[0] || null,
+    photos,
+    seller: {
+      name:    raw.owner_name || raw.contact_name || null,
+      company: raw.owner_company || null,
+      phone:   raw.owner_phone || raw.contact_phone || null,
+      email:   raw.owner_email || raw.contact_email || null,
+    },
+    market:      marketIdForState(state),
+    description: raw.description ? String(raw.description).slice(0, 500) : null,
+  };
+}
+
+// Shared photo-extraction across the new sources (schemas vary; try common shapes).
+function pickPhotos(raw) {
+  if (Array.isArray(raw.photos))      return raw.photos.map(photoUrl).filter(Boolean);
+  if (Array.isArray(raw.images))      return raw.images.map(photoUrl).filter(Boolean);
+  if (Array.isArray(raw.image_urls))  return raw.image_urls.filter(Boolean);
+  const single = raw.photo_url || raw.image_url || raw.img_url || raw.thumbnail || null;
+  return single ? [single] : [];
+}
+function photoUrl(p) { return typeof p === "string" ? p : (p && (p.url || p.src || p.href)) || null; }
+
+// Strip values to a safe slice (first ~10 fields, truncated strings) for the
+// debug payload — enough to debug schema/coercion without leaking large blobs.
+function sampleValuePeek(obj) {
+  const out = {};
+  let n = 0;
+  for (const k of Object.keys(obj)) {
+    if (n++ >= 12) break;
+    const v = obj[k];
+    if (v == null) { out[k] = v; continue; }
+    if (typeof v === "string") out[k] = v.slice(0, 80);
+    else if (typeof v === "number" || typeof v === "boolean") out[k] = v;
+    else if (Array.isArray(v)) out[k] = `Array(${v.length})`;
+    else out[k] = `Object(${Object.keys(v).slice(0,3).join(",")}...)`;
+    out[k + "_type"] = typeof v;
+  }
+  return out;
 }
 
 // -- Source: RentCast public listings -----------------------------------------
@@ -238,31 +487,44 @@ function isResidential(deal) { return RESIDENTIAL_TYPES.has(deal.type); }
 // function has no client deps. Both must stay in sync; if you tune one, tune
 // the other (or extract to a shared package later).
 function classifyDeal(deal) {
-  // For listings missing a rent estimate (RentCast active-listings feed doesn't
-  // include one), fall back to the "1% rule" — monthly rent ~= 1% of price.
-  // It's a conservative proxy; users see the real number after running comps
-  // in the analyzer. Without this fallback, cap rate divides by zero and every
-  // RentCast listing fails the buyhold filter.
-  const rent       = deal.rent && deal.rent > 0 ? deal.rent : Math.round((deal.price || 0) * 0.01);
-  const monthlyTax = Math.round((deal.price * 0.0233) / 12);
+  // Rent estimate — prefer real value, else 1% rule capped at $2,200 to avoid
+  // optimistic numbers on expensive properties.
+  const rent       = deal.rent && deal.rent > 0
+    ? deal.rent
+    : Math.min(2200, Math.round((deal.price || 0) * 0.01));
+  // ARV — prefer scraped value, else 30% margin over asking.
+  const arv        = deal.arv && deal.arv > 0 ? deal.arv : Math.round((deal.price || 0) * 1.30);
+  // Repair budget — wholesale deals need work. If the source doesn't tell us
+  // anything, assume 15% of ARV (standard for a "B" rehab).
+  const repair     = deal.repair && deal.repair > 0 ? deal.repair : Math.round(arv * 0.15);
+
+  // State-specific effective property tax. Was Ohio's 2.33% on every deal.
+  const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
+  const monthlyTax = Math.round((deal.price * taxRate) / 12);
+
+  // Buy-and-hold pro forma — 80% LTV @ 7.5% over 30 yrs, real expenses.
   const PI         = monthlyPI(deal.price * 0.8, 7.5);
-  const exp        = monthlyTax + 100 + Math.round(rent * 0.08);
-  const effRent    = rent * 0.95;
+  const exp        = monthlyTax + 100 /* insurance */ + Math.round(rent * 0.08) /* 8% PM */;
+  const effRent    = rent * 0.95; // 5% vacancy
   const finCF      = effRent - exp - PI;
   const noi        = (effRent - exp) * 12;
   const finCap     = deal.price > 0 ? (noi / deal.price) * 100 : 0;
 
-  const arv        = deal.arv || Math.round(deal.price * 1.35);
-  const totalIn    = (deal.price || 0) + (deal.repair || 0);
-  const flipProfit = Math.round(arv - totalIn - arv * 0.06 - arv * 0.02 - 6 * 600);
-  const flipROI    = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
+  // Fix-and-flip — ARV less total-in, 6% agent + 2% closing on the sale, plus
+  // 6 months of holding (taxes + insurance + utilities).
+  const totalIn      = (deal.price || 0) + repair;
+  const sellingCosts = arv * 0.08;
+  const holdingCost  = 6 * (monthlyTax + 500 /* ins + utilities + misc */);
+  const flipProfit   = Math.round(arv - totalIn - sellingCosts - holdingCost);
+  const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
-  // Thresholds tuned for cash-flow markets (Cleveland / Detroit / Memphis / etc.)
-  // where median wholesale prices sit at $40-100k. Earlier $20k flip-profit gate
-  // filtered out the entire feed.
+  // Tighter gates — users complained about $30/mo cash-flow deals making the
+  // list. We're selling these leads, so only "good" passes.
+  //   Buy-and-hold: cap >= 8% AND >= $200/mo cash flow
+  //   Fix-and-flip: ROI >= 18% AND >= $25k profit
   const tags = [];
-  if (finCap >= 6   && finCF      > 0)      tags.push("buyhold");
-  if (flipROI >= 12 && flipProfit >= 10000) tags.push("flip");
+  if (finCap >= 8   && finCF      >= 200)   tags.push("buyhold");
+  if (flipROI >= 18 && flipProfit >= 25000) tags.push("flip");
   return tags;
 }
 
@@ -342,29 +604,64 @@ function hashId(s) {
 // surfaces generic public listings with no photos, which dilutes the Deals
 // page. Sticking to the exclusive InvestorLift Network feed only.
 async function runPipeline(apifyKey, _rentcastKey) {
-  const sources = {investorlift: 0};
-  const errors  = {investorlift: false};
+  const sources = {investorlift: 0, dealhive2: 0, dealhive3: 0};
+  const errors  = {investorlift: false, dealhive2: false, dealhive3: false};
   const debug   = {};
   const raw     = [];
 
-  // Apify InvestorLift — single source for now. pullFromApify returns its
-  // own debug payload (http status, raw count, sample values) so the
-  // /pullDealsNow response can carry it back without needing log spelunking.
+  // 1. Apify InvestorLift. Each source has its own try/catch so one bad
+  // scraper can't take the rest of the pipeline down.
   if (apifyKey) {
     try {
-      const {items, debug: apifyDebug} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
+      const {items, debug: d} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
       sources.investorlift = items.length;
       raw.push(...items);
-      debug.apify = apifyDebug;
-      logger.info(`Apify: ${apifyDebug.rawCount || 0} raw, ${items.length} mapped`, apifyDebug);
+      debug.apify = d;
+      logger.info(`Apify InvestorLift: ${d.rawCount || 0} raw, ${items.length} mapped`, d);
     } catch (e) {
       errors.investorlift = true;
       debug.apify = {error: e.message};
-      logger.error("Apify pull failed", {error: e.message});
+      logger.error("Apify InvestorLift pull failed", {error: e.message});
     }
   } else {
     errors.investorlift = true;
     debug.apify = {error: "APIFY_API_KEY not set"};
+  }
+
+  // 2. DealHive2 — seibs.co/house-flipper-leads via Apify.
+  if (apifyKey) {
+    try {
+      const {items, debug: d} = await pullFromSeibs(apifyKey, SEIBS_LOCATIONS, SEIBS_PER_LOCATION);
+      sources.dealhive2 = items.length;
+      raw.push(...items);
+      debug.seibs = d;
+      logger.info(`Apify seibs (DealHive2): ${d.rawCount || 0} raw, ${items.length} mapped`, d);
+    } catch (e) {
+      errors.dealhive2 = true;
+      debug.seibs = {error: e.message};
+      logger.error("Apify seibs (DealHive2) pull failed", {error: e.message});
+    }
+  } else {
+    errors.dealhive2 = true;
+    debug.seibs = {error: "APIFY_API_KEY not set"};
+  }
+
+  // 3. DealHive 3 — crawlerbros/propwire-leads-scraper via Apify.
+  if (apifyKey) {
+    try {
+      const {items, debug: d} = await pullFromPropwire(apifyKey, SEIBS_LOCATIONS, PROPWIRE_MAX);
+      sources.dealhive3 = items.length;
+      raw.push(...items);
+      debug.propwire = d;
+      logger.info(`Apify propwire (DealHive 3): ${d.rawCount || 0} raw, ${items.length} mapped`, d);
+    } catch (e) {
+      errors.dealhive3 = true;
+      debug.propwire = {error: e.message};
+      logger.error("Apify propwire (DealHive 3) pull failed", {error: e.message});
+    }
+  } else {
+    errors.dealhive3 = true;
+    debug.propwire = {error: "APIFY_API_KEY not set"};
   }
 
   // 3. Filter to residential + only deals that score on at least one strategy.
