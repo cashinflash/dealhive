@@ -232,10 +232,11 @@ async function pullFromSeibs(token, locations, maxPerLocation) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         locations,
-        // Valid presets per the actor schema: conservative_flipper |
-        // aggressive_flipper | brrrr_investor | wholesaler. "wholesaler"
-        // best matches the deal feed's positioning.
-        preset_filter:           "wholesaler",
+        // Valid presets: conservative_flipper | aggressive_flipper |
+        // brrrr_investor | wholesaler. "wholesaler" returned 0 rows in
+        // testing (too narrow for MLS-listed inventory); aggressive_flipper
+        // pulls properties that match flip criteria more broadly.
+        preset_filter:           "aggressive_flipper",
         min_flip_score:          "60",
         max_results_per_location: maxPerLocation,
       }),
