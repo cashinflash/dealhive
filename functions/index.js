@@ -232,12 +232,13 @@ async function pullFromSeibs(token, locations, maxPerLocation) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         locations,
-        // Valid presets: conservative_flipper | aggressive_flipper |
-        // brrrr_investor | wholesaler. "wholesaler" returned 0 rows in
-        // testing (too narrow for MLS-listed inventory); aggressive_flipper
-        // pulls properties that match flip criteria more broadly.
-        preset_filter:           "aggressive_flipper",
-        min_flip_score:          "60",
+        // No preset + relaxed score → widest net. With preset_filter set
+        // (even "aggressive_flipper") and min_flip_score: "60", the actor
+        // found 0 matches across all 7 markets. We rely on our own
+        // classifyDeal to drop bad deals downstream rather than asking the
+        // actor to pre-filter aggressively.
+        preset_filter:           "",
+        min_flip_score:          "40",
         max_results_per_location: maxPerLocation,
       }),
     });
