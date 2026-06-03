@@ -100,7 +100,7 @@ function generateDealTitle({beds, type, city, state}) {
 async function pullFromApify(token, maxItems) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
   const actor = "corent1robert~investorlift-scraper";
-  const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
+  const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
   try {
     res = await fetch(url, {
@@ -223,7 +223,7 @@ function mapApifyDeal(raw) {
 async function pullFromSeibs(token, locations, maxPerLocation) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
   const actor = "seibs.co~house-flipper-leads";
-  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
+  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
   try {
     res = await fetch(url, {
@@ -232,7 +232,7 @@ async function pullFromSeibs(token, locations, maxPerLocation) {
       body: JSON.stringify({
         locations,
         preset_filter:           "flipper_classic",
-        min_flip_score:          60,
+        min_flip_score:          "60",
         max_results_per_location: maxPerLocation,
       }),
     });
@@ -312,7 +312,7 @@ function mapSeibsDeal(raw) {
 async function pullFromPropwire(token, locations, maxItems) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
   const actor = "crawlerbros~propwire-leads-scraper";
-  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`;
+  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
   try {
     // Best-guess input — adjust once we see the actor's schema on first run.
