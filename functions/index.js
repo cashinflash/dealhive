@@ -52,7 +52,7 @@ const RESIDENTIAL_TYPES = new Set([
 //   DealHive 3 (propwire):  100 raw / day
 // Both override-able via env vars for live tuning without redeploy.
 const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
-const MOVOTO_PER_LOCATION = parseInt(process.env.MOVOTO_PER_LOCATION || "25", 10);
+const REALTOR_PER_LOCATION = parseInt(process.env.REALTOR_PER_LOCATION || "25", 10);
 const PROPWIRE_MAX      = parseInt(process.env.PROPWIRE_MAX      || "100", 10);
 
 // Locations the seibs.co actor scans (it requires explicit "City, State" strings).
@@ -220,14 +220,14 @@ function mapApifyDeal(raw) {
   };
 }
 
-// -- Source: DealHive 2 (jupri/movoto via Apify) ------------------------------
-// Movoto-style site scrapers typically accept either a list of search URLs or
-// city/state strings. We send `locations` as our best guess; the debug payload
-// (sampleKeys + sampleValues + httpStatus body) on the first run will tell us
-// if we need a different input shape.
-async function pullFromMovoto(token, locations, maxPerLocation) {
+// -- Source: DealHive 2 (coder_luffy/realtor-scraper via Apify) ----------------
+// Realtor.com scrapers commonly take a list of "City, State" search terms or
+// search URLs. We send `locations` as the first guess; the debug payload
+// (sampleKeys + sampleValues + httpStatus body) on the first run tells us
+// the actual input shape so we can refine.
+async function pullFromRealtor(token, locations, maxPerLocation) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "jupri~movoto";
+  const actor = "coder_luffy~realtor-scraper";
   const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
   try {
@@ -256,7 +256,7 @@ async function pullFromMovoto(token, locations, maxPerLocation) {
   }
   const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
   const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
-  const items = parsed.map(mapMovotoDeal).filter(Boolean);
+  const items = parsed.map(mapRealtorDeal).filter(Boolean);
   return {
     items,
     debug: {
@@ -270,11 +270,12 @@ async function pullFromMovoto(token, locations, maxPerLocation) {
   };
 }
 
-function mapMovotoDeal(raw) {
-  // Movoto scrapers typically expose MLS listing fields (list_price, address,
-  // beds, baths, sqft, photos). We try common shapes; once we see the first
-  // real response we can lock the mapper to the actual field names.
-  const price = parseLoose(raw.price || raw.list_price || raw.listPrice || raw.askingPrice);
+function mapRealtorDeal(raw) {
+  // Realtor.com MLS feeds usually expose list_price, address, city/state/zip,
+  // beds/baths, sqft, year_built, photos[], listing/MLS IDs. Defensive over
+  // common field-name variants — first response will tell us what's actually
+  // there so we can lock the mapper down.
+  const price = parseLoose(raw.list_price || raw.listPrice || raw.price || raw.askingPrice);
   const city  = raw.city || "";
   const state = normalizeState(raw.state || raw.state_code || raw.state_abbreviation);
   if (!price || !city) return null;
@@ -282,11 +283,11 @@ function mapMovotoDeal(raw) {
   const photos = pickPhotos(raw);
   const beds   = int(raw.bedrooms || raw.beds);
   const type   = normalizeType(raw.property_type || raw.propertyType || raw.type);
-  const streetAddress = raw.address || raw.street_address || raw.formatted_address || null;
+  const streetAddress = raw.address || raw.street_address || raw.formatted_address || raw.line || null;
 
   return {
-    id:        "m2-" + (raw.id || raw.mls_id || raw.mlsId || raw.listing_id || hashId(`${streetAddress || ""}|${city}|${state}`)),
-    source:    "DealHive 2", // jupri/movoto via Apify
+    id:        "r2-" + (raw.listing_id || raw.mls_id || raw.id || raw.property_id || hashId(`${streetAddress || ""}|${city}|${state}`)),
+    source:    "DealHive 2", // coder_luffy/realtor-scraper via Apify
     sourceUrl: null, // never link out
     sourcedAt: today(),
     address:       generateDealTitle({beds, type, city, state}),
@@ -299,22 +300,21 @@ function mapMovotoDeal(raw) {
     type,
     beds,
     baths:     num(raw.bathrooms || raw.baths),
-    sqft:      int(raw.sqft || raw.square_footage || raw.livingArea || raw.living_area),
+    sqft:      int(raw.sqft || raw.square_footage || raw.livingArea || raw.living_area || raw.building_size),
     yearBuilt: int(raw.year_built || raw.yearBuilt),
     price,
-    repair:    0, // movoto listings are retail; classifyDeal applies the 15%-of-ARV default
+    repair:    0, // retail MLS listings; classifyDeal applies the 15%-of-ARV default
     rent:      int(raw.rent_estimate || raw.estimated_rent),
-    arv:       int(raw.arv || raw.arv_estimate || raw.estimated_value || raw.zestimate),
+    arv:       int(raw.arv || raw.estimated_value || raw.zestimate),
     photo:     photos[0] || null,
     photos,
     seller: {
-      // Movoto listings sometimes carry the listing agent. Surface that for
-      // Pro members if it's there; phone/email rarely come through on these
-      // scrapers though.
-      name:    raw.agent_name || raw.listing_agent || raw.agentName || null,
-      company: raw.brokerage   || raw.broker_name  || raw.brokerName || null,
-      phone:   raw.agent_phone || raw.agentPhone   || null,
-      email:   raw.agent_email || raw.agentEmail   || null,
+      // Realtor.com listings often carry the listing agent + brokerage. Surface
+      // them for Pro members if present.
+      name:    raw.agent_name   || raw.listing_agent || raw.agentName    || null,
+      company: raw.brokerage    || raw.broker_name   || raw.brokerName   || raw.office_name || null,
+      phone:   raw.agent_phone  || raw.agentPhone    || raw.office_phone || null,
+      email:   raw.agent_email  || raw.agentEmail    || null,
     },
     market:      marketIdForState(state),
     description: raw.description ? String(raw.description).slice(0, 500) : null,
@@ -655,7 +655,7 @@ async function runPipeline(apifyKey, _rentcastKey) {
   // under Apify's 8GB account ceiling.
   if (!apifyKey) {
     errors.investorlift = errors.dealhive2 = errors.dealhive3 = true;
-    debug.apify = debug.movoto = debug.propwire = {error: "APIFY_API_KEY not set"};
+    debug.apify = debug.realtor = debug.propwire = {error: "APIFY_API_KEY not set"};
   } else {
     const sourceTasks = [
       {
@@ -666,9 +666,9 @@ async function runPipeline(apifyKey, _rentcastKey) {
       },
       {
         name:     "dealhive2",
-        debugKey: "movoto",
-        label:    "Movoto (DealHive 2)",
-        run:      () => pullFromMovoto(apifyKey, DEAL_LOCATIONS, MOVOTO_PER_LOCATION),
+        debugKey: "realtor",
+        label:    "Realtor (DealHive 2)",
+        run:      () => pullFromRealtor(apifyKey, DEAL_LOCATIONS, REALTOR_PER_LOCATION),
       },
       {
         name:     "dealhive3",
