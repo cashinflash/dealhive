@@ -4447,12 +4447,11 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
     if (!key) return;
     marketCountsByState.set(key, (marketCountsByState.get(key) || 0) + 1);
   });
+  // Just state codes — no city, no count. Sorted alphabetically so the user
+  // sees a predictable A→Z list rather than the volume-rank shuffle.
   const availableMarkets = [...marketCountsByState.entries()]
-    .map(([state, count]) => {
-      const curated = DEAL_MARKETS.find(m => m.label.endsWith(", " + state));
-      return {id: state, label: curated ? curated.label : state, count};
-    })
-    .sort((a, b) => b.count - a.count);
+    .map(([state, count]) => ({id: state, label: state, count}))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   const filtered = classified.filter(({d, c}) => {
     if (market !== "all" && (d.state || "").toUpperCase() !== market) return false;
@@ -4551,9 +4550,9 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
         {/* Market dropdown — dynamic from actual deal states (InvestorLift goes nationwide). */}
         <select value={market} onChange={e => setMarket(e.target.value)}
           style={{...iS(mobile), maxWidth: mobile ? "100%" : 220, paddingRight:38}}>
-          <option value="all">All markets</option>
+          <option value="all">All states</option>
           {availableMarkets.map(m => (
-            <option key={m.id} value={m.id}>{m.label} ({m.count})</option>
+            <option key={m.id} value={m.id}>{m.label}</option>
           ))}
         </select>
 
@@ -4652,13 +4651,17 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial}) {
+function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial, onBackToDeals}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
   const [d, setD]       = useState(() => initial ? {...newDeal(), ...initial} : newDeal());
   const [loading, setL] = useState(false);
   const [err, setErr]   = useState("");
+  // Capture "came from Deals" at mount time. We use this to decide whether to
+  // show the "Back to deals" button — after onConsumeInitial fires, `initial`
+  // becomes null and we'd lose the signal otherwise.
+  const [fromDeals]     = useState(() => !!initial);
   const u = (f,v) => setD(prev => ({...prev, [f]:v}));
 
   useEffect(() => {
@@ -4694,6 +4697,11 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      {fromDeals && onBackToDeals && (
+        <button onClick={onBackToDeals} {...btnStyle("ghost","sm", {marginBottom:14, color:C.textSub, padding:"6px 10px"})}>
+          <I.arrowLeft size={14}/> Back to deals
+        </button>
+      )}
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
         action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
@@ -6051,6 +6059,7 @@ export default function App() {
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
+    onBackToDeals:    () => setPage("deals"),
     ...sharedProps,
   };
 
