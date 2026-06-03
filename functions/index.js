@@ -98,7 +98,7 @@ function generateDealTitle({beds, type, city, state}) {
 // response so we can diagnose schema/auth/empty-result issues without
 // crawling Cloud Logging.
 async function pullFromApify(token, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
   const actor = "corent1robert~investorlift-scraper";
   const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
@@ -109,18 +109,18 @@ async function pullFromApify(token, maxItems) {
       body: JSON.stringify({maxItems, enrichWithDetails: true, dealIds: []}),
     });
   } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
   }
   if (!res.ok) {
     const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}};
+    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
   }
   let parsed;
   try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
   }
   if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
   }
   const rawCount = parsed.length;
   // Capture the shape of the first item — field names only, no values, so we
@@ -149,6 +149,7 @@ async function pullFromApify(token, maxItems) {
         bedroomsType:  typeof parsed[0].bedrooms,
       } : null,
     },
+    ok: true,
   };
 }
 
@@ -221,7 +222,7 @@ function mapApifyDeal(raw) {
 
 // -- Source: DealHive2 (seibs.co/house-flipper-leads via Apify) ---------------
 async function pullFromSeibs(token, locations, maxPerLocation) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
   const actor = "seibs.co~house-flipper-leads";
   const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
@@ -237,18 +238,18 @@ async function pullFromSeibs(token, locations, maxPerLocation) {
       }),
     });
   } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
   }
   if (!res.ok) {
     const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}};
+    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
   }
   let parsed;
   try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
   }
   if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
   }
   const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
   const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
@@ -262,6 +263,7 @@ async function pullFromSeibs(token, locations, maxPerLocation) {
       droppedCount: parsed.length - items.length,
       sampleKeys, sampleValues,
     },
+    ok: true,
   };
 }
 
@@ -310,7 +312,7 @@ function mapSeibsDeal(raw) {
 
 // -- Source: DealHive 3 (crawlerbros/propwire-leads-scraper via Apify) --------
 async function pullFromPropwire(token, locations, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}};
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
   const actor = "crawlerbros~propwire-leads-scraper";
   const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
   let res;
@@ -322,18 +324,18 @@ async function pullFromPropwire(token, locations, maxItems) {
       body: JSON.stringify({locations, maxItems}),
     });
   } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}};
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
   }
   if (!res.ok) {
     const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}};
+    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
   }
   let parsed;
   try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}};
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
   }
   if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}};
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
   }
   const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
   const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
@@ -347,6 +349,7 @@ async function pullFromPropwire(token, locations, maxItems) {
       droppedCount: parsed.length - items.length,
       sampleKeys, sampleValues,
     },
+    ok: true,
   };
 }
 
@@ -610,14 +613,18 @@ async function runPipeline(apifyKey, _rentcastKey) {
   const raw     = [];
 
   // 1. Apify InvestorLift. Each source has its own try/catch so one bad
-  // scraper can't take the rest of the pipeline down.
+  // scraper can't take the rest of the pipeline down. We also explicitly
+  // mark the source as errored when the pull function returns ok:false —
+  // otherwise a 4xx HTTP response would look like "succeeded with 0 items"
+  // and trip the pipeline into writing an empty /deals (wiping yesterday's).
   if (apifyKey) {
     try {
-      const {items, debug: d} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
+      const {items, debug: d, ok} = await pullFromApify(apifyKey, INVESTORLIFT_MAX);
       sources.investorlift = items.length;
       raw.push(...items);
       debug.apify = d;
-      logger.info(`Apify InvestorLift: ${d.rawCount || 0} raw, ${items.length} mapped`, d);
+      if (!ok) errors.investorlift = true;
+      logger.info(`Apify InvestorLift: ${d.rawCount || 0} raw, ${items.length} mapped, ok=${ok}`, d);
     } catch (e) {
       errors.investorlift = true;
       debug.apify = {error: e.message};
@@ -631,11 +638,12 @@ async function runPipeline(apifyKey, _rentcastKey) {
   // 2. DealHive2 — seibs.co/house-flipper-leads via Apify.
   if (apifyKey) {
     try {
-      const {items, debug: d} = await pullFromSeibs(apifyKey, SEIBS_LOCATIONS, SEIBS_PER_LOCATION);
+      const {items, debug: d, ok} = await pullFromSeibs(apifyKey, SEIBS_LOCATIONS, SEIBS_PER_LOCATION);
       sources.dealhive2 = items.length;
       raw.push(...items);
       debug.seibs = d;
-      logger.info(`Apify seibs (DealHive2): ${d.rawCount || 0} raw, ${items.length} mapped`, d);
+      if (!ok) errors.dealhive2 = true;
+      logger.info(`Apify seibs (DealHive2): ${d.rawCount || 0} raw, ${items.length} mapped, ok=${ok}`, d);
     } catch (e) {
       errors.dealhive2 = true;
       debug.seibs = {error: e.message};
@@ -649,11 +657,12 @@ async function runPipeline(apifyKey, _rentcastKey) {
   // 3. DealHive 3 — crawlerbros/propwire-leads-scraper via Apify.
   if (apifyKey) {
     try {
-      const {items, debug: d} = await pullFromPropwire(apifyKey, SEIBS_LOCATIONS, PROPWIRE_MAX);
+      const {items, debug: d, ok} = await pullFromPropwire(apifyKey, SEIBS_LOCATIONS, PROPWIRE_MAX);
       sources.dealhive3 = items.length;
       raw.push(...items);
       debug.propwire = d;
-      logger.info(`Apify propwire (DealHive 3): ${d.rawCount || 0} raw, ${items.length} mapped`, d);
+      if (!ok) errors.dealhive3 = true;
+      logger.info(`Apify propwire (DealHive 3): ${d.rawCount || 0} raw, ${items.length} mapped, ok=${ok}`, d);
     } catch (e) {
       errors.dealhive3 = true;
       debug.propwire = {error: e.message};
