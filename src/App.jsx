@@ -3744,32 +3744,42 @@ const classifyDeal = (deal) => {
 };
 
 // Convert a curated deal record into the shape DealAnalyzer/portfolio expects.
-const dealToProForma = (deal) => ({
-  ...newDeal(),
-  address:      deal.address,
-  city:         deal.city,
-  state:        deal.state,
-  zip:          deal.zip,
-  lat:          deal.lat,
-  lng:          deal.lng,
-  fullAddress:  `${deal.address}, ${deal.city}, ${deal.state} ${deal.zip}`,
-  type:         deal.type || "Single Family",
-  beds:         deal.beds || 0,
-  baths:        deal.baths || 0,
-  sqft:         deal.sqft || 0,
-  yearBuilt:    deal.yearBuilt || 0,
-  purchasePrice: deal.price || 0,
-  repairCosts:   deal.repair || 0,
-  rentAmount:    deal.rent || 0,
-  rentEstimate:  deal.rent || 0,
-  homeValueMedian: deal.arv || Math.round((deal.price||0) * 1.3),
-  homeValueHigh:   deal.arv || Math.round((deal.price||0) * 1.35),
-  homeValueLow:    Math.round((deal.arv || deal.price * 1.3) * 0.9),
-  flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
-  expPropTax:      Math.round((deal.price || 0) * 0.0233 / 12),
-  expInsurance:    100,
-  expManagement:   Math.round((deal.rent || 0) * 0.08),
-});
+const dealToProForma = (deal) => {
+  // Prefer the real street address when the source has one (propwire, seibs).
+  // Falls back to the generated title when not — InvestorLift hides street
+  // addresses, so we get e.g. "5-bed Single Family in Fort Worth, TX".
+  const addressForAnalyzer = deal.streetAddress || deal.address;
+  return {
+    ...newDeal(),
+    address:      addressForAnalyzer,
+    city:         deal.city,
+    state:        deal.state,
+    zip:          deal.zip,
+    lat:          deal.lat,
+    lng:          deal.lng,
+    fullAddress:  `${addressForAnalyzer}, ${deal.city}, ${deal.state} ${deal.zip}`.trim(),
+    type:         deal.type || "Single Family",
+    beds:         deal.beds || 0,
+    baths:        deal.baths || 0,
+    sqft:         deal.sqft || 0,
+    yearBuilt:    deal.yearBuilt || 0,
+    purchasePrice: deal.price || 0,
+    repairCosts:   deal.repair || 0,
+    rentAmount:    deal.rent || 0,
+    rentEstimate:  deal.rent || 0,
+    homeValueMedian: deal.arv || Math.round((deal.price||0) * 1.3),
+    homeValueHigh:   deal.arv || Math.round((deal.price||0) * 1.35),
+    homeValueLow:    Math.round((deal.arv || deal.price * 1.3) * 0.9),
+    flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
+    expPropTax:      Math.round((deal.price || 0) * 0.0233 / 12),
+    expInsurance:    100,
+    expManagement:   Math.round((deal.rent || 0) * 0.08),
+    // Photos the analyzer should display in its own carousel.
+    photos:          (Array.isArray(deal.photos) && deal.photos.length > 0)
+                       ? deal.photos
+                       : (deal.photo ? [deal.photo] : []),
+  };
+};
 
 // Sample deals — Phase 0 placeholder until the listings pipeline lands.
 // Real lat/lng so Street View renders authentically per card.
@@ -4698,7 +4708,19 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
             placeholder="Start typing an address…"
             mobile={mobile} />
         </div>
-        <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={180} />
+        {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
+            show that deal's photo carousel. Otherwise (custom address search)
+            fall back to a Street View image. */}
+        {Array.isArray(d.photos) && d.photos.length > 0 ? (
+          <div style={{borderRadius:C.r4, overflow:"hidden", marginBottom:16,
+            border:"1px solid "+C.border, boxShadow:C.sh1}}>
+            <PhotoCarousel photos={d.photos}
+              fallbackLat={d.lat} fallbackLng={d.lng}
+              height={mobile ? 220 : 280} mobile={mobile} />
+          </div>
+        ) : (
+          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={180} />
+        )}
         {d.city && (
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:6}}>
             {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (

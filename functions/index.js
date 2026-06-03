@@ -170,7 +170,7 @@ function mapApifyDeal(raw) {
 
   return {
     id:        "il-" + (raw.id || hashId(`${raw.title || ""}|${city}|${raw.zip || ""}`)),
-    source:    "DealHive Network", // do NOT surface "InvestorLift" on public cards
+    source:    "DealHive 1", // InvestorLift via Apify (corent1robert~investorlift-scraper)
     sourceUrl: raw.property_page_url || null,
     // `published_at` is ISO ("2026-05-26T12:34:56Z") — slice to date for display.
     sourcedAt: raw.published_at ? String(raw.published_at).slice(0, 10) : today(),
@@ -284,10 +284,13 @@ function mapSeibsDeal(raw) {
 
   return {
     id:        "s2-" + (raw.id || raw.mls_id || raw.mlsId || hashId(`${raw.address || ""}|${city}|${state}`)),
-    source:    "DealHive2",
+    source:    "DealHive 2", // seibs.co/house-flipper-leads via Apify
     sourceUrl: null, // never link out
     sourcedAt: today(),
-    address:   generateDealTitle({beds, type, city, state}),
+    // `address` is the clean display title; `streetAddress` is the real
+    // physical address used to prefill the Deal Analyzer.
+    address:       generateDealTitle({beds, type, city, state}),
+    streetAddress: raw.address || raw.street_address || raw.formatted_address || null,
     city,
     state,
     zip:       String(raw.zip || raw.zipcode || raw.zip_code || ""),
@@ -388,10 +391,13 @@ function mapPropwireDeal(raw) {
 
   return {
     id:        "s3-" + (raw.id || hashId(`${raw.address || ""}|${city}|${state}`)),
-    source:    "DealHive 3",
+    source:    "DealHive 3", // propwire via Apify (crawlerbros~propwire-leads-scraper)
     sourceUrl: null,
     sourcedAt: today(),
-    address:   generateDealTitle({beds, type, city, state}),
+    // `address` is the clean display title; `streetAddress` is the real
+    // physical address used to prefill the Deal Analyzer.
+    address:       generateDealTitle({beds, type, city, state}),
+    streetAddress: raw.address || null,
     city,
     state,
     zip:       String(raw.zip || ""),
