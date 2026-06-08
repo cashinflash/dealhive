@@ -131,6 +131,13 @@ const SEED = {
   rentcastKey:"", llcs:["My LLC"], deals:[], auctions:[],
   renoRates:{light:7, medium:13, full:45}, properties:[],
   tier:"free",
+  // "user" (default) hides the portfolio/property-management features and
+  // shows the Saved Deals dashboard. "admin" exposes the full app — set on
+  // the account by writing role:"admin" to /users/{uid}/data in Firebase.
+  role:"user",
+  // Deals the member has saved from the Deals page (non-admin users) —
+  // surfaced on their Dashboard as their personal watchlist.
+  savedDeals:[],
 };
 
 // -- Finance -------------------------------------------------------------------
@@ -3841,7 +3848,8 @@ const STRATEGY_LABELS = {
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
 };
 
-function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile}) {
+function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
+                    saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio"}) {
   const c = classifyDeal(deal);
   if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
 
@@ -3995,8 +4003,8 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile}) {
             {isPro ? <><I.search size={13}/> Analyze</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
           </button>
           {isPro && (
-            <button onClick={onSecondaryClick} {...btnStyle("secondary","md")} aria-label="Save to portfolio">
-              <I.plus size={13}/> Save
+            <button onClick={onSecondaryClick} {...btnStyle("secondary","md")} aria-label={saveAriaLabel}>
+              {saveIcon || <I.plus size={13}/>} {saveLabel}
             </button>
           )}
         </div>
@@ -4388,6 +4396,90 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Dashboard for regular members (non-admin) — replaces the portfolio dashboard.
+// Shows the member's saved deals as a watchlist with the same card/modal as
+// the Deals page, but the secondary action is "Remove" instead of "Save".
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, mobile}) {
+  const isPro  = tier === "pro";
+  const isWide = useIsWide();
+  const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  if (savedDeals.length === 0) {
+    return (
+      <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
+        <PageHeader title="My Saved Deals"
+          subtitle="Track deals you're interested in. Save any deal from the Deals page and it'll land here."/>
+        <EmptyState
+          icon={<I.star size={22}/>}
+          title="Your watchlist is empty"
+          body="Browse the Deals page, tap Save on any deal that looks good, and it'll show up here."
+          action={
+            <button onClick={onBrowse} {...btnStyle("primary","md")}>
+              <I.star size={13}/> Browse deals
+            </button>
+          }
+        />
+      </div>
+    );
+  }
+
+  // Newest-saved first.
+  const ordered = [...savedDeals].sort((a, b) =>
+    (b.savedAt || "").localeCompare(a.savedAt || "")
+  );
+
+  return (
+    <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+        gap:16, flexWrap:"wrap", marginBottom:20}}>
+        <div style={{minWidth:0}}>
+          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            My Saved Deals
+          </h1>
+          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
+            {ordered.length} deal{ordered.length===1?"":"s"} in your watchlist
+          </p>
+        </div>
+        <button onClick={onBrowse} {...btnStyle("secondary","md")}>
+          <I.star size={13}/> Browse more deals
+        </button>
+      </div>
+
+      <div style={{display:"grid",
+        gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
+        gap:16}}>
+        {ordered.map(d => (
+          <DealCard key={d.id} deal={d} isPro={isPro}
+            onAnalyze={() => onAnalyze(d)}
+            onSave={() => onRemove(d)}
+            saveLabel="Remove"
+            saveIcon={<I.trash size={13}/>}
+            saveAriaLabel="Remove from saved deals"
+            onUpgrade={onUpgrade}
+            onOpen={() => setSelectedId(d.id)}
+            mobile={mobile} />
+        ))}
+      </div>
+
+      {selectedId && (() => {
+        const d = ordered.find(x => x.id === selectedId);
+        if (!d) return null;
+        return (
+          <DealDetailModal
+            deal={d} isPro={isPro}
+            onClose={() => setSelectedId(null)}
+            onAnalyze={onAnalyze}
+            onSave={() => { onRemove(d); setSelectedId(null); }}
+            onUpgrade={onUpgrade}
+            mobile={mobile} />
+        );
+      })()}
     </div>
   );
 }
@@ -5576,17 +5668,21 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 }
 
 // -- Desktop Sidebar -----------------------------------------------------------
+// `adminOnly` items are hidden from regular members — they live behind
+// data.role === "admin". The portfolio/property-management surface (Properties,
+// Projects) is admin-only; everyone else gets a deal-finder app focused on
+// Deals, Analyzer, Comps, and a Saved Deals dashboard.
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
-  {id:"properties", Icon:I.building,       label:"Properties"},
-  {id:"projects",   Icon:I.clipboardCheck, label:"Projects"},
   {id:"deals",      Icon:I.star,           label:"Deals"},
+  {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
+  {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
   {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
   {id:"comps",      Icon:I.chart,          label:"Comps"},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
-function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
+function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
   return (
     <div style={{width:230, background:C.sidebar, height:"100vh", position:"fixed",
       left:0, top:0, display:"flex", flexDirection:"column", zIndex:100,
@@ -5595,7 +5691,7 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
         <img src="/logo.png" alt="DealHive" style={{display:"block", width:"100%", maxWidth:185, height:"auto", objectFit:"contain"}} />
       </div>
       <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
-        {NAV_ITEMS.map(item => {
+        {NAV_ITEMS.filter(item => isAdmin || !item.adminOnly).map(item => {
           const active = page===item.id;
           return (
             <button key={item.id} onClick={()=>setPage(item.id)}
@@ -5655,16 +5751,17 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail}) {
 }
 
 // -- Mobile Bottom Nav ---------------------------------------------------------
-function MobileNav({page, setPage, alertCount}) {
-  const tabs = [
+function MobileNav({page, setPage, alertCount, isAdmin}) {
+  const allTabs = [
     {id:"dashboard",  Icon:I.home,           label:"Home"},
     {id:"deals",      Icon:I.star,           label:"Deals"},
-    {id:"properties", Icon:I.building,       label:"Props"},
-    {id:"projects",   Icon:I.clipboardCheck, label:"Tasks"},
+    {id:"properties", Icon:I.building,       label:"Props",   adminOnly:true},
+    {id:"projects",   Icon:I.clipboardCheck, label:"Tasks",   adminOnly:true},
     {id:"deal",       Icon:I.search,         label:"Analyze"},
     {id:"comps",      Icon:I.chart,          label:"Comps"},
     {id:"settings",   Icon:I.settings,       label:"More"},
   ];
+  const tabs = allTabs.filter(t => isAdmin || !t.adminOnly);
   return (
     <div style={{position:"fixed", bottom:0, left:0, right:0, background:"rgba(255,255,255,.92)",
       borderTop:"1px solid "+C.border, zIndex:100,
@@ -6016,9 +6113,9 @@ export default function App() {
     setPrefilledDeal(dealToProForma(deal));
     setPage("deal");
   };
-  // Deals page → portfolio: save straight to My Properties without going
-  // through the analyzer (one-click "this is the deal, track it").
-  const saveDealFromMarket = deal => {
+  // Admin save (creates a Property in the portfolio). Regular members get
+  // saveDealToWatchlist instead, just below.
+  const saveDealToPortfolio = deal => {
     const p = newProp({
       ...dealToProForma(deal), id:"p"+Date.now(),
       projects:[], occupied:false, tenantStatus:"Vacant",
@@ -6026,6 +6123,29 @@ export default function App() {
     persist({...data, properties:[...data.properties, p]});
     setPropId(p.id); setPage("property");
     setToast("Saved to My Properties"); setTimeout(()=>setToast(""), 2000);
+  };
+  // Regular-member save: add to data.savedDeals so it shows up on their
+  // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
+  const saveDealToWatchlist = deal => {
+    const existing = data.savedDeals || [];
+    if (existing.some(d => d.id === deal.id)) {
+      setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000);
+      return;
+    }
+    const saved = {...deal, savedAt: new Date().toISOString()};
+    persist({...data, savedDeals: [...existing, saved]});
+    setToast("Saved · view on Dashboard"); setTimeout(()=>setToast(""), 2000);
+  };
+  const removeFromWatchlist = dealOrId => {
+    const id = typeof dealOrId === "string" ? dealOrId : dealOrId.id;
+    persist({...data, savedDeals: (data.savedDeals || []).filter(d => d.id !== id)});
+    setToast("Removed from saved deals"); setTimeout(()=>setToast(""), 2000);
+  };
+  // The actual save handler the Deals page calls — admin gets portfolio,
+  // everyone else gets the saved-deals watchlist.
+  const saveDealFromMarket = deal => {
+    if (isAdmin) saveDealToPortfolio(deal);
+    else         saveDealToWatchlist(deal);
   };
   // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
   // can use Pro features. When checkout lands this will redirect to Stripe and
@@ -6038,12 +6158,18 @@ export default function App() {
   const handleUpgrade   = () => setTier("pro");
   const handleDowngrade = () => setTier("free");
 
+  // Admin gate. data.role is the canonical signal (set via Firebase console
+  // to "admin" on accounts that should get the full portfolio app). The email
+  // fallback exists so the original owner account stays admin without needing
+  // a manual Firebase edit.
+  const isAdmin = (data.role === "admin") || user.email === "info@cashinflash.com";
+
   const alerts     = (data.properties||[]).filter(p => {
     const d = dU(p.leaseEnd);
     return p.tenantStatus==="Late" || (d!=null && d<=60 && d>=0);
   }).length;
   const activeProp = (data.properties||[]).find(p => p.id===propId);
-  const showProp   = !!propId && !!activeProp;
+  const showProp   = !!propId && !!activeProp && isAdmin; // never show property view to non-admins
   const effPage    = showProp ? "property" : page;
 
   const sharedProps = {
@@ -6073,10 +6199,14 @@ export default function App() {
           <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
             onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
         ) : page==="dashboard" ? (
-          <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
-        ) : page==="properties" ? (
+          isAdmin
+            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+            : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+                onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+                onRemove={removeFromWatchlist} onBrowse={()=>setPage("deals")} mobile={mobile} />
+        ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
-        ) : page==="projects" ? (
+        ) : page==="projects" && isAdmin ? (
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deals" ? (
           <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
@@ -6091,9 +6221,17 @@ export default function App() {
             onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
             onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""}
             tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
-        ) : null}
+        ) : (
+          // Fallback for non-admins who somehow land on an admin-only page —
+          // bounce them to their dashboard.
+          isAdmin
+            ? null
+            : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+                onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+                onRemove={removeFromWatchlist} onBrowse={()=>setPage("deals")} mobile={mobile} />
+        )}
       </ErrorBoundary>
-      <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} />
+      <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
       {showAdd && <AddPropertyModal llcs={data.llcs||[]} onAdd={addProp} onClose={()=>setShowAdd(false)} {...sharedProps} />}
     </div>
   );
@@ -6101,7 +6239,7 @@ export default function App() {
   // Desktop layout
   return (
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", display:"flex"}}>
-      <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} />
+      <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} isAdmin={isAdmin} />
       <div style={{marginLeft:230, flex:1, minWidth:0}}>
         <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast} />
         <TrialBanner daysLeft={daysLeft} />
