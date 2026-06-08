@@ -6162,7 +6162,7 @@ export default function App() {
   // to "admin" on accounts that should get the full portfolio app). The email
   // fallback exists so the original owner account stays admin without needing
   // a manual Firebase edit.
-  const isAdmin = (data.role === "admin") || user.email === "info@cashinflash.com";
+  const isAdmin = (data.role === "admin") || user.email === "harut@ymail.com";
 
   const alerts     = (data.properties||[]).filter(p => {
     const d = dU(p.leaseEnd);
