@@ -1587,7 +1587,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   // overwrites public-record + valuation fields, so the user's ownership,
   // lockbox, purchase price, rent, tenant, projects and expenses are kept.
   const refreshData = async () => {
-    if (!rentcastKey) { setRefreshErr("Add your RentCast API key on the Comps page first."); return; }
+    if (!rentcastKey) { setRefreshErr("Live property data is currently unavailable."); return; }
     setRefreshing(true); setRefreshErr("");
     try {
       const key = lookupKey("rc-detail", prop.address, prop.city, prop.state, prop.zip);
@@ -3805,37 +3805,37 @@ const isResidential = (deal) => RESIDENTIAL_TYPES.has(deal.type);
 const SAMPLE_DEALS = [
   {id:"sd1",  market:"cle", address:"3214 W 65th Street",      city:"Cleveland",    state:"OH", zip:"44102",
    type:"Single Family", lat:41.4641, lng:-81.7345, beds:3, baths:1, sqft:1240, yearBuilt:1922,
-   price:79900,  repair:18000, rent:1150, arv:142000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:79900,  repair:18000, rent:1150, arv:142000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd2",  market:"cle", address:"4128 East 116th Street",  city:"Cleveland",    state:"OH", zip:"44105",
    type:"Multi-Family", lat:41.4596, lng:-81.6133, beds:4, baths:2, sqft:1560, yearBuilt:1918,
    price:62500,  repair:42000, rent:1300, arv:158000, source:"Auction.com", sourcedAt:"2026-05-25"},
   {id:"sd3",  market:"cle", address:"1429 West 95th Street",   city:"Cleveland",    state:"OH", zip:"44102",
    type:"Single Family", lat:41.4866, lng:-81.7560, beds:3, baths:2, sqft:1380, yearBuilt:1925,
-   price:115000, repair:8000,  rent:1450, arv:152000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:115000, repair:8000,  rent:1450, arv:152000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd4",  market:"det", address:"15843 Mansfield Street",  city:"Detroit",      state:"MI", zip:"48227",
    type:"Single Family", lat:42.4002, lng:-83.2034, beds:3, baths:1, sqft:1180, yearBuilt:1948,
    price:52000,  repair:28000, rent:1150, arv:118000, source:"Sheriff Sale", sourcedAt:"2026-05-25"},
   {id:"sd5",  market:"det", address:"19211 Strathmoor Street", city:"Detroit",      state:"MI", zip:"48235",
    type:"Multi-Family", lat:42.4366, lng:-83.1958, beds:4, baths:2, sqft:1540, yearBuilt:1942,
-   price:84500,  repair:12000, rent:1450, arv:135000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:84500,  repair:12000, rent:1450, arv:135000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd6",  market:"mem", address:"3447 Park Avenue",        city:"Memphis",      state:"TN", zip:"38111",
    type:"Single Family", lat:35.1241, lng:-89.9417, beds:3, baths:2, sqft:1320, yearBuilt:1955,
-   price:78500,  repair:14000, rent:1200, arv:128000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:78500,  repair:14000, rent:1200, arv:128000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd7",  market:"mem", address:"1238 Tutwiler Avenue",    city:"Memphis",      state:"TN", zip:"38107",
    type:"Single Family", lat:35.1697, lng:-90.0148, beds:2, baths:1, sqft:980,  yearBuilt:1940,
    price:42000,  repair:24000, rent:925,  arv:88000,  source:"Auction.com", sourcedAt:"2026-05-25"},
   {id:"sd8",  market:"bhm", address:"5612 33rd Avenue North",  city:"Birmingham",   state:"AL", zip:"35207",
    type:"Single Family", lat:33.5616, lng:-86.8311, beds:3, baths:1, sqft:1100, yearBuilt:1952,
-   price:48000,  repair:22000, rent:1050, arv:108000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:48000,  repair:22000, rent:1050, arv:108000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd9",  market:"ind", address:"821 N New Jersey Street", city:"Indianapolis", state:"IN", zip:"46202",
    type:"Single Family", lat:39.7794, lng:-86.1556, beds:3, baths:2, sqft:1380, yearBuilt:1908,
-   price:124000, repair:18000, rent:1500, arv:182000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:124000, repair:18000, rent:1500, arv:182000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd10", market:"ind", address:"4128 Carrollton Avenue",  city:"Indianapolis", state:"IN", zip:"46205",
    type:"Townhouse", lat:39.8266, lng:-86.1444, beds:2, baths:1, sqft:920,  yearBuilt:1925,
-   price:75000,  repair:12000, rent:1100, arv:118000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:75000,  repair:12000, rent:1100, arv:118000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd11", market:"kcm", address:"4218 Bellefontaine Ave",  city:"Kansas City",  state:"MO", zip:"64130",
    type:"Single Family", lat:39.0488, lng:-94.5444, beds:3, baths:2, sqft:1180, yearBuilt:1948,
-   price:58000,  repair:20000, rent:1100, arv:115000, source:"RentCast", sourcedAt:"2026-05-25"},
+   price:58000,  repair:20000, rent:1100, arv:115000, source:"Public listings", sourcedAt:"2026-05-25"},
   {id:"sd12", market:"kcm", address:"3315 Wabash Avenue",      city:"Kansas City",  state:"MO", zip:"64109",
    type:"Multi-Family", lat:39.0697, lng:-94.5536, beds:4, baths:2, sqft:1620, yearBuilt:1915,
    price:95000,  repair:32000, rent:1400, arv:172000, source:"Auction.com", sourcedAt:"2026-05-25"},
@@ -4763,7 +4763,7 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 
   const runSearch = async () => {
     if (!d.address) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Comps page."); return; }
+    if (!rentcastKey) { setErr("Live property data is currently unavailable."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", d.address, d.city, d.state, d.zip);
@@ -4831,10 +4831,12 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
             ))}
           </div>
         )}
-        <button onClick={runSearch} disabled={loading}
-          {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
-          {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
-        </button>
+        {rentcastKey && (
+          <button onClick={runSearch} disabled={loading}
+            {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
+            {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
+          </button>
+        )}
         {err && (
           <div style={{display:"flex", gap:8, alignItems:"center",
             color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
@@ -5071,8 +5073,6 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   const [rentComps,setRentComps] = useState(null);
   const [saleComps,setSaleComps] = useState(null);
   const [err,setErr]           = useState("");
-  const [showKeyInput,setShowKey] = useState(!rentcastKey);
-  const [keyInput,setKeyInput] = useState(rentcastKey||"");
 
   const handleSelect = async loc => {
     setAddress(loc.fullAddress||loc.address); setLocation(loc);
@@ -5093,7 +5093,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   // Run only the active mode's search — the user picks one or the other, so
   // we don't fan out to all endpoints.
   const search = async () => {
-    if (!rentcastKey) { setErr("Add your free Rentcast API key first."); return; }
+    if (!rentcastKey) { setErr("Live comps are currently unavailable."); return; }
     if (!address)     { setErr("Enter an address first."); return; }
     setL(true); setErr("");
     try {
@@ -5122,7 +5122,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
         });
         setSaleComps(result);
       }
-    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check your API key and address."); }
+    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check the address and try again."); }
     setL(false);
   };
 
@@ -5133,31 +5133,6 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
       <PageHeader title="Comps" subtitle="Real rental and sale comps for any address" />
-
-      {(!rentcastKey || showKeyInput) && (
-        <Card style={{padding:18, marginBottom:18, borderColor:C.amberBorder, background:C.amberSubtle}}>
-          <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
-            <div style={{
-              width:30, height:30, borderRadius:C.r2, background:"#fff", border:"1px solid "+C.amberBorder,
-              color:C.amberDark, display:"flex", alignItems:"center", justifyContent:"center",
-            }}><I.alert size={15}/></div>
-            <div>
-              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>Rentcast API key required</div>
-              <div style={{fontSize:12, color:C.amberDark, fontFamily:F, marginTop:1}}>Free tier: 50 searches / month — no credit card.</div>
-            </div>
-          </div>
-          <p style={{fontSize:13, color:C.textSub, fontFamily:F, margin:"0 0 12px", lineHeight:1.5}}>
-            Get a key at <a href="https://rentcast.io" target="_blank" rel="noreferrer" style={{color:C.greenDark, fontWeight:600, textDecoration:"underline"}}>rentcast.io</a> and paste it below.
-          </p>
-          <div style={{display:"flex", gap:8}}>
-            <input value={keyInput} onChange={e=>setKeyInput(e.target.value)}
-              placeholder="Paste API key…"
-              style={{...iS(mobile), flex:1, fontFamily:'"JetBrains Mono", ui-monospace, monospace', fontSize:13}} />
-            <button onClick={()=>{if(keyInput){onSaveKey(keyInput);setShowKey(false);}}}
-              {...btnStyle("primary","md")}>Save</button>
-          </div>
-        </Card>
-      )}
 
       <SectionBlock title="Search comps" color={C.green}>
         {/* Rent vs Sale tabs — only the active mode's search runs */}
@@ -5200,11 +5175,6 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
             {...btnStyle("primary","md", {flex:1})}>
             {loading ? "Searching…" : <><I.search size={14}/> Find {mode==="rent" ? "rent" : "sale"} comps</>}
           </button>
-          {rentcastKey && (
-            <button onClick={()=>setShowKey(!showKeyInput)} {...btnStyle("secondary","md")}>
-              <I.settings size={13}/> Key
-            </button>
-          )}
         </div>
         {err && (
           <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
@@ -5420,14 +5390,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lookupsUsed=0, rentcastKey="", tier="free", onUpgrade, onDowngrade}) {
-  const [llcTxt,setLlcTxt] = useState(llcs.join("\n"));
-  const [rates,setRates]   = useState({...renoRates});
-  const [saved,setSaved]   = useState(false);
-  const save = () => {
-    onSave(llcTxt.split("\n").map(s=>s.trim()).filter(Boolean), rates);
-    setSaved(true); setTimeout(()=>setSaved(false), 2000);
-  };
+function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade}) {
   const isPro = tier === "pro";
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px", maxWidth:680}}>
@@ -5490,81 +5453,7 @@ function SettingsPage({llcs, renoRates, onSave, onSignOut, mobile, userEmail, lo
             </button>
           )}
         </div>
-        <p style={{fontSize:11, color:C.textMuted, fontFamily:F, margin:"10px 0 0", lineHeight:1.5}}>
-          Real billing via Stripe is coming. Until then, you can toggle tiers freely here to preview either experience.
-        </p>
       </SectionBlock>
-
-      <SectionBlock title="Data provider" color={C.green}>
-        <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"12px 14px",
-          display:"flex", alignItems:"flex-start", gap:10}}>
-          <div style={{width:28, height:28, borderRadius:C.r2, background:"#fff",
-            border:"1px solid "+C.greenBorder, color:C.greenDark, flexShrink:0,
-            display:"flex", alignItems:"center", justifyContent:"center"}}><I.check size={15}/></div>
-          <div style={{flex:1, minWidth:0}}>
-            <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
-              <div style={{fontWeight:600, color:C.text, fontSize:14, fontFamily:F, letterSpacing:"-0.005em"}}>RentCast</div>
-              {rentcastKey
-                ? <Badge label="Connected" bg={C.greenLight} c={C.greenDark} dot/>
-                : <Badge label="Add your key" bg={C.amberSubtle} c={C.amberDark} dot/>}
-            </div>
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
-              Powers everything — property details, tax records, home values, rent estimates, sale comps and lease comps · 140M+ U.S. properties. Add your key on the Comps page.
-            </div>
-          </div>
-        </div>
-      </SectionBlock>
-      <SectionBlock title="Property lookups" color={C.green}>
-        {(() => {
-          const pct = Math.min(100, Math.round((lookupsUsed / LOOKUP_CAP) * 100));
-          const barColor = lookupsUsed >= LOOKUP_CAP ? C.red : lookupsUsed >= LOOKUP_CAP*0.8 ? C.amber : C.green;
-          return (
-            <>
-              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8}}>
-                <span style={{fontSize:13, color:C.text, fontFamily:F, fontWeight:600}}>Used this month</span>
-                <span style={{fontSize:13, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                  {lookupsUsed} / {LOOKUP_CAP}
-                </span>
-              </div>
-              <div style={{height:8, borderRadius:9999, background:C.bgSubtle, overflow:"hidden"}}>
-                <div style={{height:"100%", width:pct+"%", background:barColor, borderRadius:9999, transition:"width .25s"}}/>
-              </div>
-              <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"10px 0 0", lineHeight:1.5}}>
-                Each new address you analyze counts as one lookup. Re-opening an address you've already
-                pulled is free. Resets on the 1st of each month.
-              </p>
-            </>
-          );
-        })()}
-      </SectionBlock>
-      <SectionBlock title="Repair cost rates" color={C.green}>
-        <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"0 0 12px", lineHeight:1.5}}>
-          Used by the repair estimator. Adjust to your local market.
-        </p>
-        <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr 1fr", gap:12}}>
-          <InputField label="Light reno" val={rates.light} set={v=>setRates(x=>({...x,light:v}))} pre="$" suf="/sqft" mobile={mobile} />
-          <InputField label="Medium reno" val={rates.medium} set={v=>setRates(x=>({...x,medium:v}))} pre="$" suf="/sqft" mobile={mobile} />
-          <InputField label="Full reno" val={rates.full} set={v=>setRates(x=>({...x,full:v}))} pre="$" suf="/sqft" mobile={mobile} />
-        </div>
-      </SectionBlock>
-      <SectionBlock title="Your LLCs" color={C.green}>
-        <p style={{fontSize:12, color:C.textMuted, fontFamily:F, margin:"0 0 10px", lineHeight:1.5}}>
-          One LLC per line. Properties can be assigned to any of these.
-        </p>
-        <textarea value={llcTxt} onChange={e=>setLlcTxt(e.target.value)}
-          style={{...iS(mobile), minHeight:130, resize:"vertical", lineHeight:1.55,
-            fontFamily:'"JetBrains Mono", ui-monospace, monospace', fontSize:13}} />
-      </SectionBlock>
-      <SectionBlock title="About" color={C.green}>
-        {[["Product","DealHive"], ["Version", "v"+VERSION], ["Website","dealhive.io"],
-          ["Default closing costs", "$"+DEFAULT_CLOSING.toLocaleString()],
-          ["Default vacancy rate", "5%"]].map(([l,v]) => (
-          <DataRow key={l} label={l} value={v} />
-        ))}
-      </SectionBlock>
-      <button onClick={save} {...btnStyle(saved?"secondary":"primary","lg", {width:"100%"})}>
-        {saved ? <><I.check size={14}/> Saved</> : "Save settings"}
-      </button>
     </div>
   );
 }
@@ -5586,7 +5475,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 
   const pullData = async (addr, city, state, zip) => {
     if (!addr) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Add your RentCast API key first — paste it on the Comps page."); return; }
+    if (!rentcastKey) { setErr("Live property data is currently unavailable."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", addr, city, state, zip);
@@ -5678,7 +5567,7 @@ const NAV_ITEMS = [
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
   {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
-  {id:"comps",      Icon:I.chart,          label:"Comps"},
+  {id:"comps",      Icon:I.chart,          label:"Comps",      adminOnly:true},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
@@ -5758,7 +5647,7 @@ function MobileNav({page, setPage, alertCount, isAdmin}) {
     {id:"properties", Icon:I.building,       label:"Props",   adminOnly:true},
     {id:"projects",   Icon:I.clipboardCheck, label:"Tasks",   adminOnly:true},
     {id:"deal",       Icon:I.search,         label:"Analyze"},
-    {id:"comps",      Icon:I.chart,          label:"Comps"},
+    {id:"comps",      Icon:I.chart,          label:"Comps",   adminOnly:true},
     {id:"settings",   Icon:I.settings,       label:"More"},
   ];
   const tabs = allTabs.filter(t => isAdmin || !t.adminOnly);
@@ -6045,10 +5934,6 @@ export default function App() {
     saveCloud(next);
   }, [saveCloud]);
 
-  // Lookups used this calendar month (resets automatically when the month rolls).
-  const lookupsUsed = (data && data.usage && data.usage.month === monthKey())
-    ? (data.usage.count || 0) : 0;
-
   // Central cached + capped lookup. `fetcher` runs only on a cache miss, and a
   // miss counts against the monthly cap (unless count:false). Throws a CAP error
   // when the cap is hit so the caller can show a friendly message.
@@ -6217,9 +6102,7 @@ export default function App() {
         ) : page==="comps" ? (
           <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
         ) : page==="settings" ? (
-          <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
-            onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-            onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""}
+          <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
             tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
         ) : (
           // Fallback for non-admins who somehow land on an admin-only page —
@@ -6263,9 +6146,7 @@ export default function App() {
             ) : page==="comps" ? (
               <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
             ) : page==="settings" ? (
-              <SettingsPage llcs={data.llcs||[]} renoRates={data.renoRates||SEED.renoRates}
-                onSave={(l,r)=>persist({...data,llcs:l,renoRates:r})}
-                onSignOut={handleSignOut} mobile={mobile} userEmail={user.email} lookupsUsed={lookupsUsed} rentcastKey={data.rentcastKey||""}
+              <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
                 tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
             ) : null}
           </ErrorBoundary>
