@@ -146,7 +146,11 @@ function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
 }
 
 // -- Mock deal card used in the hero ------------------------------------------
-function MockDealCard({ photo, address, price, rent, capRate, cashflow, beds, baths, sqft, badge }) {
+// `photo` is the gradient fallback (shown if `imgUrl` fails or while loading);
+// `imgUrl` is the real photo (Unsplash, hosted, whatever). Swap imgUrls in
+// HeroVisual below to change which photos appear in the hero.
+function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, beds, baths, sqft, badge }) {
+  const [imgFailed, setImgFailed] = useState(false);
   return (
     <div style={{
       background: "#fff", borderRadius: 14, overflow: "hidden",
@@ -156,8 +160,17 @@ function MockDealCard({ photo, address, price, rent, capRate, cashflow, beds, ba
     }}>
       <div style={{
         height: 160, background: `linear-gradient(135deg, ${photo[0]} 0%, ${photo[1]} 100%)`,
-        position: "relative",
+        position: "relative", overflow: "hidden",
       }}>
+        {imgUrl && !imgFailed && (
+          <img src={imgUrl} alt=""
+            loading="lazy" decoding="async"
+            onError={() => setImgFailed(true)}
+            style={{
+              position: "absolute", inset: 0, width: "100%", height: "100%",
+              objectFit: "cover", display: "block",
+            }}/>
+        )}
         {badge && (
           <div style={{
             position: "absolute", top: 12, left: 12,
@@ -221,6 +234,7 @@ function HeroVisual() {
       <div style={{ position: "relative", zIndex: 1, display: "grid", gap: 18 }}>
         <MockDealCard
           photo={["#fef3c7", "#fde68a"]}
+          imgUrl="https://images.unsplash.com/photo-1568605114967-8130f3a36994?auto=format&fit=crop&w=720&h=400&q=80"
           address="Cleveland, OH 44109"
           price={84500} rent={1450} capRate={14.2} cashflow={612}
           beds={3} baths={1} sqft={1240}
@@ -229,6 +243,7 @@ function HeroVisual() {
         <div style={{ transform: "translateX(40px)" }}>
           <MockDealCard
             photo={["#dbeafe", "#bfdbfe"]}
+            imgUrl="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80"
             address="Detroit, MI 48227"
             price={62000} rent={1350} capRate={16.8} cashflow={744}
             beds={3} baths={2} sqft={1380}
@@ -238,6 +253,7 @@ function HeroVisual() {
         <div style={{ transform: "translateX(-30px)" }}>
           <MockDealCard
             photo={["#e0e7ff", "#c7d2fe"]}
+            imgUrl="https://images.unsplash.com/photo-1570129477492-45c003edd2be?auto=format&fit=crop&w=720&h=400&q=80"
             address="Memphis, TN 38106"
             price={75000} rent={1200} capRate={12.4} cashflow={485}
             beds={3} baths={1} sqft={1180}
