@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import Landing from "./Landing.jsx";
 
 // -- Error Boundary ------------------------------------------------------------
 class ErrorBoundary extends React.Component {
@@ -5767,6 +5768,15 @@ function DesktopTopBar({page, propAddress, toast}) {
 export default function App() {
   const [user,   setUser]   = useState(null);
   const [data,   setData]   = useState(null);
+  // Track the URL path so the marketing-vs-auth-vs-app routing re-runs on
+  // back/forward and on programmatic pushState navigations.
+  const [path,   setPath]   = useState(() =>
+    typeof window !== "undefined" ? window.location.pathname : "/");
+  useEffect(() => {
+    const onNav = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onNav);
+    return () => window.removeEventListener("popstate", onNav);
+  }, []);
   const [page,   setPage]   = useState("dashboard");
   const [propId, setPropId] = useState(null);
   const [showAdd,setShowAdd]= useState(false);
@@ -5897,6 +5907,12 @@ export default function App() {
       try { const t = await fbRefresh(u.refreshToken); u = { ...u, idToken: t.idToken, refreshToken: t.refreshToken || u.refreshToken }; } catch {}
     }
     setUser(u); saveAuth(u); userRef.current = u;
+    // Land authenticated users on a clean URL — they came from /login or
+    // /signup, but the app itself doesn't care about path-based routing.
+    if (typeof window !== "undefined" && (window.location.pathname === "/login" || window.location.pathname === "/signup")) {
+      window.history.replaceState({}, "", "/");
+      setPath("/");
+    }
     let meta = await loadMeta(u.localId, u.idToken);
     if (!meta || isNew) {
       meta = {createdAt:new Date().toISOString(), trialStart:new Date().toISOString()};
@@ -5910,7 +5926,12 @@ export default function App() {
     if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
 
-  const handleSignOut = () => { clearAuth(); setUser(null); setData(null); setPage("dashboard"); setPropId(null); };
+  const handleSignOut = () => {
+    clearAuth(); setUser(null); setData(null); setPage("dashboard"); setPropId(null);
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.history.replaceState({}, "", "/"); setPath("/");
+    }
+  };
 
   // Save to the cloud; if it fails (likely an expired token), refresh and retry
   // once so the change still syncs instead of going local-only.
@@ -5970,8 +5991,19 @@ export default function App() {
     </div>
   );
 
-  // Auth screen
-  if (!user || !data) return <AuthPage onAuth={handleAuth} />;
+  // Public surface: marketing site at "/", auth modal at "/login" or "/signup".
+  // Any other unauth path defaults to the landing page so a stale bookmark
+  // still lands somewhere sensible.
+  if (!user || !data) {
+    const onAuthRoute = path === "/login" || path === "/signup";
+    if (onAuthRoute) return <AuthPage onAuth={handleAuth} />;
+    return (
+      <Landing
+        onSignIn={() => { window.history.pushState({}, "", "/login"); setPath("/login"); }}
+        onSignUp={() => { window.history.pushState({}, "", "/signup"); setPath("/signup"); }}
+      />
+    );
+  }
 
   // App handlers
   const updateProp = p  => persist({...data, properties:data.properties.map(x=>x.id===p.id?p:x)});
