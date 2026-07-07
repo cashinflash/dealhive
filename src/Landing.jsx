@@ -112,17 +112,23 @@ function Eyebrow({ children }) {
   );
 }
 
-function Section({ children, dark, tint, style, id }) {
+function Section({ children, dark, tint, style, id, hexes }) {
   return (
     <section id={id} className="dh-section" style={{
       padding: "80px 24px",
+      position: "relative", overflow: "hidden",
       background: dark ? C.navyDeep : tint ? C.orangeSubtle : C.bg,
       color: dark ? "#fff" : C.text,
       borderTop: tint ? "1px solid " + C.orangeBorder : "none",
       borderBottom: tint ? "1px solid " + C.orangeBorder : "none",
       ...style,
     }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto" }}>{children}</div>
+      {hexes && (
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+          {hexes.map((h, i) => <Hex key={i} {...h}/>)}
+        </div>
+      )}
+      <div style={{ maxWidth: 1180, margin: "0 auto", position: "relative", zIndex: 1 }}>{children}</div>
     </section>
   );
 }
@@ -147,6 +153,32 @@ function Hex({ size = 120, color = C.orangeLight, opacity = 0.5, outline = false
     </svg>
   );
 }
+
+// Preset hex arrangements so every section shares the same motif without
+// hand-placing each blob. a/b alternate sides on light sections; dark and
+// tint are tuned for the navy and orange-subtle backgrounds.
+const HEX_SETS = {
+  a: [
+    { size: 180, color: C.orangeLight,  opacity: 0.5,  blur: 28, float: 2, style: { top: -60, left: -50 } },
+    { size: 84,  color: C.orangeBorder, opacity: 0.32, outline: true, float: 1, style: { top: "20%", right: "3%" } },
+    { size: 46,  color: C.orange,       opacity: 0.13, float: 3, style: { bottom: "12%", right: "9%" } },
+  ],
+  b: [
+    { size: 210, color: C.orangeLight,  opacity: 0.5,  blur: 32, float: 1, style: { bottom: -80, right: -60 } },
+    { size: 92,  color: C.orangeBorder, opacity: 0.32, outline: true, float: 3, style: { top: "12%", left: "2.5%" } },
+    { size: 42,  color: C.orange,       opacity: 0.14, float: 2, style: { top: "42%", left: "8%" } },
+  ],
+  dark: [
+    { size: 280, color: C.orange, opacity: 0.12, blur: 42, float: 1, style: { top: -90, right: "6%" } },
+    { size: 110, color: "#ffffff", opacity: 0.10, outline: true, float: 2, style: { bottom: -34, left: "5%" } },
+    { size: 54,  color: C.orange, opacity: 0.18, float: 3, style: { top: "28%", left: "13%" } },
+  ],
+  tint: [
+    { size: 230, color: "#ffffff", opacity: 0.65, blur: 36, float: 2, style: { top: -80, left: "6%" } },
+    { size: 104, color: C.orangeBorder, opacity: 0.38, outline: true, float: 1, style: { bottom: "8%", right: "4%" } },
+    { size: 48,  color: C.orange, opacity: 0.14, float: 3, style: { top: "30%", right: "12%" } },
+  ],
+};
 
 function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
   return (
@@ -176,10 +208,19 @@ function PageHero({ eyebrow, title, subtitle }) {
   return (
     <section className="dh-page-hero" style={{
       padding: "64px 24px 56px",
+      position: "relative", overflow: "hidden",
       background: `radial-gradient(ellipse at 50% 0%, ${C.orangeSubtle} 0%, transparent 60%), ${C.bg}`,
       textAlign: "center",
     }}>
-      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+      <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+        <Hex size={220} color={C.orangeLight} opacity={0.5} blur={34} float={1}
+          style={{ top: -70, right: "4%" }}/>
+        <Hex size={96} color={C.orangeBorder} opacity={0.35} outline float={2}
+          style={{ top: "22%", left: "-28px" }}/>
+        <Hex size={48} color={C.orange} opacity={0.15} float={3}
+          style={{ bottom: "8%", right: "16%" }}/>
+      </div>
+      <div style={{ maxWidth: 760, margin: "0 auto", position: "relative", zIndex: 1 }}>
         {eyebrow && <div style={{ marginBottom: 16 }}><Eyebrow>{eyebrow}</Eyebrow></div>}
         <h1 style={{
           fontSize: "clamp(32px, 5vw, 52px)", fontWeight: 700, fontFamily: F,
@@ -433,6 +474,10 @@ function Hero({ onSignUp }) {
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0 }}>
         <Hex size={340} color={C.orangeLight} opacity={0.55} blur={46} float={1}
           style={{ top: -90, right: -70 }}/>
+        <Hex size={120} color={C.orangeBorder} opacity={0.42} outline float={3}
+          style={{ top: "4%", right: "-34px" }}/>
+        <Hex size={58} color={C.orange} opacity={0.18} float={2}
+          style={{ top: "15%", right: "10%" }}/>
         <Hex size={150} color={C.orangeBorder} opacity={0.35} outline float={2}
           style={{ top: "16%", left: "-46px" }}/>
         <Hex size={64} color={C.orange} opacity={0.16} float={3}
@@ -570,7 +615,7 @@ function HowItWorks() {
     },
   ];
   return (
-    <Section id="how">
+    <Section id="how" hexes={HEX_SETS.a}>
       <SectionHeader
         eyebrow="How it works"
         title="The deal-finding loop, automated."
@@ -624,7 +669,7 @@ const FEATURES = [
 
 function Features() {
   return (
-    <Section id="features" style={{ background: C.bgSoft }}>
+    <Section id="features" style={{ background: C.bgSoft }} hexes={HEX_SETS.b}>
       <SectionHeader
         eyebrow="Features"
         title="Everything you need to find your next deal."
@@ -681,7 +726,7 @@ function NumbersStrip() {
     { v: "$0",   l: "To get started" },
   ];
   return (
-    <Section dark style={{ padding: "64px 24px" }}>
+    <Section dark style={{ padding: "64px 24px" }} hexes={HEX_SETS.dark}>
       <div className="dh-numbers" style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 32,
         textAlign: "center",
@@ -743,7 +788,7 @@ function Pricing({ onSignUp }) {
   };
 
   return (
-    <Section id="pricing" tint>
+    <Section id="pricing" tint hexes={HEX_SETS.tint}>
       <SectionHeader
         eyebrow="Pricing"
         title="One simple plan. Cancel anytime."
@@ -850,7 +895,7 @@ const FAQ_ITEMS = [
 function FAQ({ items = FAQ_ITEMS.slice(0, 6) }) {
   const [open, setOpen] = useState(0);
   return (
-    <Section id="faq">
+    <Section id="faq" hexes={HEX_SETS.a}>
       <SectionHeader
         eyebrow="FAQ"
         title="Questions, answered."
@@ -896,7 +941,7 @@ function FAQ({ items = FAQ_ITEMS.slice(0, 6) }) {
 // -- Final CTA strip ----------------------------------------------------------
 function FinalCTA({ onSignUp, title = "Stop scrolling Zillow at 6am." }) {
   return (
-    <Section dark style={{
+    <Section dark hexes={HEX_SETS.dark} style={{
       padding: "80px 24px",
       background: `radial-gradient(ellipse at 50% 50%, ${C.navySoft} 0%, ${C.navyDeep} 70%)`,
     }}>
@@ -1088,7 +1133,7 @@ function FeaturesPage({ onSignUp }) {
       />
       <Features/>
       {STRATEGIES.map((s, i) => (
-        <Section key={s.id} style={{ background: i % 2 ? C.bgSoft : C.bg, padding: "64px 24px" }}>
+        <Section key={s.id} style={{ background: i % 2 ? C.bgSoft : C.bg, padding: "64px 24px" }} hexes={i % 2 ? HEX_SETS.a : HEX_SETS.b}>
           <div style={{
             display: "grid", gridTemplateColumns: "1fr 1fr", gap: 56, alignItems: "center",
           }} className="dh-strat-grid">
@@ -1210,7 +1255,7 @@ function AboutPage({ onSignUp }) {
         title="Built by investors who got tired of scrolling."
         subtitle="DealHive exists because finding a deal shouldn't take longer than analyzing one."
       />
-      <Section style={{ padding: "24px 24px 64px" }}>
+      <Section style={{ padding: "24px 24px 64px" }} hexes={HEX_SETS.b}>
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
             Every real estate investor knows the routine: coffee, laptop, and an hour of scrolling
@@ -1230,7 +1275,7 @@ function AboutPage({ onSignUp }) {
           </p>
         </div>
       </Section>
-      <Section style={{ background: C.bgSoft }}>
+      <Section style={{ background: C.bgSoft }} hexes={HEX_SETS.a}>
         <SectionHeader eyebrow="What we believe" title="Three things we won't compromise on."/>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
           {beliefs.map(b => (
@@ -1260,7 +1305,7 @@ function ContactPage() {
         title="Talk to a human."
         subtitle="Questions, feedback, billing, partnership ideas. One inbox, real replies."
       />
-      <Section style={{ padding: "24px 24px 96px" }}>
+      <Section style={{ padding: "24px 24px 96px" }} hexes={HEX_SETS.a}>
         <div style={{
           maxWidth: 560, margin: "0 auto", background: "#fff",
           border: "1px solid " + C.border, borderRadius: 16, padding: 32,
