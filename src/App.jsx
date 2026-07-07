@@ -3970,7 +3970,11 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
                     savedScenario = null, savedFinancing = null}) {
   const c = classifyDeal(deal);
-  if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
+  // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
+  // there — but user-filed watchlist deals (analyzer saves, manual entries)
+  // can miss both pro forma gates. If the user chose a scenario at save time,
+  // always render the card their way; only auto-classified feed cards bail.
+  if (c.tags.length === 0 && !savedScenario) return null;
 
   // BRRRR is an overlay: it never drives the primary badge (that stays a
   // buyhold/flip/multi call) — it gets its own chip beside the primary.
