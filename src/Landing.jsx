@@ -1,10 +1,18 @@
-// DealHive marketing site — public landing page at dealhive.io.
-// Lives at the root path when the visitor isn't logged in. CTAs route to
-// /signup or /login which App.jsx maps to the AuthPage.
+// DealHive marketing site — public pages at dealhive.io.
 //
-// Self-contained: no shared imports from App.jsx (which would force the
-// 400KB app bundle to load just to see the marketing site). Uses the
-// same brand palette inlined so future copy/design tweaks land here only.
+// Multi-page (DealCheck-style structure), single design system:
+//   /          Home
+//   /features  Product tour + strategy sections
+//   /pricing   Plans
+//   /faq       Full FAQ
+//   /about     Mission / story
+//   /contact   Support
+//   /privacy   Privacy Policy   (also reachable while signed in)
+//   /terms     Terms of Use     (also reachable while signed in)
+//
+// Routing lives in App.jsx (path state + pushState); this file just renders
+// the page it's told to. Self-contained: no imports from App.jsx so the
+// marketing surface stays decoupled from the 400KB app bundle.
 
 import { useEffect, useState } from "react";
 
@@ -24,7 +32,6 @@ const C = {
   textMuted:    "#a1a1aa",
   bg:           "#ffffff",
   bgSoft:       "#fafafa",
-  bgTint:       "#FFF7ED",
   card:         "#ffffff",
   border:       "#e4e4e7",
   borderSoft:   "#f1f1f3",
@@ -54,9 +61,7 @@ const I = {
   minus:   <Icon d={<path d="M5 12h14"/>}/>,
   home:    <Icon d={<><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></>}/>,
   brrrr:   <Icon d={<><path d="M3 13h18"/><path d="M5 9h14M5 17h14"/></>}/>,
-  globe:   <Icon d={<><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"/></>}/>,
-  moon:    <Icon d={<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>}/>,
-  zap:     <Icon d={<path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/>} fill="currentColor" stroke="none"/>,
+  mail:    <Icon d={<><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></>}/>,
 };
 
 // -- Small composable bits ----------------------------------------------------
@@ -142,6 +147,35 @@ function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
         </p>
       )}
     </div>
+  );
+}
+
+// Compact hero for subpages (Features, Pricing, FAQ, …).
+function PageHero({ eyebrow, title, subtitle }) {
+  return (
+    <section style={{
+      padding: "64px 24px 56px",
+      background: `radial-gradient(ellipse at 50% 0%, ${C.orangeSubtle} 0%, transparent 60%), ${C.bg}`,
+      textAlign: "center",
+    }}>
+      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        {eyebrow && <div style={{ marginBottom: 16 }}><Eyebrow>{eyebrow}</Eyebrow></div>}
+        <h1 style={{
+          fontSize: "clamp(32px, 5vw, 52px)", fontWeight: 700, fontFamily: F,
+          letterSpacing: "-0.035em", lineHeight: 1.05, margin: "0 0 16px", color: C.text,
+        }}>
+          {title}
+        </h1>
+        {subtitle && (
+          <p style={{
+            fontSize: "clamp(15px, 1.7vw, 18px)", color: C.textSub, fontFamily: F,
+            margin: 0, lineHeight: 1.6,
+          }}>
+            {subtitle}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -266,7 +300,14 @@ function HeroVisual() {
 }
 
 // -- Top nav ------------------------------------------------------------------
-function TopNav({ onSignIn, onSignUp }) {
+const NAV_LINKS = [
+  ["Features", "/features"],
+  ["Pricing", "/pricing"],
+  ["FAQ", "/faq"],
+  ["About", "/about"],
+];
+
+function TopNav({ navigate, onSignIn, onSignUp }) {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   useEffect(() => {
@@ -274,17 +315,7 @@ function TopNav({ onSignIn, onSignUp }) {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  const scrollTo = id => {
-    setMobileOpen(false);
-    const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  const links = [
-    ["Features", "features"],
-    ["How it works", "how"],
-    ["Pricing", "pricing"],
-    ["FAQ", "faq"],
-  ];
+  const go = p => { setMobileOpen(false); navigate(p); };
   return (
     <nav style={{
       position: "sticky", top: 0, zIndex: 50,
@@ -300,19 +331,20 @@ function TopNav({ onSignIn, onSignUp }) {
         padding: "14px 24px",
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24,
       }}>
-        <a href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
+        <a href="/" onClick={e => { e.preventDefault(); go("/"); }}
+          style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
           <img src="/logo.png" alt="DealHive" style={{ height: 30, width: "auto" }}/>
         </a>
 
         <div style={{ display: "flex", alignItems: "center", gap: 32 }} className="dh-nav-links">
-          {links.map(([label, id]) => (
-            <button key={id} onClick={() => scrollTo(id)}
+          {NAV_LINKS.map(([label, path]) => (
+            <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
               style={{
-                background: "transparent", border: "none", padding: 0, cursor: "pointer",
-                color: C.text, fontSize: 14, fontWeight: 500, fontFamily: F, letterSpacing: "-0.005em",
+                color: C.text, fontSize: 14, fontWeight: 500, fontFamily: F,
+                letterSpacing: "-0.005em", textDecoration: "none", cursor: "pointer",
               }}>
               {label}
-            </button>
+            </a>
           ))}
         </div>
 
@@ -340,15 +372,14 @@ function TopNav({ onSignIn, onSignUp }) {
           borderTop: "1px solid " + C.border, background: "#fff",
           padding: "12px 24px 20px", display: "flex", flexDirection: "column", gap: 4,
         }}>
-          {links.map(([label, id]) => (
-            <button key={id} onClick={() => scrollTo(id)}
+          {NAV_LINKS.map(([label, path]) => (
+            <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
               style={{
-                background: "transparent", border: "none", textAlign: "left",
-                padding: "12px 4px", cursor: "pointer", fontFamily: F, fontSize: 15,
-                fontWeight: 500, color: C.text,
+                padding: "12px 4px", fontFamily: F, fontSize: 15,
+                fontWeight: 500, color: C.text, textDecoration: "none",
               }}>
               {label}
-            </button>
+            </a>
           ))}
         </div>
       )}
@@ -382,7 +413,7 @@ function Hero({ onSignUp }) {
       }} className="dh-hero-grid">
         <div>
           <div style={{ marginBottom: 24 }}>
-            <Eyebrow>Updated nightly · 6 cash-flow markets</Eyebrow>
+            <Eyebrow>Fresh deals every day · Markets nationwide</Eyebrow>
           </div>
           <h1 style={{
             fontSize: "clamp(36px, 5.6vw, 64px)", fontWeight: 700, fontFamily: F,
@@ -395,14 +426,14 @@ function Hero({ onSignUp }) {
               WebkitBackgroundClip: "text", backgroundClip: "text",
               WebkitTextFillColor: "transparent", color: "transparent",
             }}>
-              Pre-analyzed. Every morning.
+              Pre-analyzed. Every day.
             </span>
           </h1>
           <p style={{
             fontSize: "clamp(16px, 1.7vw, 19px)", color: C.textSub, fontFamily: F,
             lineHeight: 1.55, margin: "0 0 32px", maxWidth: 540,
           }}>
-            DealHive scans hundreds of wholesale and off-market listings every night across six high cash-flow markets. By morning, the deals that actually pencil are waiting in your feed — already analyzed.
+            DealHive scans hundreds of wholesale and off-market listings across the country, every single day. The deals that actually pencil land in your feed — already analyzed.
           </p>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
             <Button onClick={onSignUp} size="lg">
@@ -445,7 +476,10 @@ function Hero({ onSignUp }) {
 
 // -- Trust bar (markets covered) ----------------------------------------------
 function TrustBar() {
-  const markets = ["Cleveland, OH", "Detroit, MI", "Memphis, TN", "Birmingham, AL", "Indianapolis, IN", "Kansas City, MO"];
+  const markets = [
+    "Cleveland", "Detroit", "Memphis", "Birmingham", "Indianapolis", "Kansas City",
+    "Pittsburgh", "Milwaukee", "Baltimore", "Jacksonville", "Oklahoma City", "Tampa",
+  ];
   return (
     <section style={{
       padding: "32px 24px", borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border,
@@ -456,10 +490,10 @@ function TrustBar() {
           fontSize: 11, fontWeight: 600, color: C.textMuted, fontFamily: F,
           letterSpacing: "0.12em", textTransform: "uppercase", textAlign: "center", marginBottom: 16,
         }}>
-          Now covering 6 high cash-flow markets
+          Deals flowing in from cash-flow markets nationwide
         </div>
         <div style={{
-          display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "20px 40px",
+          display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "16px 32px",
         }}>
           {markets.map(m => (
             <div key={m} style={{
@@ -469,6 +503,12 @@ function TrustBar() {
               <span style={{ color: C.orange }}>{I.home}</span> {m}
             </div>
           ))}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            fontSize: 14, fontWeight: 600, color: C.textMuted, fontFamily: F,
+          }}>
+            + more added every month
+          </div>
         </div>
       </div>
     </section>
@@ -480,8 +520,8 @@ function HowItWorks() {
   const steps = [
     {
       n: "01",
-      title: "We scan overnight",
-      body: "Every night, our pipeline pulls fresh wholesale assignments and off-market listings from across 6 cash-flow markets. Hundreds of properties, filtered down to the ones that actually pencil.",
+      title: "We scan the market",
+      body: "Our pipeline pulls fresh wholesale assignments, off-market properties, and investor-friendly listings from markets across the country. Hundreds of properties, filtered down to the ones that actually pencil.",
     },
     {
       n: "02",
@@ -499,7 +539,7 @@ function HowItWorks() {
       <SectionHeader
         eyebrow="How it works"
         title="The deal-finding loop, automated."
-        subtitle="DealHive does the boring 6am scrolling for you. You wake up to a feed of deals that already make sense."
+        subtitle="DealHive does the boring scrolling for you. Open the app to a feed of deals that already make sense."
       />
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24,
@@ -532,21 +572,22 @@ function HowItWorks() {
 }
 
 // -- Features grid ------------------------------------------------------------
+const FEATURES = [
+  { icon: I.bolt,   title: "Off-market deal feed",
+    body: "Wholesale assignments, off-market listings, and cash-flow rentals — a feed that refreshes every day, from markets across the country." },
+  { icon: I.chart,  title: "Built-in deal analyzer",
+    body: "Tap any deal to open it in the analyzer pre-filled with the numbers. Adjust your purchase price, rent, repairs — recalculates instantly." },
+  { icon: I.brrrr,  title: "Buy-and-hold, BRRRR, or flip",
+    body: "Every deal scored against three strategies. See which model wins before you make an offer." },
+  { icon: I.search, title: "Comps that actually match",
+    body: "Pull rental and sale comps for any address. See what the market really pays — not what Zillow guesses." },
+  { icon: I.star,   title: "Saved deals & alerts",
+    body: "Watchlist your favorites, get notified when new deals hit your target markets. Never miss the one that prices right." },
+  { icon: I.device, title: "Mobile-first",
+    body: "Designed for driving for dollars and quick decisions. Underwrite on your phone in the parking lot — full power, no compromise." },
+];
+
 function Features() {
-  const feats = [
-    { icon: I.bolt,   title: "Off-market deal feed",
-      body: "Wholesale assignments, off-market listings, and recently-listed cash-flow rentals — refreshed every night before you wake up." },
-    { icon: I.chart,  title: "Built-in deal analyzer",
-      body: "Tap any deal to open it in the analyzer pre-filled with the numbers. Adjust your purchase price, rent, repairs — recalculates instantly." },
-    { icon: I.brrrr,  title: "Buy-and-hold, BRRRR, or flip",
-      body: "Every deal scored against three strategies. See which model wins before you make an offer." },
-    { icon: I.search, title: "Comps that actually match",
-      body: "Pull rental and sale comps for any address. See what the market really pays — not what Zillow guesses." },
-    { icon: I.star,   title: "Saved deals & alerts",
-      body: "Watchlist your favorites, get notified when new deals hit your target markets. Never miss the one that prices right." },
-    { icon: I.device, title: "Mobile-first",
-      body: "Designed for driving for dollars and quick decisions. Underwrite on your phone in the parking lot — full power, no compromise." },
-  ];
   return (
     <Section id="features" style={{ background: C.bgSoft }}>
       <SectionHeader
@@ -557,7 +598,7 @@ function Features() {
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
       }}>
-        {feats.map(f => (
+        {FEATURES.map(f => (
           <div key={f.title} style={{
             padding: 26, background: "#fff", border: "1px solid " + C.border, borderRadius: 14,
             transition: "transform .15s ease, box-shadow .15s ease, border-color .15s ease",
@@ -599,9 +640,9 @@ function Features() {
 // -- Big "by the numbers" strip ----------------------------------------------
 function NumbersStrip() {
   const stats = [
-    { v: "300+", l: "Deals analyzed nightly" },
-    { v: "6",    l: "Cash-flow markets" },
-    { v: "<60s", l: "From listing to your feed" },
+    { v: "900+", l: "Properties scanned daily" },
+    { v: "30+",  l: "Markets and growing" },
+    { v: "3",    l: "Strategies scored per deal" },
     { v: "$0",   l: "To get started" },
   ];
   return (
@@ -642,7 +683,7 @@ function Pricing({ onSignUp }) {
     period: "forever",
     blurb: "Browse a preview of the feed and analyze deals manually. Great for kicking the tires.",
     features: [
-      "Preview of nightly deal feed",
+      "Preview of the deal feed",
       "Built-in deal analyzer",
       "Buy-and-hold, BRRRR, and flip models",
       "Save up to 5 deals to your watchlist",
@@ -653,7 +694,7 @@ function Pricing({ onSignUp }) {
     name: "Pro",
     price: "$29.99",
     period: "per month",
-    blurb: "The full picture. Every deal, every market, every morning — no limits.",
+    blurb: "The full picture. Every deal, every market, every day — no limits.",
     features: [
       "Full deal feed — all markets, all deals",
       "Exact addresses (not just neighborhoods)",
@@ -736,33 +777,42 @@ function Pricing({ onSignUp }) {
 }
 
 // -- FAQ ----------------------------------------------------------------------
-function FAQ() {
-  const items = [
-    {
-      q: "What is DealHive?",
-      a: "DealHive is a deal-finding tool for real estate investors. Every night, we scan the off-market wholesale market across six high cash-flow cities. By morning, deals that pencil out are in your feed — already analyzed against buy-and-hold, BRRRR, and fix-and-flip models. You browse, save the ones you like, and underwrite further in the built-in analyzer.",
-    },
-    {
-      q: "Where do the deals come from?",
-      a: "Off-market wholesale assignment lists, recently-listed cash-flow rentals, and public records — all aggregated nightly. We focus on properties that already make sense at list price, not flips that depend on hot markets.",
-    },
-    {
-      q: "Which markets do you cover?",
-      a: "Cleveland, Detroit, Memphis, Birmingham, Indianapolis, and Kansas City. These are the markets where the numbers still work — strong rent-to-price ratios, reasonable taxes, and active wholesale networks. We're expanding to more cities through the year.",
-    },
-    {
-      q: "Can I try it before paying?",
-      a: "Yes. The Free plan lets you preview deals, use the analyzer, and save up to 5 deals to your watchlist — no credit card required. When you want the full feed and exact addresses, Pro is $29.99/mo, cancel anytime.",
-    },
-    {
-      q: "Do you guarantee these deals make money?",
-      a: "No tool can guarantee that — and we wouldn't trust one that did. DealHive does the work of finding and pre-analyzing deals so you can underwrite faster, but you're still the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
-    },
-    {
-      q: "Is my data private?",
-      a: "Yes. Your saved deals, notes, and account information are private to your account. We don't sell user data, we don't share watchlists with sellers, and you can delete your account and data anytime from Settings.",
-    },
-  ];
+const FAQ_ITEMS = [
+  {
+    q: "What is DealHive?",
+    a: "DealHive is a deal-finding tool for real estate investors. We scan the off-market wholesale market across the country and surface deals that pencil out — already analyzed against buy-and-hold, BRRRR, and fix-and-flip models. You browse, save the ones you like, and underwrite further in the built-in analyzer.",
+  },
+  {
+    q: "Where do the deals come from?",
+    a: "Off-market wholesale assignment lists, investor-friendly listings, and public records — aggregated daily by our pipeline. We focus on properties that already make sense at list price, not flips that depend on hot markets.",
+  },
+  {
+    q: "Which markets do you cover?",
+    a: "We source from cash-flow markets across the country — Cleveland, Detroit, Memphis, Birmingham, Indianapolis, Kansas City, Pittsburgh, Milwaukee, Baltimore, Jacksonville, Oklahoma City, Tampa, and dozens more. Coverage grows every month, and the feed's market filter always shows exactly what's live right now.",
+  },
+  {
+    q: "How fresh are the deals?",
+    a: "The pipeline runs every day and each deal shows when it was sourced. Wholesale deals move fast — that's why every deal comes pre-analyzed, so you can make a call in minutes instead of hours.",
+  },
+  {
+    q: "Can I try it before paying?",
+    a: "Yes. The Free plan lets you preview deals, use the analyzer, and save up to 5 deals to your watchlist — no credit card required. When you want the full feed and exact addresses, Pro is $29.99/mo, cancel anytime.",
+  },
+  {
+    q: "Do you guarantee these deals make money?",
+    a: "No tool can guarantee that — and we wouldn't trust one that did. DealHive does the work of finding and pre-analyzing deals so you can underwrite faster, but you're still the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
+  },
+  {
+    q: "Do I need an MLS license or realtor access?",
+    a: "No. DealHive aggregates off-market and publicly available listing data — you don't need an MLS membership, a license, or any special access to use it.",
+  },
+  {
+    q: "Is my data private?",
+    a: "Yes. Your saved deals, notes, and account information are private to your account. We don't sell user data, we don't share watchlists with sellers, and you can delete your account and data anytime.",
+  },
+];
+
+function FAQ({ items = FAQ_ITEMS.slice(0, 6) }) {
   const [open, setOpen] = useState(0);
   return (
     <Section id="faq">
@@ -809,7 +859,7 @@ function FAQ() {
 }
 
 // -- Final CTA strip ----------------------------------------------------------
-function FinalCTA({ onSignUp }) {
+function FinalCTA({ onSignUp, title = "Stop scrolling Zillow at 6am." }) {
   return (
     <Section dark style={{
       padding: "80px 24px",
@@ -820,13 +870,13 @@ function FinalCTA({ onSignUp }) {
           fontSize: "clamp(28px, 4.4vw, 44px)", fontWeight: 700, fontFamily: F,
           letterSpacing: "-0.03em", lineHeight: 1.1, margin: "0 0 16px", color: "#fff",
         }}>
-          Stop scrolling Zillow at 6am.
+          {title}
         </h2>
         <p style={{
           fontSize: "clamp(15px, 1.8vw, 18px)", color: "rgba(255,255,255,.7)",
           fontFamily: F, margin: "0 0 32px", lineHeight: 1.55,
         }}>
-          DealHive does the work overnight. You wake up to deals worth your time. Get started for free — no card, no commitment.
+          DealHive does the hunting for you. Open the app to deals worth your time. Get started for free — no card, no commitment.
         </p>
         <Button onClick={onSignUp} size="lg" style={{ padding: "16px 28px", fontSize: 16 }}>
           Get started — it's free {I.arrow}
@@ -837,8 +887,17 @@ function FinalCTA({ onSignUp }) {
 }
 
 // -- Footer -------------------------------------------------------------------
-function Footer({ onSignIn, onSignUp }) {
+function Footer({ navigate, onSignIn, onSignUp }) {
   const year = new Date().getFullYear();
+  const link = (label, path) => (
+    <a key={label} href={path} onClick={e => { e.preventDefault(); navigate(path); }}
+      style={{
+        fontSize: 13.5, color: C.textSub, fontFamily: F, textDecoration: "none",
+        cursor: "pointer",
+      }}>
+      {label}
+    </a>
+  );
   return (
     <footer style={{
       padding: "48px 24px 32px", background: "#fff", borderTop: "1px solid " + C.border,
@@ -851,24 +910,24 @@ function Footer({ onSignIn, onSignUp }) {
           <div>
             <img src="/logo.png" alt="DealHive" style={{ height: 28, width: "auto", marginBottom: 14 }}/>
             <p style={{ fontSize: 13, color: C.textSub, lineHeight: 1.55, margin: 0, maxWidth: 320 }}>
-              The off-market deal feed for real estate investors. Updated nightly across six cash-flow markets.
+              The off-market deal feed for real estate investors. Fresh deals from markets across the country, every day.
             </p>
           </div>
-          <FooterCol title="Product" links={[
-            ["Features", () => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })],
-            ["How it works", () => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })],
-            ["Pricing", () => document.getElementById("pricing")?.scrollIntoView({ behavior: "smooth" })],
-            ["FAQ", () => document.getElementById("faq")?.scrollIntoView({ behavior: "smooth" })],
-          ]}/>
-          <FooterCol title="Account" links={[
-            ["Sign in", onSignIn],
-            ["Get started", onSignUp],
-          ]}/>
-          <FooterCol title="Legal" links={[
-            ["Privacy", () => window.location.assign("/privacy")],
-            ["Terms", () => window.location.assign("/terms")],
-            ["Contact", () => window.location.assign("mailto:support@dealhive.io")],
-          ]}/>
+          <FooterCol title="Product">
+            {link("Features", "/features")}
+            {link("Pricing", "/pricing")}
+            {link("FAQ", "/faq")}
+            {link("About", "/about")}
+          </FooterCol>
+          <FooterCol title="Account">
+            <button onClick={onSignIn} style={footerBtnStyle}>Sign in</button>
+            <button onClick={onSignUp} style={footerBtnStyle}>Get started</button>
+          </FooterCol>
+          <FooterCol title="Legal & Support">
+            {link("Privacy Policy", "/privacy")}
+            {link("Terms of Use", "/terms")}
+            {link("Contact", "/contact")}
+          </FooterCol>
         </div>
         <div style={{
           paddingTop: 24, borderTop: "1px solid " + C.border,
@@ -892,7 +951,12 @@ function Footer({ onSignIn, onSignUp }) {
   );
 }
 
-function FooterCol({ title, links }) {
+const footerBtnStyle = {
+  background: "transparent", border: "none", padding: 0, cursor: "pointer",
+  textAlign: "left", fontSize: 13.5, color: C.textSub, fontFamily: F,
+};
+
+function FooterCol({ title, children }) {
   return (
     <div>
       <div style={{
@@ -902,26 +966,19 @@ function FooterCol({ title, links }) {
         {title}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {links.map(([label, onClick]) => (
-          <button key={label} onClick={onClick}
-            style={{
-              background: "transparent", border: "none", padding: 0, cursor: "pointer",
-              textAlign: "left", fontSize: 13.5, color: C.textSub, fontFamily: F,
-            }}>
-            {label}
-          </button>
-        ))}
+        {children}
       </div>
     </div>
   );
 }
 
-// -- Top-level landing export -------------------------------------------------
-export default function Landing({ onSignIn, onSignUp }) {
-  useEffect(() => { window.scrollTo(0, 0); }, []);
+// ==============================================================================
+// PAGES
+// ==============================================================================
+
+function HomePage({ onSignUp }) {
   return (
-    <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
-      <TopNav onSignIn={onSignIn} onSignUp={onSignUp}/>
+    <>
       <Hero onSignUp={onSignUp}/>
       <TrustBar/>
       <HowItWorks/>
@@ -930,7 +987,534 @@ export default function Landing({ onSignIn, onSignUp }) {
       <Pricing onSignUp={onSignUp}/>
       <FAQ/>
       <FinalCTA onSignUp={onSignUp}/>
-      <Footer onSignIn={onSignIn} onSignUp={onSignUp}/>
+    </>
+  );
+}
+
+// -- Features page: overview grid + one section per strategy -------------------
+const STRATEGIES = [
+  {
+    id: "rental",
+    eyebrow: "Buy & hold",
+    title: "Rental property analysis, done before you open the deal.",
+    body: "Every deal in the feed is scored as a rental first: cap rate, monthly cash flow, cash-on-cash return, and operating expenses estimated from real tax rates for that state — not national averages. If a property doesn't pencil as a rental or a flip, it never reaches your feed.",
+    points: [
+      "Cap rate and cash flow computed on arrival",
+      "State-accurate property tax rates",
+      "Vacancy, insurance, and maintenance baked into the pro forma",
+      "Adjust any number in the analyzer and watch it recalculate",
+    ],
+  },
+  {
+    id: "brrrr",
+    eyebrow: "BRRRR",
+    title: "See the refinance math before you buy.",
+    body: "For value-add deals, DealHive projects the BRRRR path: purchase, rehab budget, after-repair value, and what your capital position looks like after the refi. Know how much of your money comes back out before you commit it.",
+    points: [
+      "ARV estimates on deals with rehab potential",
+      "Rehab budgets estimated from light / medium / full renovation rates",
+      "Post-refi equity and cash-left-in-deal projections",
+      "Compare BRRRR vs straight rental on the same property",
+    ],
+  },
+  {
+    id: "flip",
+    eyebrow: "Fix & flip",
+    title: "Flip numbers that include the costs everyone forgets.",
+    body: "Flip scoring accounts for purchase, rehab, holding costs, and selling costs — then shows projected profit and ROI. Deals only earn the flip tag when the ROI clears a real threshold, so a \"flip deal\" in DealHive actually means something.",
+    points: [
+      "Projected profit and ROI on every flip-tagged deal",
+      "Holding and selling costs included, not ignored",
+      "ARV backed by comparable sales",
+      "Side-by-side with the rental math on the same deal",
+    ],
+  },
+  {
+    id: "feed",
+    eyebrow: "The deal feed",
+    title: "Off-market deal flow without the 6am scroll.",
+    body: "Wholesale assignment lists, off-market properties, and investor-friendly listings from markets across the country land in one feed, refreshed every day. Filter by market, price, and strategy. Save what you like, and it's waiting on your dashboard.",
+    points: [
+      "Hundreds of properties scanned daily",
+      "Deals tagged buy-and-hold, flip, or both",
+      "Market and price filters that reflect what's actually live",
+      "One-tap save to your watchlist",
+    ],
+  },
+];
+
+function FeaturesPage({ onSignUp }) {
+  return (
+    <>
+      <PageHero
+        eyebrow="Features"
+        title="Built to find deals, not manage spreadsheets."
+        subtitle="Everything DealHive does exists to answer one question fast: is this property worth your money?"
+      />
+      <Features/>
+      {STRATEGIES.map((s, i) => (
+        <Section key={s.id} style={{ background: i % 2 ? C.bgSoft : C.bg, padding: "64px 24px" }}>
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 56, alignItems: "center",
+          }} className="dh-strat-grid">
+            <div style={{ order: i % 2 ? 2 : 1 }}>
+              <div style={{ marginBottom: 14 }}><Eyebrow>{s.eyebrow}</Eyebrow></div>
+              <h2 style={{
+                fontSize: "clamp(24px, 3.2vw, 34px)", fontWeight: 700, fontFamily: F,
+                letterSpacing: "-0.025em", lineHeight: 1.15, margin: "0 0 14px", color: C.text,
+              }}>
+                {s.title}
+              </h2>
+              <p style={{ fontSize: 15.5, color: C.textSub, fontFamily: F, lineHeight: 1.65, margin: 0 }}>
+                {s.body}
+              </p>
+            </div>
+            <div style={{ order: i % 2 ? 1 : 2 }}>
+              <div style={{
+                background: "#fff", border: "1px solid " + C.border, borderRadius: 16,
+                padding: 24, boxShadow: "0 12px 32px -12px rgba(15,23,42,.10)",
+              }}>
+                {s.points.map(p => (
+                  <div key={p} style={{
+                    display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 0",
+                    borderBottom: "1px solid " + C.borderSoft, fontFamily: F,
+                  }}>
+                    <span style={{
+                      width: 22, height: 22, borderRadius: 9999, background: C.orangeSubtle,
+                      border: "1px solid " + C.orangeBorder, color: C.orangeDark, flexShrink: 0,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Icon d={<path d="M5 12l5 5L20 7"/>} size={12} stroke={2.4}/>
+                    </span>
+                    <span style={{ fontSize: 14.5, color: C.text, lineHeight: 1.5 }}>{p}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <style>{`
+            @media (max-width: 860px) {
+              .dh-strat-grid { grid-template-columns: 1fr !important; gap: 28px !important; }
+              .dh-strat-grid > div { order: unset !important; }
+            }
+          `}</style>
+        </Section>
+      ))}
+      <NumbersStrip/>
+      <FinalCTA onSignUp={onSignUp} title="See the feed for yourself."/>
+    </>
+  );
+}
+
+function PricingPage({ onSignUp }) {
+  const pricingFaq = [
+    {
+      q: "Can I cancel anytime?",
+      a: "Yes — cancel from Settings in two clicks and you keep Pro access until the end of your billing period. No calls, no emails, no retention flows.",
+    },
+    {
+      q: "What happens to my saved deals if I downgrade?",
+      a: "They stay saved. You keep your watchlist and all your analyses on the Free plan — you just see the preview feed instead of the full one.",
+    },
+    {
+      q: "Is there a contract or setup fee?",
+      a: "No. Pro is month-to-month, $29.99, and the price you sign up at is the price you keep.",
+    },
+    {
+      q: "Do you offer refunds?",
+      a: "If something went wrong on our end, contact support@dealhive.io and we'll make it right.",
+    },
+  ];
+  return (
+    <>
+      <PageHero
+        eyebrow="Pricing"
+        title="Less than one bad showing costs you."
+        subtitle="Start free, no credit card. Upgrade when you want the full feed — cancel anytime."
+      />
+      <Pricing onSignUp={onSignUp}/>
+      <FAQ items={pricingFaq}/>
+      <FinalCTA onSignUp={onSignUp} title="Your next deal might already be in the feed."/>
+    </>
+  );
+}
+
+function FAQPage({ onSignUp }) {
+  return (
+    <>
+      <PageHero
+        eyebrow="FAQ"
+        title="Everything people ask us."
+        subtitle="Can't find your answer? Email support@dealhive.io — a human reads every message."
+      />
+      <FAQ items={FAQ_ITEMS}/>
+      <FinalCTA onSignUp={onSignUp}/>
+    </>
+  );
+}
+
+function AboutPage({ onSignUp }) {
+  const beliefs = [
+    {
+      title: "The deal is everything",
+      body: "Returns are made at the buy. Software should make finding the right buy faster — not bury you in dashboards.",
+    },
+    {
+      title: "Numbers before feelings",
+      body: "Every property in DealHive is scored against real pro formas before you ever see it. If it doesn't pencil, it doesn't ship.",
+    },
+    {
+      title: "Investors deserve tools that respect their time",
+      body: "No 45-minute demos, no sales calls, no annual contracts. Open the app, see the deals, make a decision.",
+    },
+  ];
+  return (
+    <>
+      <PageHero
+        eyebrow="About"
+        title="Built by investors who got tired of scrolling."
+        subtitle="DealHive exists because finding a deal shouldn't take longer than analyzing one."
+      />
+      <Section style={{ padding: "24px 24px 64px" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto" }}>
+          <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
+            Every real estate investor knows the routine: coffee, laptop, and an hour of scrolling
+            listings that stopped making sense three price cuts ago. The deals that actually work —
+            wholesale assignments, off-market properties, mispriced rentals in cash-flow markets —
+            never sit on page one of Zillow.
+          </p>
+          <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
+            DealHive flips that routine. Our pipeline watches the wholesale and off-market space
+            across the country and pre-analyzes everything it finds against buy-and-hold, BRRRR,
+            and fix-and-flip models. What lands in your feed is the short list — the properties
+            worth your next hour, not your next month.
+          </p>
+          <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
+            We're independent, investor-run, and built for people who close. No venture pressure to
+            juice engagement metrics — just a tool we wanted for ourselves, opened up to everyone.
+          </p>
+        </div>
+      </Section>
+      <Section style={{ background: C.bgSoft }}>
+        <SectionHeader eyebrow="What we believe" title="Three things we won't compromise on."/>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20 }}>
+          {beliefs.map(b => (
+            <div key={b.title} style={{
+              padding: 26, background: "#fff", border: "1px solid " + C.border, borderRadius: 14,
+            }}>
+              <h3 style={{ fontSize: 16.5, fontWeight: 700, fontFamily: F, letterSpacing: "-0.015em", margin: "0 0 8px", color: C.text }}>
+                {b.title}
+              </h3>
+              <p style={{ fontSize: 14.5, color: C.textSub, fontFamily: F, lineHeight: 1.6, margin: 0 }}>
+                {b.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <FinalCTA onSignUp={onSignUp} title="See what the feed found today."/>
+    </>
+  );
+}
+
+function ContactPage() {
+  return (
+    <>
+      <PageHero
+        eyebrow="Contact"
+        title="Talk to a human."
+        subtitle="Questions, feedback, billing, partnership ideas — one inbox, real replies."
+      />
+      <Section style={{ padding: "24px 24px 96px" }}>
+        <div style={{
+          maxWidth: 560, margin: "0 auto", background: "#fff",
+          border: "1px solid " + C.border, borderRadius: 16, padding: 32,
+          textAlign: "center", boxShadow: "0 12px 32px -12px rgba(15,23,42,.08)",
+        }}>
+          <div style={{
+            width: 52, height: 52, borderRadius: 14, margin: "0 auto 16px",
+            background: C.orangeSubtle, border: "1px solid " + C.orangeBorder, color: C.orangeDark,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            {I.mail}
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, fontFamily: F, letterSpacing: "-0.02em", margin: "0 0 8px", color: C.text }}>
+            support@dealhive.io
+          </h2>
+          <p style={{ fontSize: 14.5, color: C.textSub, fontFamily: F, lineHeight: 1.6, margin: "0 0 24px" }}>
+            We typically reply within one business day. Include your account email if it's about billing or your data.
+          </p>
+          <Button onClick={() => window.location.assign("mailto:support@dealhive.io")} size="lg">
+            {I.mail} Email us
+          </Button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// -- Legal pages ---------------------------------------------------------------
+function LegalPage({ title, updated, children }) {
+  return (
+    <>
+      <PageHero title={title} subtitle={"Last updated: " + updated}/>
+      <Section style={{ padding: "8px 24px 96px" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", fontFamily: F }} className="dh-legal">
+          {children}
+        </div>
+        <style>{`
+          .dh-legal h2 { font-size: 19px; font-weight: 700; color: ${C.text}; letter-spacing: -0.015em; margin: 36px 0 10px; }
+          .dh-legal p, .dh-legal li { font-size: 14.5px; color: ${C.textSub}; line-height: 1.7; }
+          .dh-legal ul { padding-left: 22px; margin: 10px 0; }
+          .dh-legal strong { color: ${C.text}; }
+          .dh-legal a { color: ${C.orangeDark}; }
+        `}</style>
+      </Section>
+    </>
+  );
+}
+
+function PrivacyPage() {
+  return (
+    <LegalPage title="Privacy Policy" updated="July 7, 2026">
+      <p>
+        This Privacy Policy explains how DealHive ("DealHive", "we", "us") collects, uses, and
+        protects your information when you use the DealHive website and applications (the
+        "Service"). By using the Service you agree to this policy.
+      </p>
+
+      <h2>1. Information we collect</h2>
+      <ul>
+        <li><strong>Account information.</strong> Your email address and a password (stored in hashed form by our authentication provider — we never see or store your plain-text password).</li>
+        <li><strong>Content you create.</strong> Deals you save, analyses you run, settings you configure, and notes you enter. This data exists so the app can work for you and is private to your account.</li>
+        <li><strong>Payment information.</strong> Payments are processed by Stripe. Your card number goes directly to Stripe and never touches our servers. We store only your subscription status and Stripe customer reference.</li>
+        <li><strong>Usage and device data.</strong> Basic technical logs (browser type, approximate region, error reports) used to keep the Service reliable and secure.</li>
+      </ul>
+
+      <h2>2. How we use your information</h2>
+      <ul>
+        <li>To provide and improve the Service — syncing your data across devices, showing your saved deals, operating the deal feed.</li>
+        <li>To process subscriptions and send transactional emails (receipts, password resets, important account notices).</li>
+        <li>To protect the Service against abuse, fraud, and security issues.</li>
+      </ul>
+      <p>
+        We do <strong>not</strong> sell your personal information. We do not share your watchlist,
+        saved deals, or analyses with sellers, wholesalers, or other users. We do not run
+        third-party advertising on the Service.
+      </p>
+
+      <h2>3. Service providers</h2>
+      <p>We rely on a small set of processors to run the Service:</p>
+      <ul>
+        <li><strong>Google Firebase</strong> — authentication and database hosting for your account data.</li>
+        <li><strong>Stripe</strong> — payment processing and subscription billing.</li>
+        <li><strong>Netlify</strong> — website hosting.</li>
+        <li><strong>Google Maps Platform</strong> — property imagery and address lookup.</li>
+      </ul>
+      <p>Each provider processes data only as needed to provide their service to us.</p>
+
+      <h2>4. Property data</h2>
+      <p>
+        The deals and property information shown in the Service are aggregated from third-party and
+        public sources and relate to real estate, not to you personally. Your interaction with that
+        data (what you view, save, or analyze) stays private to your account.
+      </p>
+
+      <h2>5. Data retention & deletion</h2>
+      <p>
+        We keep your account data for as long as your account exists. You can delete your account
+        and all associated data at any time by emailing{" "}
+        <a href="mailto:support@dealhive.io">support@dealhive.io</a> from your account email —
+        deletion is completed within 30 days. You can also request an export of your data.
+      </p>
+
+      <h2>6. Security</h2>
+      <p>
+        Your data is transmitted over HTTPS and stored with per-user access rules, so one account
+        can never read another's data. No system is perfectly secure, but we design so that the
+        blast radius of any failure is as small as possible.
+      </p>
+
+      <h2>7. Children</h2>
+      <p>The Service is intended for users 18 and older and is not directed at children.</p>
+
+      <h2>8. Changes to this policy</h2>
+      <p>
+        If we make material changes we will update the date above and, for significant changes,
+        notify you in the app or by email.
+      </p>
+
+      <h2>9. Contact</h2>
+      <p>
+        Questions about privacy or your data:{" "}
+        <a href="mailto:support@dealhive.io">support@dealhive.io</a>
+      </p>
+    </LegalPage>
+  );
+}
+
+function TermsPage() {
+  return (
+    <LegalPage title="Terms of Use" updated="July 7, 2026">
+      <p>
+        These Terms of Use ("Terms") govern your access to and use of the DealHive website and
+        applications (the "Service"), operated by DealHive ("we", "us"). By creating an account or
+        using the Service, you agree to these Terms and to our{" "}
+        <a href="/privacy">Privacy Policy</a>.
+      </p>
+
+      <h2>1. The Service</h2>
+      <p>
+        DealHive aggregates real estate deal information from third-party and public sources and
+        provides analysis tools for evaluating potential investments. The Service is an
+        informational tool — it is not a brokerage, lender, appraiser, or investment advisor.
+      </p>
+
+      <h2>2. Accounts</h2>
+      <p>
+        You must provide accurate information when creating an account and keep your credentials
+        secure. You are responsible for activity under your account. One account per person; you
+        may not share, sell, or transfer your account.
+      </p>
+
+      <h2>3. Subscriptions & billing</h2>
+      <ul>
+        <li>The Free plan is free indefinitely and includes the features described on our Pricing page.</li>
+        <li>DealHive Pro is a monthly subscription billed through Stripe at the price shown at checkout. It renews automatically each month until cancelled.</li>
+        <li>You can cancel anytime; access continues through the end of the paid period. Fees already paid are non-refundable except where required by law or where we determine an error on our part.</li>
+        <li>We may change subscription pricing with at least 30 days' notice; existing subscribers keep their sign-up price unless notified otherwise.</li>
+      </ul>
+
+      <h2>4. License & acceptable use</h2>
+      <p>
+        We grant you a limited, non-exclusive, non-transferable license to use the Service for your
+        own real estate investing activities. You agree not to:
+      </p>
+      <ul>
+        <li>Scrape, harvest, resell, or redistribute the Service's data or content;</li>
+        <li>Reverse engineer, copy, or create derivative works of the Service;</li>
+        <li>Use the Service to violate any law or third-party right;</li>
+        <li>Interfere with or disrupt the Service, or attempt to access other users' data.</li>
+      </ul>
+
+      <h2>5. Property data & reports disclaimer</h2>
+      <p>
+        <strong>Read this section carefully.</strong> Property information, deal listings,
+        estimates, analyses, and reports in the Service are generated from data provided by third
+        parties and public records. We do not independently verify this data, and it may be
+        incomplete, outdated, or inaccurate. Analyses and projections are mathematical models based
+        on assumptions — they are <strong>not</strong> certified appraisals, broker price opinions,
+        or investment, legal, tax, or financial advice.
+      </p>
+      <p>
+        Real estate investing involves substantial risk, including loss of capital. You are solely
+        responsible for your investment decisions. Always independently verify property details,
+        condition, title, rents, and values — and consult licensed professionals — before
+        purchasing any property.
+      </p>
+
+      <h2>6. Intellectual property</h2>
+      <p>
+        The Service, including its software, design, and branding, is owned by us or our licensors
+        and protected by intellectual property laws. These Terms grant you no ownership rights.
+        Content you create in your account (notes, saved analyses) remains yours.
+      </p>
+
+      <h2>7. Third-party content & services</h2>
+      <p>
+        The Service links to and displays content from third parties (listings, maps, imagery). We
+        are not responsible for third-party content or services, and your use of them may be
+        subject to their own terms.
+      </p>
+
+      <h2>8. Termination</h2>
+      <p>
+        You may stop using the Service or delete your account at any time. We may suspend or
+        terminate accounts that violate these Terms or that create risk for the Service or other
+        users. Upon termination, sections 5–11 survive.
+      </p>
+
+      <h2>9. Disclaimer of warranties</h2>
+      <p>
+        THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EXPRESS
+        OR IMPLIED, INCLUDING FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AND NON-INFRINGEMENT. WE
+        DO NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED, ERROR-FREE, OR THAT ANY DEAL WILL BE
+        AVAILABLE, ACCURATE, OR PROFITABLE.
+      </p>
+
+      <h2>10. Limitation of liability</h2>
+      <p>
+        TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+        SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR LOST PROFITS, LOST DATA, OR INVESTMENT
+        LOSSES, ARISING FROM YOUR USE OF THE SERVICE. OUR TOTAL LIABILITY FOR ANY CLAIM IS LIMITED
+        TO THE AMOUNT YOU PAID US IN THE TWELVE MONTHS BEFORE THE CLAIM AROSE (OR $50 IF YOU PAID
+        NOTHING).
+      </p>
+
+      <h2>11. Indemnification</h2>
+      <p>
+        You agree to indemnify and hold us harmless from claims arising out of your use of the
+        Service, your investment decisions, or your violation of these Terms.
+      </p>
+
+      <h2>12. Changes to these Terms</h2>
+      <p>
+        We may update these Terms from time to time. We'll update the date above and, for material
+        changes, notify you in the app or by email. Continued use after changes take effect means
+        you accept the updated Terms.
+      </p>
+
+      <h2>13. Governing law</h2>
+      <p>
+        These Terms are governed by the laws of the United States and the state in which DealHive's
+        operating company is organized, without regard to conflict-of-law rules. Disputes will be
+        resolved in the courts of that state.
+      </p>
+
+      <h2>14. Contact</h2>
+      <p>
+        Questions about these Terms:{" "}
+        <a href="mailto:support@dealhive.io">support@dealhive.io</a>
+      </p>
+    </LegalPage>
+  );
+}
+
+// ==============================================================================
+// Top-level export — routes to the right page
+// ==============================================================================
+const PAGE_TITLES = {
+  "/":          "DealHive — off-market deals, pre-analyzed, every day",
+  "/features":  "Features — DealHive",
+  "/pricing":   "Pricing — DealHive",
+  "/faq":       "FAQ — DealHive",
+  "/about":     "About — DealHive",
+  "/contact":   "Contact — DealHive",
+  "/privacy":   "Privacy Policy — DealHive",
+  "/terms":     "Terms of Use — DealHive",
+};
+
+export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.title = PAGE_TITLES[page] || PAGE_TITLES["/"];
+  }, [page]);
+
+  const body =
+    page === "/features" ? <FeaturesPage onSignUp={onSignUp}/> :
+    page === "/pricing"  ? <PricingPage onSignUp={onSignUp}/> :
+    page === "/faq"      ? <FAQPage onSignUp={onSignUp}/> :
+    page === "/about"    ? <AboutPage onSignUp={onSignUp}/> :
+    page === "/contact"  ? <ContactPage/> :
+    page === "/privacy"  ? <PrivacyPage/> :
+    page === "/terms"    ? <TermsPage/> :
+    <HomePage onSignUp={onSignUp}/>;
+
+  return (
+    <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
+      <TopNav navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
+      {body}
+      <Footer navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
     </div>
   );
 }
