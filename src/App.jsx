@@ -3865,6 +3865,55 @@ const STRATEGY_LABELS = {
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
 };
 
+// Wholesale assignment deals come from the InvestorLift pull ("DealHive 1")
+// and are the only ones that carry wholesaler/seller contact info. Used by
+// the strategy filters on the feed and the saved-deals dashboard.
+const isWholesaleDeal = d =>
+  d?.source === "DealHive 1" ||
+  !!(d?.seller && (d.seller.name || d.seller.company || d.seller.phone || d.seller.email));
+
+// Shared strategy segmented control (Deals feed + Saved Deals dashboard).
+// `counts` is optional {all, buyhold, flip, wholesale} to show per-tab counts.
+function StrategySegments({value, onChange, counts}) {
+  const tabs = [
+    ["all",       "All"],
+    ["buyhold",   "Rentals"],
+    ["flip",      "Fix & Flip"],
+    ["wholesale", "Wholesale"],
+  ];
+  return (
+    <div style={{display:"flex", padding:3, background:C.bgSubtle,
+      border:"1px solid "+C.border, borderRadius:C.r2, maxWidth:"100%", overflowX:"auto"}}>
+      {tabs.map(([id, label]) => {
+        const active = value === id;
+        const n = counts?.[id];
+        return (
+          <button key={id} onClick={()=>onChange(id)}
+            style={{
+              padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+              background: active ? C.card : "transparent",
+              color: active ? C.text : C.textSub,
+              fontWeight: active?600:500, fontSize:12, fontFamily:F,
+              letterSpacing:"-0.005em",
+              boxShadow: active ? C.sh1 : "none",
+              transition:"background .12s, color .12s, box-shadow .12s",
+              whiteSpace:"nowrap", display:"inline-flex", alignItems:"center", gap:6,
+            }}>
+            {label}
+            {n != null && n > 0 && (
+              <span style={{
+                fontSize:10.5, fontWeight:700, fontVariantNumeric:"tabular-nums",
+                background: active ? C.greenLight : C.border,
+                color: active ? C.greenDark : C.textSub,
+                borderRadius:9999, padding:"1px 6px",
+              }}>{n}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio"}) {
   const c = classifyDeal(deal);
@@ -4420,6 +4469,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
   const isPro  = tier === "pro";
   const isWide = useIsWide();
   const [selectedId, setSelectedId] = useState(null);
+  const [strat, setStrat] = useState("all"); // all | buyhold | flip | wholesale
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
@@ -4442,10 +4492,21 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
     );
   }
 
-  // Newest-saved first.
+  // Newest-saved first, pre-classified once so tab counts and filtering agree.
   const ordered = [...savedDeals].sort((a, b) =>
     (b.savedAt || "").localeCompare(a.savedAt || "")
-  );
+  ).map(d => ({d, c: classifyDeal(d)}));
+
+  const matches = ({d, c}) =>
+    strat === "all" ? true :
+    strat === "wholesale" ? isWholesaleDeal(d) :
+    c.tags.includes(strat);
+  const shown  = ordered.filter(matches);
+  const counts = {
+    buyhold:   ordered.filter(({c}) => c.tags.includes("buyhold")).length,
+    flip:      ordered.filter(({c}) => c.tags.includes("flip")).length,
+    wholesale: ordered.filter(({d}) => isWholesaleDeal(d)).length,
+  };
 
   return (
     <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
@@ -4464,10 +4525,28 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         </button>
       </div>
 
+      <div style={{marginBottom:16}}>
+        <StrategySegments value={strat} onChange={setStrat} counts={counts}/>
+      </div>
+
+      {shown.length === 0 ? (
+        <EmptyState
+          icon={<I.star size={22}/>}
+          title={strat === "wholesale" ? "No saved wholesale deals"
+               : strat === "flip"      ? "No saved fix and flips"
+               : "No saved rentals"}
+          body="Nothing in your watchlist matches this strategy yet. Browse the feed and save a few."
+          action={
+            <button onClick={onBrowse} {...btnStyle("primary","md")}>
+              <I.star size={13}/> Browse deals
+            </button>
+          }
+        />
+      ) : (
       <div style={{display:"grid",
         gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
         gap:16}}>
-        {ordered.map(d => (
+        {shown.map(({d}) => (
           <DealCard key={d.id} deal={d} isPro={isPro}
             onAnalyze={() => onAnalyze(d)}
             onSave={() => onRemove(d)}
@@ -4479,9 +4558,10 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
             mobile={mobile} />
         ))}
       </div>
+      )}
 
       {selectedId && (() => {
-        const d = ordered.find(x => x.id === selectedId);
+        const d = ordered.map(x => x.d).find(x => x.id === selectedId);
         if (!d) return null;
         return (
           <DealDetailModal
@@ -4561,8 +4641,9 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
   const filtered = classified.filter(({d, c}) => {
     if (market !== "all" && (d.state || "").toUpperCase() !== market) return false;
     if (maxPrice > 0 && d.price > maxPrice) return false;
-    if (strategy === "buyhold" && !c.tags.includes("buyhold")) return false;
-    if (strategy === "flip"    && !c.tags.includes("flip"))    return false;
+    if (strategy === "buyhold"   && !c.tags.includes("buyhold")) return false;
+    if (strategy === "flip"      && !c.tags.includes("flip"))    return false;
+    if (strategy === "wholesale" && !isWholesaleDeal(d))         return false;
     return true;
   });
 
@@ -4613,7 +4694,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
           <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
             {filtered.length === 0
               ? "No deals match your filters right now."
-              : `${filtered.length} wholesale deal${filtered.length===1?"":"s"} across cash-flow markets · ${buyHoldCount} buy-and-hold · ${flipCount} flip`}
+              : `${filtered.length} deal${filtered.length===1?"":"s"} across cash-flow markets · ${buyHoldCount} rental${buyHoldCount===1?"":"s"} · ${flipCount} flip${flipCount===1?"":"s"}`}
             {usingLive && feed?.updatedAt && (
               <span style={{color:C.textMuted}}> · Updated {timeAgo(feed.updatedAt)}</span>
             )}
@@ -4632,25 +4713,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
       {/* Filter bar */}
       <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center"}}>
         {/* Strategy segmented control */}
-        <div style={{display:"flex", padding:3, background:C.bgSubtle,
-          border:"1px solid "+C.border, borderRadius:C.r2}}>
-          {[["all","All"],["buyhold","Buy & Hold"],["flip","Fix & Flip"]].map(([id,label]) => {
-            const active = strategy === id;
-            return (
-              <button key={id} onClick={()=>setStrategy(id)}
-                style={{
-                  padding:"5px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
-                  background: active ? C.card : "transparent",
-                  color: active ? C.text : C.textSub,
-                  fontWeight: active?600:500, fontSize:12, fontFamily:F,
-                  letterSpacing:"-0.005em",
-                  boxShadow: active ? C.sh1 : "none",
-                  transition:"background .12s, color .12s, box-shadow .12s",
-                  whiteSpace:"nowrap",
-                }}>{label}</button>
-            );
-          })}
-        </div>
+        <StrategySegments value={strategy} onChange={setStrategy}/>
 
         {/* Market dropdown — dynamic from actual deal states (InvestorLift goes nationwide). */}
         <select value={market} onChange={e => setMarket(e.target.value)}
