@@ -6269,19 +6269,11 @@ export default function App() {
     setPrefilledDeal(dealToProForma(deal));
     setPage("deal");
   };
-  // Admin save (creates a Property in the portfolio). Regular members get
-  // saveDealToWatchlist instead, just below.
-  const saveDealToPortfolio = deal => {
-    const p = newProp({
-      ...dealToProForma(deal), id:"p"+Date.now(),
-      projects:[], occupied:false, tenantStatus:"Vacant",
-    });
-    persist({...data, properties:[...data.properties, p]});
-    setPropId(p.id); setPage("property");
-    setToast("Saved to My Properties"); setTimeout(()=>setToast(""), 2000);
-  };
-  // Regular-member save: add to data.savedDeals so it shows up on their
-  // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
+  // Saving from the Deals page adds to data.savedDeals for every account
+  // (admin included) so the home dashboard is the one watchlist. Moving a
+  // deal into the actual portfolio is the deliberate second step, via
+  // Analyzer -> "Move to portfolio" (admin only).
+  // Keyed by deal.id so re-saving the same deal is a no-op.
   const saveDealToWatchlist = deal => {
     const existing = data.savedDeals || [];
     if (existing.some(d => d.id === deal.id)) {
@@ -6297,12 +6289,8 @@ export default function App() {
     persist({...data, savedDeals: (data.savedDeals || []).filter(d => d.id !== id)});
     setToast("Removed from saved deals"); setTimeout(()=>setToast(""), 2000);
   };
-  // The actual save handler the Deals page calls — admin gets portfolio,
-  // everyone else gets the saved-deals watchlist.
-  const saveDealFromMarket = deal => {
-    if (isAdmin) saveDealToPortfolio(deal);
-    else         saveDealToWatchlist(deal);
-  };
+  // The save handler the Deals page calls — one watchlist for everyone.
+  const saveDealFromMarket = saveDealToWatchlist;
   // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
   // can use Pro features. When checkout lands this will redirect to Stripe and
   // the tier will be set server-side on a successful payment webhook.
@@ -6355,12 +6343,10 @@ export default function App() {
           <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
             onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
         ) : page==="dashboard" ? (
-          isAdmin
-            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
-            : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
-                onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
-                onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
-                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
+          <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+            onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+            onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+            onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -6406,7 +6392,10 @@ export default function App() {
               <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
                 onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
             ) : page==="dashboard" ? (
-              <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+              <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+                onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+                onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
             ) : page==="properties" ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" ? (
