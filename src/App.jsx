@@ -4465,35 +4465,42 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 // Dashboard for regular members (non-admin) — replaces the portfolio dashboard.
 // Shows the member's saved deals as a watchlist with the same card/modal as
 // the Deals page, but the secondary action is "Remove" instead of "Save".
-// Home-screen shortcuts into the Deals feed, pre-filtered by strategy.
-function BrowseByStrategy({onBrowseStrategy, mobile}) {
+// Scenario cards on the member home. They ARE the watchlist filter: click
+// Rentals and the saved-deals grid below shows only your saved rentals.
+// Click the active card again to go back to all. Counts show how many of
+// your saved deals fit each scenario.
+function StrategyCards({active, counts, onSelect, mobile}) {
   const cards = [
     {id:"buyhold",   Icon:I.building, title:"Rentals",     line:"Cash-flowing buy and holds"},
     {id:"flip",      Icon:I.chart,    title:"Fix & Flips", line:"Profit and ROI already sized"},
     {id:"wholesale", Icon:I.star,     title:"Wholesale",   line:"Assignments with seller contact"},
   ];
   return (
-    <div style={{marginBottom:24}}>
-      <div style={{fontSize:13, fontWeight:600, color:C.textSub, fontFamily:F,
-        letterSpacing:"0.04em", textTransform:"uppercase", marginBottom:10}}>
-        Browse deals
-      </div>
-      <div style={{display:"grid", gap:12,
-        gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)"}}>
-        {cards.map(({id, Icon, title, line}) => (
-          <button key={id} onClick={()=>onBrowseStrategy(id)}
+    <div style={{display:"grid", gap:12, marginBottom:20,
+      gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)"}}>
+      {cards.map(({id, Icon, title, line}) => {
+        const isActive = active === id;
+        const n = counts?.[id] ?? 0;
+        return (
+          <button key={id} onClick={()=>onSelect(isActive ? "all" : id)}
+            aria-pressed={isActive}
             style={{
               display:"flex", alignItems:"center", gap:12, textAlign:"left",
-              background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
-              padding:"14px 16px", cursor:"pointer", boxShadow:C.sh1,
-              transition:"border-color .12s, box-shadow .12s, transform .12s",
+              background: isActive ? C.greenSubtle : C.card,
+              border:"1.5px solid "+(isActive ? C.green : C.border),
+              borderRadius:C.r4, padding:"14px 16px", cursor:"pointer",
+              boxShadow: isActive ? C.sh3 : C.sh1,
+              transition:"border-color .12s, box-shadow .12s, background .12s",
             }}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.greenBorder; e.currentTarget.style.boxShadow=C.sh3;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow=C.sh1;}}>
+            onMouseEnter={e=>{ if(!isActive){ e.currentTarget.style.borderColor=C.greenBorder; e.currentTarget.style.boxShadow=C.sh3; } }}
+            onMouseLeave={e=>{ if(!isActive){ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow=C.sh1; } }}>
             <span style={{
               width:38, height:38, borderRadius:C.r2, flexShrink:0,
-              background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+              background: isActive ? C.green : C.greenSubtle,
+              border:"1px solid "+(isActive ? C.green : C.greenBorder),
+              color: isActive ? "#fff" : C.greenDark,
               display:"inline-flex", alignItems:"center", justifyContent:"center",
+              transition:"background .12s, color .12s",
             }}>
               <Icon size={17}/>
             </span>
@@ -4504,12 +4511,17 @@ function BrowseByStrategy({onBrowseStrategy, mobile}) {
                 {line}
               </span>
             </span>
-            <span style={{marginLeft:"auto", color:C.textMuted, flexShrink:0}}>
-              <I.chevronRight size={15}/>
-            </span>
+            <span style={{
+              marginLeft:"auto", flexShrink:0, fontFamily:F,
+              fontSize:12, fontWeight:700, fontVariantNumeric:"tabular-nums",
+              background: isActive ? C.green : C.bgSubtle,
+              color: isActive ? "#fff" : C.textSub,
+              border:"1px solid "+(isActive ? C.green : C.border),
+              borderRadius:9999, padding:"3px 9px",
+            }}>{n}</span>
           </button>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -4527,7 +4539,8 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
       <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
         <PageHeader title="My Saved Deals"
           subtitle="Track deals you're interested in. Save any deal from the Deals page and it'll land here."/>
-        <BrowseByStrategy onBrowseStrategy={onBrowseStrategy} mobile={mobile}/>
+        <StrategyCards active="all" counts={{}} mobile={mobile}
+          onSelect={st => st !== "all" && onBrowseStrategy(st)}/>
         <EmptyState
           icon={<I.star size={22}/>}
           title="Your watchlist is empty"
@@ -4575,15 +4588,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         </button>
       </div>
 
-      <BrowseByStrategy onBrowseStrategy={onBrowseStrategy} mobile={mobile}/>
-
-      <div style={{fontSize:13, fontWeight:600, color:C.textSub, fontFamily:F,
-        letterSpacing:"0.04em", textTransform:"uppercase", marginBottom:10}}>
-        Your watchlist
-      </div>
-      <div style={{marginBottom:16}}>
-        <StrategySegments value={strat} onChange={setStrat} counts={counts}/>
-      </div>
+      <StrategyCards active={strat} counts={counts} onSelect={setStrat} mobile={mobile}/>
 
       {shown.length === 0 ? (
         <EmptyState
@@ -4591,10 +4596,10 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
           title={strat === "wholesale" ? "No saved wholesale deals"
                : strat === "flip"      ? "No saved fix and flips"
                : "No saved rentals"}
-          body="Nothing in your watchlist matches this strategy yet. Browse the feed and save a few."
+          body="Nothing in your watchlist matches this scenario yet. Browse the feed and save a few."
           action={
-            <button onClick={onBrowse} {...btnStyle("primary","md")}>
-              <I.star size={13}/> Browse deals
+            <button onClick={()=>onBrowseStrategy(strat)} {...btnStyle("primary","md")}>
+              <I.star size={13}/> Browse {strat === "wholesale" ? "wholesale deals" : strat === "flip" ? "fix & flips" : "rentals"}
             </button>
           }
         />
