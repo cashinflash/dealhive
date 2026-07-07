@@ -468,6 +468,7 @@ const I = {
   arrowLeft:   p => <IconSvg {...p} d={<g><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></g>}/>,
   arrowRight:  p => <IconSvg {...p} d={<g><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></g>}/>,
   chevronRight:p => <IconSvg {...p} d="M9 18l6-6-6-6"/>,
+  cycle:       p => <IconSvg {...p} d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/>,
   chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
   lock:        p => <IconSvg {...p} d={<g><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></g>}/>,
   star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
@@ -3751,10 +3752,26 @@ const classifyDeal = (deal) => {
   const flipProfit   = Math.round(arv - totalIn - agentFee - sellClosing - holdingCost);
   const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
+  // BRRRR — buy all-cash (price + rehab + closing), refinance at 75% of ARV
+  // once stabilized, keep it as a rental on the refi loan. The play works
+  // when the refi returns most of your capital AND the property still cash
+  // flows against the new payment.
+  const allIn        = (deal.price || 0) + repair + DEFAULT_CLOSING;
+  const refiLoan     = Math.round(arv * 0.75);
+  const capitalLeft  = Math.max(0, allIn - refiLoan);
+  const recoveredPct = allIn > 0 ? Math.min(100, Math.round((refiLoan / allIn) * 100)) : 0;
+  const refiMonthly  = 7.5 / 100 / 12; // same rate assumption as the buy-hold model
+  const refiPmt      = Math.round(refiLoan * refiMonthly / (1 - Math.pow(1 + refiMonthly, -360)));
+  const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.08) + Math.round(rent * 0.05);
+  const brrrrCF      = rent - brrrrOpEx - refiPmt;
+
   // Tighter gates — no $30/mo cash-flow noise. Only "good" deals pass.
+  // BRRRR additionally requires a real rehab (that's the second R) and is an
+  // overlay tag: every brrrr deal is also in the feed via buyhold or flip.
   const tags = [];
   if (buyHold.finCap >= 8  && buyHold.finCF >= 200)   tags.push("buyhold");
   if (flipROI       >= 18 && flipProfit     >= 25000) tags.push("flip");
+  if (repair >= 10000 && recoveredPct >= 70 && brrrrCF >= 100) tags.push("brrrr");
 
   // Score picks the "primary" strategy when both fit.
   const buyHoldScore = (buyHold.finCF >= 200 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
@@ -3764,6 +3781,7 @@ const classifyDeal = (deal) => {
     tags, buyHoldScore, flipScore,
     buyHold,
     flip: {arv, totalIn, profit:flipProfit, roi:flipROI},
+    brrrr: {allIn, refiLoan, capitalLeft, recoveredPct, cashFlow: brrrrCF},
   };
 };
 
@@ -3862,6 +3880,7 @@ const FREE_PREVIEW_COUNT = 5;
 const STRATEGY_LABELS = {
   buyhold: {label:"Buy & Hold",   color:C.greenDark, bg:C.greenSubtle, border:C.greenBorder, dot:C.green},
   flip:    {label:"Fix & Flip",   color:C.amberDark, bg:C.amberSubtle, border:C.amberBorder, dot:C.amber},
+  brrrr:   {label:"BRRRR",        color:C.blueDark,  bg:C.blueSubtle,  border:C.blueBorder,  dot:C.blue},
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
 };
 
@@ -3878,6 +3897,7 @@ function StrategySegments({value, onChange, counts}) {
   const tabs = [
     ["all",       "All"],
     ["buyhold",   "Rentals"],
+    ["brrrr",     "BRRRR"],
     ["flip",      "Fix & Flip"],
     ["wholesale", "Wholesale"],
   ];
@@ -3919,13 +3939,17 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   const c = classifyDeal(deal);
   if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
 
-  const primary = c.tags.length > 1
+  // BRRRR is an overlay: it never drives the primary badge (that stays a
+  // buyhold/flip/multi call) — it gets its own chip beside the primary.
+  const coreTags = c.tags.filter(t => t !== "brrrr");
+  const isBrrrr  = c.tags.includes("brrrr");
+  const primary = coreTags.length > 1
     ? "multi"
-    : c.tags.includes("buyhold") && c.flipScore <= c.buyHoldScore
+    : coreTags.includes("buyhold") && c.flipScore <= c.buyHoldScore
       ? "buyhold"
-      : c.tags.includes("flip") && c.flipScore > c.buyHoldScore
+      : coreTags.includes("flip") && c.flipScore > c.buyHoldScore
         ? "flip"
-        : c.tags[0];
+        : coreTags[0] || "buyhold";
   const strat = STRATEGY_LABELS[primary];
 
   // Hero metrics depend on the primary strategy.
@@ -3954,14 +3978,28 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
           background:"linear-gradient(to bottom, transparent 55%, rgba(9,9,11,.55))"}}/>
         <div style={{position:"absolute", top:10, left:10, right:10,
           display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8}}>
-          <span style={{
-            display:"inline-flex", alignItems:"center", gap:5,
-            background: strat.bg, color: strat.color, border:"1px solid "+strat.border,
-            padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
-            letterSpacing:"-0.005em", boxShadow: "0 1px 2px rgba(9,9,11,.15)",
-          }}>
-            <span style={{width:6, height:6, borderRadius:"50%", background:strat.dot}}/>
-            {strat.label}
+          <span style={{display:"inline-flex", alignItems:"center", gap:6, flexWrap:"wrap", minWidth:0}}>
+            <span style={{
+              display:"inline-flex", alignItems:"center", gap:5,
+              background: strat.bg, color: strat.color, border:"1px solid "+strat.border,
+              padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+              letterSpacing:"-0.005em", boxShadow: "0 1px 2px rgba(9,9,11,.15)",
+            }}>
+              <span style={{width:6, height:6, borderRadius:"50%", background:strat.dot}}/>
+              {strat.label}
+            </span>
+            {isBrrrr && (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:5,
+                background: STRATEGY_LABELS.brrrr.bg, color: STRATEGY_LABELS.brrrr.color,
+                border:"1px solid "+STRATEGY_LABELS.brrrr.border,
+                padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+                letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
+              }}>
+                <span style={{width:6, height:6, borderRadius:"50%", background:STRATEGY_LABELS.brrrr.dot}}/>
+                BRRRR
+              </span>
+            )}
           </span>
           {!isPro && (
             <span title="Upgrade to see full details"
@@ -4179,14 +4217,16 @@ function PhotoCarousel({photos = [], fallbackLat, fallbackLng, height = 280, mob
 }
 
 function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile}) {
-  const c       = classifyDeal(deal);
-  const primary = c.tags.length > 1
+  const c        = classifyDeal(deal);
+  const coreTags = c.tags.filter(t => t !== "brrrr");
+  const isBrrrr  = c.tags.includes("brrrr");
+  const primary = coreTags.length > 1
     ? "multi"
-    : c.tags.includes("buyhold") && c.flipScore <= c.buyHoldScore
+    : coreTags.includes("buyhold") && c.flipScore <= c.buyHoldScore
       ? "buyhold"
-      : c.tags.includes("flip") && c.flipScore > c.buyHoldScore
+      : coreTags.includes("flip") && c.flipScore > c.buyHoldScore
         ? "flip"
-        : c.tags[0] || "buyhold";
+        : coreTags[0] || "buyhold";
   const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
 
   // Escape closes; body scroll lock while open.
@@ -4358,6 +4398,44 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
           </div>
         </div>
 
+        {/* BRRRR snapshot — buy all-cash, refi at 75% ARV, keep the rental */}
+        {isBrrrr && (
+          <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
+            <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:10}}>
+              <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase"}}>
+                BRRRR snapshot
+              </span>
+              <span style={{fontSize:10.5, fontWeight:700, fontFamily:F,
+                background:STRATEGY_LABELS.brrrr.bg, color:STRATEGY_LABELS.brrrr.color,
+                border:"1px solid "+STRATEGY_LABELS.brrrr.border,
+                borderRadius:9999, padding:"1px 8px"}}>
+                {c.brrrr.recoveredPct}% capital back at refi
+              </span>
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:0,
+              border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+              background:C.border}}>
+              {[
+                ["All-in (cash + rehab)", $(c.brrrr.allIn),       C.text],
+                ["Refi loan (75% ARV)",   $(c.brrrr.refiLoan),    C.text],
+                ["Cash left in deal",     $(c.brrrr.capitalLeft), c.brrrr.capitalLeft <= 0 ? cfC(1) : C.text],
+                ["Cash flow after refi",  $mo(c.brrrr.cashFlow),  cfC(c.brrrr.cashFlow)],
+              ].map(([l, v, color]) => (
+                <div key={l} style={{padding:"12px 14px", background:C.card}}>
+                  <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                    letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
+                  <div style={{fontSize:16, fontWeight:700, color, fontFamily:F, marginTop:2,
+                    fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <p style={{fontSize:11.5, color:C.textMuted, fontFamily:F, margin:"8px 0 0", lineHeight:1.5}}>
+              Model: purchase and rehab in cash, refinance at 75% of ARV (30yr, 7.5%), then hold as a rental.
+            </p>
+          </div>
+        )}
+
         {/* Description — Pro only */}
         {deal.description && (
           <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
@@ -4472,12 +4550,13 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 function StrategyCards({active, counts, onSelect, mobile}) {
   const cards = [
     {id:"buyhold",   Icon:I.building, title:"Rentals",     line:"Cash-flowing buy and holds"},
+    {id:"brrrr",     Icon:I.cycle,    title:"BRRRR",       line:"Rehab, rent, refi, repeat"},
     {id:"flip",      Icon:I.chart,    title:"Fix & Flips", line:"Profit and ROI already sized"},
     {id:"wholesale", Icon:I.star,     title:"Wholesale",   line:"Assignments with seller contact"},
   ];
   return (
     <div style={{display:"grid", gap:12, marginBottom:20,
-      gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)"}}>
+      gridTemplateColumns: mobile ? "1fr" : "repeat(auto-fit, minmax(215px, 1fr))"}}>
       {cards.map(({id, Icon, title, line}) => {
         const isActive = active === id;
         const n = counts?.[id] ?? 0;
@@ -4567,6 +4646,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
   const shown  = ordered.filter(matches);
   const counts = {
     buyhold:   ordered.filter(({c}) => c.tags.includes("buyhold")).length,
+    brrrr:     ordered.filter(({c}) => c.tags.includes("brrrr")).length,
     flip:      ordered.filter(({c}) => c.tags.includes("flip")).length,
     wholesale: ordered.filter(({d}) => isWholesaleDeal(d)).length,
   };
@@ -4595,11 +4675,12 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
           icon={<I.star size={22}/>}
           title={strat === "wholesale" ? "No saved wholesale deals"
                : strat === "flip"      ? "No saved fix and flips"
+               : strat === "brrrr"     ? "No saved BRRRR deals"
                : "No saved rentals"}
           body="Nothing in your watchlist matches this scenario yet. Browse the feed and save a few."
           action={
             <button onClick={()=>onBrowseStrategy(strat)} {...btnStyle("primary","md")}>
-              <I.star size={13}/> Browse {strat === "wholesale" ? "wholesale deals" : strat === "flip" ? "fix & flips" : "rentals"}
+              <I.star size={13}/> Browse {strat === "wholesale" ? "wholesale deals" : strat === "flip" ? "fix & flips" : strat === "brrrr" ? "BRRRR deals" : "rentals"}
             </button>
           }
         />
@@ -4708,6 +4789,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
     if (market !== "all" && (d.state || "").toUpperCase() !== market) return false;
     if (maxPrice > 0 && d.price > maxPrice) return false;
     if (strategy === "buyhold"   && !c.tags.includes("buyhold")) return false;
+    if (strategy === "brrrr"     && !c.tags.includes("brrrr"))   return false;
     if (strategy === "flip"      && !c.tags.includes("flip"))    return false;
     if (strategy === "wholesale" && !isWholesaleDeal(d))         return false;
     return true;
