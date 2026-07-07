@@ -3690,16 +3690,8 @@ function ExpensesTab({p, set, mobile}) {
 }
 
 // -- Deals (curated wholesale list) -------------------------------------------
-// Cash-flow markets we currently source from. Filter pills + the deal feed are
-// scoped to this set; expand as new market pulls come online.
-const DEAL_MARKETS = [
-  {id:"cle", label:"Cleveland, OH"},
-  {id:"det", label:"Detroit, MI"},
-  {id:"mem", label:"Memphis, TN"},
-  {id:"bhm", label:"Birmingham, AL"},
-  {id:"ind", label:"Indianapolis, IN"},
-  {id:"kcm", label:"Kansas City, MO"},
-];
+// Market filters are built dynamically from whatever states appear in the
+// feed, so new pipeline markets show up here with zero client changes.
 
 // Classify a deal against two pro forma strategies (buy-and-hold and fix-and-
 // flip) and surface tags + scores so the card can show the right hero numbers.
@@ -4626,7 +4618,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) 
               <span style={{color:C.textMuted}}> · Updated {timeAgo(feed.updatedAt)}</span>
             )}
             {!usingLive && !feedErr && (
-              <span style={{color:C.textMuted}}> · Live feed seeds after the first nightly pull</span>
+              <span style={{color:C.textMuted}}> · Sample deals shown while the live feed warms up</span>
             )}
           </p>
         </div>
@@ -5468,6 +5460,15 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
           )}
         </div>
       </SectionBlock>
+
+      <div style={{display:"flex", gap:16, justifyContent:"center", padding:"6px 0 0"}}>
+        {[["Privacy Policy","/privacy"],["Terms of Use","/terms"]].map(([label, href]) => (
+          <a key={href} href={href} target="_blank" rel="noreferrer"
+            style={{fontSize:12, color:C.textMuted, fontFamily:F, textDecoration:"none"}}>
+            {label}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }
@@ -6004,18 +6005,24 @@ export default function App() {
     </div>
   );
 
-  // Public surface: marketing site at "/", auth modal at "/login" or "/signup".
-  // Any other unauth path defaults to the landing page so a stale bookmark
-  // still lands somewhere sensible.
+  // Public surface: multi-page marketing site + auth at /login | /signup.
+  // Unknown unauth paths fall back to the landing home so stale bookmarks
+  // still land somewhere sensible. Legal pages stay reachable even when
+  // signed in (Settings links + App Store review both need that).
+  const navigate = p => { window.history.pushState({}, "", p); setPath(p); };
+  const marketingProps = {
+    page: path,
+    navigate,
+    onSignIn: () => navigate("/login"),
+    onSignUp: () => navigate("/signup"),
+  };
   if (!user || !data) {
     const onAuthRoute = path === "/login" || path === "/signup";
     if (onAuthRoute) return <AuthPage onAuth={handleAuth} />;
-    return (
-      <Landing
-        onSignIn={() => { window.history.pushState({}, "", "/login"); setPath("/login"); }}
-        onSignUp={() => { window.history.pushState({}, "", "/signup"); setPath("/signup"); }}
-      />
-    );
+    return <Landing {...marketingProps} />;
+  }
+  if (path === "/privacy" || path === "/terms") {
+    return <Landing {...marketingProps} onSignIn={() => navigate("/")} onSignUp={() => navigate("/")} />;
   }
 
   // App handlers

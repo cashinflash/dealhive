@@ -31,13 +31,27 @@ const RENTCAST_API_KEY      = defineSecret("RENTCAST_API_KEY");
 const MANUAL_TRIGGER_SECRET = defineSecret("MANUAL_TRIGGER_SECRET");
 
 // -- Config --------------------------------------------------------------------
+// One anchor market per state we source from — used only by marketIdForState()
+// to tag deals; the client builds its market filter dynamically from the data,
+// so adding states here never requires a client change.
 const MARKETS = [
-  {id:"cle", city:"Cleveland",    state:"OH"},
-  {id:"det", city:"Detroit",      state:"MI"},
-  {id:"mem", city:"Memphis",      state:"TN"},
-  {id:"bhm", city:"Birmingham",   state:"AL"},
-  {id:"ind", city:"Indianapolis", state:"IN"},
-  {id:"kcm", city:"Kansas City",  state:"MO"},
+  {id:"cle", city:"Cleveland",     state:"OH"},
+  {id:"det", city:"Detroit",       state:"MI"},
+  {id:"mem", city:"Memphis",       state:"TN"},
+  {id:"bhm", city:"Birmingham",    state:"AL"},
+  {id:"ind", city:"Indianapolis",  state:"IN"},
+  {id:"kcm", city:"Kansas City",   state:"MO"},
+  {id:"pit", city:"Pittsburgh",    state:"PA"},
+  {id:"mil", city:"Milwaukee",     state:"WI"},
+  {id:"bal", city:"Baltimore",     state:"MD"},
+  {id:"jax", city:"Jacksonville",  state:"FL"},
+  {id:"okc", city:"Oklahoma City", state:"OK"},
+  {id:"lou", city:"Louisville",    state:"KY"},
+  {id:"lit", city:"Little Rock",   state:"AR"},
+  {id:"aus", city:"Austin",        state:"TX"},
+  {id:"stl", city:"St. Louis",     state:"MO"},
+  {id:"grn", city:"Greensboro",    state:"NC"},
+  {id:"aug", city:"Augusta",       state:"GA"},
 ];
 
 // Residential 1-4 unit only — these strings must match what normalizeType()
@@ -46,23 +60,51 @@ const RESIDENTIAL_TYPES = new Set([
   "Single Family", "Multi-Family", "Townhouse", "Condo",
 ]);
 
-// Pull caps tuned for "Abundant ~300 deals/day across three sources":
-//   InvestorLift (Apify):  50 raw / day
-//   DealHive2  (seibs.co):  25 / location × 7 locations = 175 raw / day
-//   DealHive 3 (propwire):  100 raw / day
-// Both override-able via env vars for live tuning without redeploy.
+// Pull caps — volume scales with DEAL_LOCATIONS length:
+//   InvestorLift (Apify):  50 raw / day (nationwide, own cap)
+//   DealHive 2 (realtor):  REALTOR_PER_LOCATION × locations (25 × 31 ≈ 775 raw/day)
+//   DealHive 3 (propwire): 100 raw / day total
+// All override-able via env vars for live tuning without redeploy. Apify spend
+// on the realtor actor scales linearly with locations × per-location cap.
 const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
 const REALTOR_PER_LOCATION = parseInt(process.env.REALTOR_PER_LOCATION || "25", 10);
 const PROPWIRE_MAX      = parseInt(process.env.PROPWIRE_MAX      || "100", 10);
 
-// Locations the seibs.co actor scans (it requires explicit "City, State" strings).
+// Locations the Realtor/Propwire actors scan (they require explicit
+// "City, State" strings). Nationwide-leaning coverage of the strongest
+// cash-flow metros; volume (and Apify spend) scales linearly with this
+// list × REALTOR_PER_LOCATION, so tune with the env overrides.
 const DEAL_LOCATIONS = (process.env.DEAL_LOCATIONS || [
   "Cleveland, OH",
+  "Columbus, OH",
+  "Toledo, OH",
+  "Dayton, OH",
   "Detroit, MI",
+  "Flint, MI",
   "Memphis, TN",
+  "Chattanooga, TN",
   "Birmingham, AL",
+  "Huntsville, AL",
+  "Montgomery, AL",
   "Indianapolis, IN",
+  "Fort Wayne, IN",
   "Kansas City, MO",
+  "St. Louis, MO",
+  "Pittsburgh, PA",
+  "Philadelphia, PA",
+  "Milwaukee, WI",
+  "Baltimore, MD",
+  "Jacksonville, FL",
+  "Tampa, FL",
+  "Oklahoma City, OK",
+  "Tulsa, OK",
+  "Louisville, KY",
+  "Little Rock, AR",
+  "Greensboro, NC",
+  "Fayetteville, NC",
+  "Augusta, GA",
+  "Macon, GA",
+  "San Antonio, TX",
   "Austin, TX",
 ].join("|")).split("|").map(s => s.trim()).filter(Boolean);
 
