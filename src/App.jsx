@@ -4608,6 +4608,13 @@ function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
     : "buyhold";
   const [scenario,  setScenario]  = useState(suggested);
   const [financing, setFinancing] = useState("finance");
+  // null | "dupe" | "saved" — saved shows a confirmation panel, then closes.
+  const [result, setResult] = useState(null);
+  useEffect(() => {
+    if (result !== "saved") return;
+    const t = setTimeout(onCancel, 1400);
+    return () => clearTimeout(t);
+  }, [result, onCancel]);
 
   // Escape closes only this sheet — capture phase beats the modal's listener.
   useEffect(() => {
@@ -4637,6 +4644,29 @@ function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
        maxHeight:"88dvh", overflowY:"auto", boxShadow:C.sh4, padding:"20px 18px 28px"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:480,
        boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 24px"};
+
+  if (result === "saved") {
+    const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
+    return (
+      <div style={outerStyle} onClick={e => e.target === e.currentTarget && onCancel()}>
+        <div style={{...innerStyle, textAlign:"center", padding: mobile ? "40px 24px 52px" : "44px 32px"}}>
+          <div style={{
+            width:60, height:60, borderRadius:"50%", margin:"0 auto 16px",
+            background:C.greenLight, border:"2px solid "+C.green, color:C.greenDark,
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            <I.check size={28} stroke={2.4}/>
+          </div>
+          <div style={{fontSize:19, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+            Saved to {label}
+          </div>
+          <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, marginTop:4}}>
+            {financing === "cash" ? "All cash" : "Financed"} · it's waiting on your Dashboard
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onCancel()}>
@@ -4722,8 +4752,15 @@ function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
           })}
         </div>
 
-        <button onClick={()=>onConfirm(scenario, financing)}
-          {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop:18})}>
+        {result === "dupe" && (
+          <div style={{display:"flex", alignItems:"center", gap:8, marginTop:14,
+            background:C.amberSubtle, border:"1px solid "+C.amberBorder, borderRadius:C.r2,
+            padding:"10px 12px", fontSize:13, color:C.amberDark, fontFamily:F}}>
+            <I.alert size={14}/> This deal is already in your saved deals.
+          </div>
+        )}
+        <button onClick={()=>{ setResult(onConfirm(scenario, financing) ? "saved" : "dupe"); }}
+          {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop: result === "dupe" ? 12 : 18})}>
           <I.star size={14}/> Save deal
         </button>
       </div>
@@ -6480,19 +6517,19 @@ export default function App() {
   };
   // Regular-member save: add to data.savedDeals so it shows up on their
   // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
+  // Returns true on save, false on duplicate — the save sheet shows the
+  // outcome in place (the header toast hides underneath open modals).
   const saveDealToWatchlist = (deal, scenario, financing) => {
     const existing = data.savedDeals || [];
     const dupe = existing.some(x => x.id === deal.id ||
       (x.address === deal.address && x.city === deal.city && x.price === deal.price));
-    if (dupe) {
-      setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000);
-      return;
-    }
+    if (dupe) return false;
     const saved = {...deal, savedAt: new Date().toISOString(), scenario, financing};
     persist({...data, savedDeals: [...existing, saved]});
     const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
     setToast(`Saved to ${label} (${financing === "cash" ? "all cash" : "financed"})`);
     setTimeout(()=>setToast(""), 2200);
+    return true;
   };
   const removeFromWatchlist = dealOrId => {
     const id = typeof dealOrId === "string" ? dealOrId : dealOrId.id;
@@ -6598,7 +6635,7 @@ export default function App() {
       {savePicker && (
         <SaveDealSheet deal={savePicker} mobile={mobile}
           onCancel={()=>setSavePicker(null)}
-          onConfirm={(scenario, financing)=>{ saveDealToWatchlist(savePicker, scenario, financing); setSavePicker(null); }} />
+          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker, scenario, financing)} />
       )}
     </div>
   );
@@ -6641,7 +6678,7 @@ export default function App() {
       {savePicker && (
         <SaveDealSheet deal={savePicker} mobile={mobile}
           onCancel={()=>setSavePicker(null)}
-          onConfirm={(scenario, financing)=>{ saveDealToWatchlist(savePicker, scenario, financing); setSavePicker(null); }} />
+          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker, scenario, financing)} />
       )}
     </div>
   );
