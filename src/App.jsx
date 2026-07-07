@@ -4465,7 +4465,56 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 // Dashboard for regular members (non-admin) — replaces the portfolio dashboard.
 // Shows the member's saved deals as a watchlist with the same card/modal as
 // the Deals page, but the secondary action is "Remove" instead of "Save".
-function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, mobile}) {
+// Home-screen shortcuts into the Deals feed, pre-filtered by strategy.
+function BrowseByStrategy({onBrowseStrategy, mobile}) {
+  const cards = [
+    {id:"buyhold",   Icon:I.building, title:"Rentals",     line:"Cash-flowing buy and holds"},
+    {id:"flip",      Icon:I.chart,    title:"Fix & Flips", line:"Profit and ROI already sized"},
+    {id:"wholesale", Icon:I.star,     title:"Wholesale",   line:"Assignments with seller contact"},
+  ];
+  return (
+    <div style={{marginBottom:24}}>
+      <div style={{fontSize:13, fontWeight:600, color:C.textSub, fontFamily:F,
+        letterSpacing:"0.04em", textTransform:"uppercase", marginBottom:10}}>
+        Browse deals
+      </div>
+      <div style={{display:"grid", gap:12,
+        gridTemplateColumns: mobile ? "1fr" : "repeat(3, 1fr)"}}>
+        {cards.map(({id, Icon, title, line}) => (
+          <button key={id} onClick={()=>onBrowseStrategy(id)}
+            style={{
+              display:"flex", alignItems:"center", gap:12, textAlign:"left",
+              background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
+              padding:"14px 16px", cursor:"pointer", boxShadow:C.sh1,
+              transition:"border-color .12s, box-shadow .12s, transform .12s",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.greenBorder; e.currentTarget.style.boxShadow=C.sh3;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow=C.sh1;}}>
+            <span style={{
+              width:38, height:38, borderRadius:C.r2, flexShrink:0,
+              background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+              display:"inline-flex", alignItems:"center", justifyContent:"center",
+            }}>
+              <Icon size={17}/>
+            </span>
+            <span style={{minWidth:0}}>
+              <span style={{display:"block", fontSize:14, fontWeight:700, color:C.text,
+                fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
+              <span style={{display:"block", fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
+                {line}
+              </span>
+            </span>
+            <span style={{marginLeft:"auto", color:C.textMuted, flexShrink:0}}>
+              <I.chevronRight size={15}/>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
   const [selectedId, setSelectedId] = useState(null);
@@ -4478,6 +4527,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
       <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
         <PageHeader title="My Saved Deals"
           subtitle="Track deals you're interested in. Save any deal from the Deals page and it'll land here."/>
+        <BrowseByStrategy onBrowseStrategy={onBrowseStrategy} mobile={mobile}/>
         <EmptyState
           icon={<I.star size={22}/>}
           title="Your watchlist is empty"
@@ -4525,6 +4575,12 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         </button>
       </div>
 
+      <BrowseByStrategy onBrowseStrategy={onBrowseStrategy} mobile={mobile}/>
+
+      <div style={{fontSize:13, fontWeight:600, color:C.textSub, fontFamily:F,
+        letterSpacing:"0.04em", textTransform:"uppercase", marginBottom:10}}>
+        Your watchlist
+      </div>
       <div style={{marginBottom:16}}>
         <StrategySegments value={strat} onChange={setStrat} counts={counts}/>
       </div>
@@ -4577,9 +4633,14 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
   );
 }
 
-function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token}) {
+function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
+                    strategy: strategyProp, onStrategyChange}) {
   const [market, setMarket]     = useState("all");
-  const [strategy, setStrategy] = useState("all"); // all | buyhold | flip
+  // Strategy can be driven from outside (dashboard shortcut cards set it
+  // before navigating here); otherwise it's plain local state.
+  const [localStrategy, setLocalStrategy] = useState("all"); // all | buyhold | flip | wholesale
+  const strategy    = strategyProp ?? localStrategy;
+  const setStrategy = onStrategyChange ?? setLocalStrategy;
   const [maxPrice, setMaxPrice] = useState(0);
   // Live feed from /deals (populated by the nightly Cloud Function). When the
   // fetch hasn't returned yet (or hasn't been seeded), we fall back to
@@ -5855,6 +5916,9 @@ export default function App() {
     return () => window.removeEventListener("popstate", onNav);
   }, []);
   const [page,   setPage]   = useState("dashboard");
+  // Deals-feed strategy filter lives here so the dashboard's browse-by-
+  // strategy cards can set it before switching pages.
+  const [dealsStrategy, setDealsStrategy] = useState("all");
   const [propId, setPropId] = useState(null);
   const [showAdd,setShowAdd]= useState(false);
   const [toast,  setToast]  = useState("");
@@ -6208,7 +6272,8 @@ export default function App() {
             ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
             : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
-                onRemove={removeFromWatchlist} onBrowse={()=>setPage("deals")} mobile={mobile} />
+                onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -6216,6 +6281,7 @@ export default function App() {
         ) : page==="deals" ? (
           <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
+            strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
             token={user.idToken} mobile={mobile} />
         ) : page==="deal" ? (
           <DealAnalyzer {...dealAnalyzerProps} />
@@ -6231,7 +6297,8 @@ export default function App() {
             ? null
             : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
-                onRemove={removeFromWatchlist} onBrowse={()=>setPage("deals")} mobile={mobile} />
+                onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
         )}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
@@ -6260,6 +6327,7 @@ export default function App() {
             ) : page==="deals" ? (
               <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
+                strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
                 token={user.idToken} mobile={mobile} />
             ) : page==="deal" ? (
               <DealAnalyzer {...dealAnalyzerProps} />
