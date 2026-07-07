@@ -726,12 +726,33 @@ function EmptyState({icon, title, body, action}) {
   );
 }
 
+// <img> that fails closed: if the src errors (dead CDN link, Street View
+// key/billing rejection, expired listing photo), render `fallback` instead
+// of the browser's broken-image icon. Resets when src changes.
+function SafeImg({src, alt="", style, fallback=null, ...rest}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  if (!src || failed) return fallback;
+  return <img src={src} alt={alt} style={style} onError={()=>setFailed(true)} {...rest}/>;
+}
+
+// Centered building-icon placeholder used wherever a photo is missing/broken.
+const imgPlaceholder = (size=28) => (
+  <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
+    <I.building size={size}/>
+  </div>
+);
+
 function StreetViewImg({lat, lng, address, height=200}) {
-  if (!lat || !lng) return null;
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [lat, lng]);
+  // Hide the whole strip if Street View can't serve the image — an address
+  // banner over a broken-image icon looks worse than no strip at all.
+  if (!lat || !lng || failed) return null;
   return (
     <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden", marginBottom:16,
       border:"1px solid "+C.border, boxShadow:C.sh1}}>
-      <img src={svUrl(lat,lng,900,height*2)} alt="Street View"
+      <img src={svUrl(lat,lng,900,height*2)} alt="Street View" onError={()=>setFailed(true)}
         style={{width:"100%", height, objectFit:"cover", display:"block"}} />
       <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 50%,rgba(9,9,11,.65))"}} />
       <div style={{position:"absolute", bottom:12, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:10}}>
@@ -1366,8 +1387,9 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
             return (
               <Card key={p.id} onClick={()=>onSelect(p.id)} hover style={{cursor:"pointer"}}>
                 {p.lat && p.lng ? (
-                  <div style={{position:"relative", height:140, overflow:"hidden"}}>
-                    <img src={svUrl(p.lat,p.lng,900,280)} alt="" style={{width:"100%", height:"100%", objectFit:"cover"}} />
+                  <div style={{position:"relative", height:140, overflow:"hidden", background:C.bgSubtle}}>
+                    <SafeImg src={svUrl(p.lat,p.lng,900,280)} fallback={imgPlaceholder()}
+                      style={{width:"100%", height:"100%", objectFit:"cover"}} />
                     <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 35%,rgba(9,9,11,.7))"}} />
                     <div style={{position:"absolute", bottom:10, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:8}}>
                       <div style={{minWidth:0}}>
@@ -1506,8 +1528,9 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
                   <div onClick={()=>onSelect(p.id)}
                     style={{padding:14, cursor:"pointer", display:"flex", gap:12, alignItems:"center"}}>
                     {p.lat && p.lng ? (
-                      <div style={{width:54, height:54, borderRadius:C.r2, overflow:"hidden", flexShrink:0, border:"1px solid "+C.border}}>
-                        <img src={svUrl(p.lat,p.lng,120,120)} alt=""
+                      <div style={{width:54, height:54, borderRadius:C.r2, overflow:"hidden", flexShrink:0,
+                        border:"1px solid "+C.border, background:C.bgSubtle}}>
+                        <SafeImg src={svUrl(p.lat,p.lng,120,120)} fallback={imgPlaceholder(20)}
                           style={{width:"100%", height:"100%", objectFit:"cover"}} />
                       </div>
                     ) : (
@@ -1535,8 +1558,9 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
                     onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div style={{display:"flex", gap:10, alignItems:"center", minWidth:0}}>
                       {p.lat && p.lng ? (
-                        <div style={{width:38, height:38, borderRadius:C.r2, overflow:"hidden", flexShrink:0, border:"1px solid "+C.border}}>
-                          <img src={svUrl(p.lat,p.lng,88,88)} alt=""
+                        <div style={{width:38, height:38, borderRadius:C.r2, overflow:"hidden", flexShrink:0,
+                          border:"1px solid "+C.border, background:C.bgSubtle}}>
+                          <SafeImg src={svUrl(p.lat,p.lng,88,88)} fallback={imgPlaceholder(16)}
                             style={{width:"100%", height:"100%", objectFit:"cover"}} />
                         </div>
                       ) : (
@@ -3883,11 +3907,8 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
       onClick={onOpen ? () => onOpen(deal) : undefined}>
       {/* Photo + badges */}
       <div style={{position:"relative", height:170, background:C.bgSubtle, overflow:"hidden"}}>
-        {photo
-          ? <img src={photo} alt="" style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
-          : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
-              <I.building size={28}/>
-            </div>}
+        <SafeImg src={photo} fallback={imgPlaceholder()}
+          style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
         <div style={{position:"absolute", inset:0,
           background:"linear-gradient(to bottom, transparent 55%, rgba(9,9,11,.55))"}}/>
         <div style={{position:"absolute", top:10, left:10, right:10,
@@ -4069,9 +4090,8 @@ function PhotoCarousel({photos = [], fallbackLat, fallbackLng, height = 280, mob
   return (
     <div style={{position:"relative", height, overflow:"hidden", background:C.bgSubtle}}
       onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <img src={effective[index]} alt=""
-        style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}
-        onError={e => { e.currentTarget.style.opacity = "0.4"; }} />
+      <SafeImg src={effective[index]} fallback={imgPlaceholder(36)}
+        style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}} />
 
       {total > 1 && (
         <>
@@ -4946,8 +4966,8 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
               return (
                 <Card key={deal.id} padding={0}>
                   {deal.lat && deal.lng && (
-                    <div style={{height:120, overflow:"hidden", position:"relative"}}>
-                      <img src={svUrl(deal.lat,deal.lng,900,200)} alt=""
+                    <div style={{height:120, overflow:"hidden", position:"relative", background:C.bgSubtle}}>
+                      <SafeImg src={svUrl(deal.lat,deal.lng,900,200)}
                         style={{width:"100%",height:"100%",objectFit:"cover"}} />
                       <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 35%,rgba(9,9,11,.7))"}} />
                       <div style={{position:"absolute",bottom:10,left:14,right:14,
@@ -5227,14 +5247,9 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                   return (
                     <Card key={l.id||i} hover padding={0}>
                       <div style={{height:170, background:C.bgSubtle, position:"relative"}}>
-                        {img
-                          ? <img src={img} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
-                          : (l.latitude&&l.longitude)
-                            ? <img src={svUrl(l.latitude,l.longitude,800,340)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                            : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
-                                <I.building size={28}/>
-                              </div>
-                        }
+                        <SafeImg src={img || ((l.latitude&&l.longitude) ? svUrl(l.latitude,l.longitude,800,340) : null)}
+                          fallback={imgPlaceholder()}
+                          style={{width:"100%",height:"100%",objectFit:"cover"}} />
                         <div style={{position:"absolute",top:10,right:10}}>
                           <Badge label="Active" bg={C.greenLight} c={C.greenDark} dot/>
                         </div>
@@ -5328,11 +5343,9 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
                   return (
                     <Card key={c.id||i} hover padding={0}>
                       <div style={{height:170, background:C.bgSubtle, position:"relative"}}>
-                        {(c.latitude && c.longitude)
-                          ? <img src={svUrl(c.latitude,c.longitude,800,340)} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
-                          : <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:C.textMuted}}>
-                              <I.building size={28}/>
-                            </div>}
+                        <SafeImg src={(c.latitude && c.longitude) ? svUrl(c.latitude,c.longitude,800,340) : null}
+                          fallback={imgPlaceholder()}
+                          style={{width:"100%",height:"100%",objectFit:"cover"}} />
                         <div style={{position:"absolute", top:10, right:10}}>
                           <Badge label="Sold" bg={C.blueLight} c={C.blueDark} dot/>
                         </div>
