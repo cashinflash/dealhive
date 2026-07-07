@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import Landing from "./Landing.jsx";
+import Landing, { MarketingChrome } from "./Landing.jsx";
 
 // -- Error Boundary ------------------------------------------------------------
 class ErrorBoundary extends React.Component {
@@ -834,7 +834,7 @@ function AuthPage({onAuth}) {
   };
   return (
     <div style={{
-      minHeight:"100vh", background:C.bg, padding:20,
+      minHeight:"calc(100vh - 220px)", background:C.bg, padding:"48px 20px 72px",
       display:"flex", alignItems:"center", justifyContent:"center",
       backgroundImage:`radial-gradient(circle at 100% 0%, ${C.greenSubtle} 0%, transparent 45%), radial-gradient(circle at 0% 100%, ${C.bgSubtle} 0%, transparent 50%)`,
     }}>
@@ -6018,7 +6018,12 @@ export default function App() {
   };
   if (!user || !data) {
     const onAuthRoute = path === "/login" || path === "/signup";
-    if (onAuthRoute) return <AuthPage onAuth={handleAuth} />;
+    if (onAuthRoute) return (
+      <MarketingChrome navigate={navigate}
+        onSignIn={() => navigate("/login")} onSignUp={() => navigate("/signup")}>
+        <AuthPage onAuth={handleAuth} />
+      </MarketingChrome>
+    );
     return <Landing {...marketingProps} />;
   }
   if (path === "/privacy" || path === "/terms") {
