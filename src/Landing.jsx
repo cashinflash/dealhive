@@ -510,7 +510,7 @@ function Hero({ onSignUp }) {
               WebkitBackgroundClip: "text", backgroundClip: "text",
               WebkitTextFillColor: "transparent", color: "transparent",
             }}>
-              Pre-analyzed. Every day.
+              Pre-analyzed. <span style={{ whiteSpace: "nowrap" }}>Every day.</span>
             </span>
           </h1>
           <p style={{
