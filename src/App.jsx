@@ -3881,6 +3881,7 @@ const STRATEGY_LABELS = {
   buyhold: {label:"Buy & Hold",   color:C.greenDark, bg:C.greenSubtle, border:C.greenBorder, dot:C.green},
   flip:    {label:"Fix & Flip",   color:C.amberDark, bg:C.amberSubtle, border:C.amberBorder, dot:C.amber},
   brrrr:   {label:"BRRRR",        color:C.blueDark,  bg:C.blueSubtle,  border:C.blueBorder,  dot:C.blue},
+  wholesale:{label:"Wholesale",   color:C.sidebar,   bg:C.bgSubtle,    border:C.borderHover, dot:C.sidebarHover},
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
 };
 
@@ -3935,7 +3936,8 @@ function StrategySegments({value, onChange, counts}) {
   );
 }
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
-                    saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio"}) {
+                    saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
+                    savedScenario = null, savedFinancing = null}) {
   const c = classifyDeal(deal);
   if (c.tags.length === 0) return null; // shouldn't happen — filtered upstream
 
@@ -3943,22 +3945,33 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   // buyhold/flip/multi call) — it gets its own chip beside the primary.
   const coreTags = c.tags.filter(t => t !== "brrrr");
   const isBrrrr  = c.tags.includes("brrrr");
-  const primary = coreTags.length > 1
+  const autoPrimary = coreTags.length > 1
     ? "multi"
     : coreTags.includes("buyhold") && c.flipScore <= c.buyHoldScore
       ? "buyhold"
       : coreTags.includes("flip") && c.flipScore > c.buyHoldScore
         ? "flip"
         : coreTags[0] || "buyhold";
-  const strat = STRATEGY_LABELS[primary];
+  // A user-chosen scenario (from the save picker) overrides the automatic
+  // badge and re-angles the hero numbers to that scenario, honoring their
+  // cash-vs-finance choice for the rental math.
+  const primary = savedScenario || autoPrimary;
+  const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
+  const cashMode = savedFinancing === "cash";
 
-  // Hero metrics depend on the primary strategy.
-  const heroNumber = primary === "flip"
-    ? {label:"Est. profit", value:$(c.flip.profit),                color:cfC(c.flip.profit)}
-    : {label:"Cash flow",   value:$mo(c.buyHold.finCF),            color:cfC(c.buyHold.finCF)};
+  const heroNumber =
+    primary === "flip"      ? {label:"Est. profit",   value:$(c.flip.profit),          color:cfC(c.flip.profit)}
+  : primary === "brrrr"     ? {label:"CF after refi", value:$mo(c.brrrr.cashFlow),     color:cfC(c.brrrr.cashFlow)}
+  : primary === "wholesale" ? {label:"Spread",        value:$(c.flip.arv - c.flip.totalIn), color:cfC(c.flip.arv - c.flip.totalIn)}
+  : {label:"Cash flow", value:$mo(cashMode ? c.buyHold.cashCF : c.buyHold.finCF),
+     color:cfC(cashMode ? c.buyHold.cashCF : c.buyHold.finCF)};
 
-  const secondaryMetrics = primary === "flip"
-    ? [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["All in", $(c.flip.totalIn)]]
+  const secondaryMetrics =
+    primary === "flip"      ? [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["All in", $(c.flip.totalIn)]]
+  : primary === "brrrr"     ? [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["All in", $(c.brrrr.allIn)]]
+  : primary === "wholesale" ? [["ARV", $(c.flip.arv)], ["All in", $(c.flip.totalIn)], ["ROI", pct(c.flip.roi)]]
+  : cashMode
+    ? [["Cap rate", pct(c.buyHold.cashCap)], ["CoC", pct(c.buyHold.cashCoC)], ["All cash", $(c.buyHold.cashOOP)]]
     : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC)], ["Down", $(c.buyHold.down)]];
 
   const photo = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
@@ -3988,7 +4001,16 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               <span style={{width:6, height:6, borderRadius:"50%", background:strat.dot}}/>
               {strat.label}
             </span>
-            {isBrrrr && (
+            {savedFinancing ? (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:5,
+                background:"rgba(255,255,255,.95)", color:C.text, border:"1px solid "+C.border,
+                padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+                letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
+              }}>
+                {savedFinancing === "cash" ? "Cash" : "Financed"}
+              </span>
+            ) : isBrrrr && (
               <span style={{
                 display:"inline-flex", alignItems:"center", gap:5,
                 background: STRATEGY_LABELS.brrrr.bg, color: STRATEGY_LABELS.brrrr.color,
@@ -4543,6 +4565,141 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 // Dashboard for regular members (non-admin) — replaces the portfolio dashboard.
 // Shows the member's saved deals as a watchlist with the same card/modal as
 // the Deals page, but the secondary action is "Remove" instead of "Save".
+// Save picker: choose which scenario a deal is saved under (Rentals, BRRRR,
+// Fix & Flip, Wholesale) and whether you'd run it cash or financed. Renders
+// above DealDetailModal (zIndex 600 vs 500) since Save also lives inside it.
+function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
+  const c = classifyDeal(deal);
+  const suggested = isWholesaleDeal(deal) ? "wholesale"
+    : c.tags.includes("buyhold") ? "buyhold"
+    : c.tags.includes("flip")    ? "flip"
+    : c.tags.includes("brrrr")   ? "brrrr"
+    : "buyhold";
+  const [scenario,  setScenario]  = useState(suggested);
+  const [financing, setFinancing] = useState("finance");
+
+  // Escape closes only this sheet — capture phase beats the modal's listener.
+  useEffect(() => {
+    const handler = e => {
+      if (e.key === "Escape") { e.stopPropagation(); onCancel(); }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [onCancel]);
+
+  const options = [
+    {id:"buyhold",   Icon:I.building, label:"Rentals",     line:"Hold it, rent it, cash flow"},
+    {id:"brrrr",     Icon:I.cycle,    label:"BRRRR",       line:"Rehab, rent, refi, repeat"},
+    {id:"flip",      Icon:I.chart,    label:"Fix & Flip",  line:"Renovate and resell"},
+    {id:"wholesale", Icon:I.star,     label:"Wholesale",   line:"Assign the contract"},
+  ];
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:600,
+       display:"flex", alignItems:"flex-end",
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:600,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%",
+       maxHeight:"88dvh", overflowY:"auto", boxShadow:C.sh4, padding:"20px 18px 28px"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:480,
+       boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 24px"};
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div style={innerStyle}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:4}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+              Save this deal
+            </div>
+            <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:2,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {deal.address}
+            </div>
+          </div>
+          <button onClick={onCancel} aria-label="Close"
+            style={{width:32, height:32, borderRadius:"50%", background:C.bgSubtle, border:"none",
+              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center",
+              justifyContent:"center", flexShrink:0}}>
+            <I.x size={15}/>
+          </button>
+        </div>
+
+        <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase", margin:"16px 0 8px"}}>
+          Save as
+        </div>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+          {options.map(({id, Icon, label, line}) => {
+            const active = scenario === id;
+            return (
+              <button key={id} onClick={()=>setScenario(id)} aria-pressed={active}
+                style={{
+                  display:"flex", flexDirection:"column", alignItems:"flex-start", gap:6,
+                  textAlign:"left", padding:"12px 13px", cursor:"pointer",
+                  background: active ? C.greenSubtle : C.card,
+                  border:"1.5px solid "+(active ? C.green : C.border),
+                  borderRadius:C.r3, transition:"border-color .12s, background .12s",
+                }}>
+                <span style={{
+                  width:30, height:30, borderRadius:C.r2,
+                  background: active ? C.green : C.bgSubtle,
+                  color: active ? "#fff" : C.textSub,
+                  display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  transition:"background .12s, color .12s",
+                }}>
+                  <Icon size={15}/>
+                </span>
+                <span>
+                  <span style={{display:"block", fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                    {label}
+                    {id === suggested && (
+                      <span style={{marginLeft:6, fontSize:10, fontWeight:700, color:C.greenDark,
+                        background:C.greenLight, borderRadius:9999, padding:"1px 7px",
+                        verticalAlign:"1px"}}>Suggested</span>
+                    )}
+                  </span>
+                  <span style={{display:"block", fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>{line}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase", margin:"18px 0 8px"}}>
+          How would you buy it?
+        </div>
+        <div style={{display:"flex", padding:3, background:C.bgSubtle,
+          border:"1px solid "+C.border, borderRadius:C.r2}}>
+          {[["finance","Finance"],["cash","All cash"]].map(([id,label]) => {
+            const active = financing === id;
+            return (
+              <button key={id} onClick={()=>setFinancing(id)}
+                style={{
+                  flex:1, padding:"8px 12px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active?600:500, fontSize:13, fontFamily:F,
+                  boxShadow: active ? C.sh1 : "none",
+                  transition:"background .12s, color .12s, box-shadow .12s",
+                }}>{label}</button>
+            );
+          })}
+        </div>
+
+        <button onClick={()=>onConfirm(scenario, financing)}
+          {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop:18})}>
+          <I.star size={14}/> Save deal
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Scenario cards on the member home. They ARE the watchlist filter: click
 // Rentals and the saved-deals grid below shows only your saved rentals.
 // Click the active card again to go back to all. Counts show how many of
@@ -4639,16 +4796,19 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
     (b.savedAt || "").localeCompare(a.savedAt || "")
   ).map(d => ({d, c: classifyDeal(d)}));
 
-  const matches = ({d, c}) =>
-    strat === "all" ? true :
-    strat === "wholesale" ? isWholesaleDeal(d) :
-    c.tags.includes(strat);
+  // The scenario chosen at save time wins; legacy saves (no scenario field)
+  // fall back to the automatic classification.
+  const inScenario = ({d, c}, key) =>
+    d.scenario ? d.scenario === key
+    : key === "wholesale" ? isWholesaleDeal(d)
+    : c.tags.includes(key);
+  const matches = pair => strat === "all" ? true : inScenario(pair, strat);
   const shown  = ordered.filter(matches);
   const counts = {
-    buyhold:   ordered.filter(({c}) => c.tags.includes("buyhold")).length,
-    brrrr:     ordered.filter(({c}) => c.tags.includes("brrrr")).length,
-    flip:      ordered.filter(({c}) => c.tags.includes("flip")).length,
-    wholesale: ordered.filter(({d}) => isWholesaleDeal(d)).length,
+    buyhold:   ordered.filter(pair => inScenario(pair, "buyhold")).length,
+    brrrr:     ordered.filter(pair => inScenario(pair, "brrrr")).length,
+    flip:      ordered.filter(pair => inScenario(pair, "flip")).length,
+    wholesale: ordered.filter(pair => inScenario(pair, "wholesale")).length,
   };
 
   return (
@@ -4695,6 +4855,8 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
             saveLabel="Remove"
             saveIcon={<I.trash size={13}/>}
             saveAriaLabel="Remove from saved deals"
+            savedScenario={d.scenario || null}
+            savedFinancing={d.financing || null}
             onUpgrade={onUpgrade}
             onOpen={() => setSelectedId(d.id)}
             mobile={mobile} />
@@ -6006,6 +6168,8 @@ export default function App() {
   // Deals-feed strategy filter lives here so the dashboard's browse-by-
   // strategy cards can set it before switching pages.
   const [dealsStrategy, setDealsStrategy] = useState("all");
+  // Deal pending the save picker (choose scenario + cash/finance).
+  const [savePicker, setSavePicker] = useState(null);
   const [propId, setPropId] = useState(null);
   const [showAdd,setShowAdd]= useState(false);
   const [toast,  setToast]  = useState("");
@@ -6282,15 +6446,17 @@ export default function App() {
   };
   // Regular-member save: add to data.savedDeals so it shows up on their
   // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
-  const saveDealToWatchlist = deal => {
+  const saveDealToWatchlist = (deal, scenario, financing) => {
     const existing = data.savedDeals || [];
     if (existing.some(d => d.id === deal.id)) {
       setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000);
       return;
     }
-    const saved = {...deal, savedAt: new Date().toISOString()};
+    const saved = {...deal, savedAt: new Date().toISOString(), scenario, financing};
     persist({...data, savedDeals: [...existing, saved]});
-    setToast("Saved · view on Dashboard"); setTimeout(()=>setToast(""), 2000);
+    const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
+    setToast(`Saved to ${label} (${financing === "cash" ? "all cash" : "financed"})`);
+    setTimeout(()=>setToast(""), 2200);
   };
   const removeFromWatchlist = dealOrId => {
     const id = typeof dealOrId === "string" ? dealOrId : dealOrId.id;
@@ -6298,10 +6464,10 @@ export default function App() {
     setToast("Removed from saved deals"); setTimeout(()=>setToast(""), 2000);
   };
   // The actual save handler the Deals page calls — admin gets portfolio,
-  // everyone else gets the saved-deals watchlist.
+  // everyone else picks a scenario + financing in the save sheet first.
   const saveDealFromMarket = deal => {
     if (isAdmin) saveDealToPortfolio(deal);
-    else         saveDealToWatchlist(deal);
+    else         setSavePicker(deal);
   };
   // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
   // can use Pro features. When checkout lands this will redirect to Stripe and
@@ -6390,6 +6556,11 @@ export default function App() {
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
       {showAdd && <AddPropertyModal llcs={data.llcs||[]} onAdd={addProp} onClose={()=>setShowAdd(false)} {...sharedProps} />}
+      {savePicker && (
+        <SaveDealSheet deal={savePicker} mobile={mobile}
+          onCancel={()=>setSavePicker(null)}
+          onConfirm={(scenario, financing)=>{ saveDealToWatchlist(savePicker, scenario, financing); setSavePicker(null); }} />
+      )}
     </div>
   );
 
@@ -6428,6 +6599,11 @@ export default function App() {
         </div>
       </div>
       {showAdd && <AddPropertyModal llcs={data.llcs||[]} onAdd={addProp} onClose={()=>setShowAdd(false)} {...sharedProps} />}
+      {savePicker && (
+        <SaveDealSheet deal={savePicker} mobile={mobile}
+          onCancel={()=>setSavePicker(null)}
+          onConfirm={(scenario, financing)=>{ saveDealToWatchlist(savePicker, scenario, financing); setSavePicker(null); }} />
+      )}
     </div>
   );
 }
