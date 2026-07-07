@@ -434,9 +434,13 @@ const applyRentcast = (prev, data, rates) => {
     lat:       p.latitude  || val.latitude  || rent.latitude  || prev.lat,
     lng:       p.longitude || val.longitude || rent.longitude || prev.lng,
     type:      p.propertyType || prev.type,
-    expPropTax: (isOhio(prev) && taxVal) ? Math.round(taxVal*OH_TAX_RATE/12)
-              : annual ? Math.round(annual/12)
-              : (taxVal ? Math.round(taxVal*0.024/12) : prev.expPropTax),
+    // Actual recorded tax bill wins; else estimate from the state's effective
+    // rate on the assessed/market tax value. (The flat 2.4% fallback under-
+    // or over-shot most states badly.)
+    expPropTax: annual ? Math.round(annual / 12)
+              : taxVal ? Math.round(taxVal * (STATE_TAX_RATES[(prev.state||"").toUpperCase()] || DEFAULT_TAX_RATE) / 12)
+              : prev.expPropTax,
+    expPropTaxAuto: (annual || taxVal) ? false : prev.expPropTaxAuto,
     homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
     flipSalePrice: hi || prev.flipSalePrice,
     brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
@@ -1005,13 +1009,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
 
-  // Ohio: auto-fill the monthly property tax from the tax value (≈2.33%/yr ÷ 12).
+  // Auto-fill monthly property tax from the state's effective rate — every
+  // state, not just Ohio. Basis is the assessed/market tax value when a data
+  // pull provided one, else the purchase price. A manual edit to the field
+  // (expPropTaxAuto === false) or a pulled tax record turns the sync off.
   useEffect(() => {
-    if (isOhio(p) && (p.taxValue||0) > 0) {
-      const monthly = Math.round((p.taxValue||0) * OH_TAX_RATE / 12);
-      if (p.expPropTax !== monthly) set({...p, expPropTax: monthly});
-    }
-  }, [p.state, p.taxValue]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (p.expPropTaxAuto === false) return;
+    const rate  = STATE_TAX_RATES[(p.state||"").toUpperCase()] || DEFAULT_TAX_RATE;
+    const basis = (p.taxValue||0) > 0 ? p.taxValue : (p.purchasePrice||0);
+    if (basis <= 0) return;
+    const monthly = Math.round(basis * rate / 12);
+    if (p.expPropTax !== monthly) set({...p, expPropTax: monthly});
+  }, [p.state, p.taxValue, p.purchasePrice, p.expPropTaxAuto]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -1104,7 +1113,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Monthly expenses — shown on both tabs (shared data) */}
         <SectionBlock title="Monthly expenses" color={C.green}>
-          <InputField label="Property tax / mo" val={p.expPropTax} set={v=>u("expPropTax",v)} pre="$" mobile={mobile} />
+          <InputField label="Property tax / mo" val={p.expPropTax}
+            set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
           <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
           <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
           <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
@@ -3785,6 +3795,27 @@ const classifyDeal = (deal) => {
   };
 };
 
+// Inverse-ish of dealToProForma: shape an analyzer pro forma like a feed deal
+// so it can live on the saved-deals watchlist and render in DealCard with the
+// same classification pipeline as market deals.
+const proFormaToFeedDeal = pf => ({
+  id:            "a" + Date.now(),
+  address:       pf.address || pf.fullAddress || "Untitled deal",
+  streetAddress: pf.address || null,
+  city: pf.city || "", state: pf.state || "", zip: pf.zip || "",
+  lat: pf.lat || null, lng: pf.lng || null,
+  type: pf.type || "Single Family",
+  beds: pf.beds || 0, baths: pf.baths || 0, sqft: pf.sqft || 0,
+  yearBuilt: pf.yearBuilt || 0,
+  price:  pf.purchasePrice || 0,
+  rent:   pf.rentAmount || pf.rentEstimate || 0,
+  repair: pf.repairCosts || 0,
+  arv:    pf.homeValueHigh || pf.flipSalePrice || pf.homeValueMedian || 0,
+  photo: null, photos: [],
+  source: "My analysis",
+  sourcedAt: new Date().toISOString().slice(0, 10),
+});
+
 // Convert a curated deal record into the shape DealAnalyzer/portfolio expects.
 const dealToProForma = (deal) => {
   // Prefer the real street address when the source has one (propwire, seibs).
@@ -5129,7 +5160,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial, onBackToDeals}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial, onBackToDeals}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
@@ -5164,6 +5195,9 @@ function DealAnalyzer({deals=[], onSave, renoRates={light:7,medium:13,full:45}, 
 
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
+    // Member accounts: file it on the home watchlist (opens the scenario +
+    // financing picker). The form stays put so they can keep tweaking.
+    if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d); return; }
     onSave([...deals.filter(x => x.id !== d.id), {...d, savedAt:new Date().toISOString()}]);
     setD(newDeal()); setErr("");
   };
@@ -6448,7 +6482,9 @@ export default function App() {
   // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
   const saveDealToWatchlist = (deal, scenario, financing) => {
     const existing = data.savedDeals || [];
-    if (existing.some(d => d.id === deal.id)) {
+    const dupe = existing.some(x => x.id === deal.id ||
+      (x.address === deal.address && x.city === deal.city && x.price === deal.price));
+    if (dupe) {
       setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000);
       return;
     }
@@ -6504,6 +6540,9 @@ export default function App() {
   const dealAnalyzerProps = {
     deals: data.deals || [],
     onSave: saveDeals,
+    // Members file analyses onto their home watchlist (via the save sheet);
+    // the admin account keeps its private analyzer list + portfolio flow.
+    onSaveToWatchlist: isAdmin ? null : pf => setSavePicker(proFormaToFeedDeal(pf)),
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
