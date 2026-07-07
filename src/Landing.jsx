@@ -114,7 +114,7 @@ function Eyebrow({ children }) {
 
 function Section({ children, dark, tint, style, id }) {
   return (
-    <section id={id} style={{
+    <section id={id} className="dh-section" style={{
       padding: "80px 24px",
       background: dark ? C.navyDeep : tint ? C.orangeSubtle : C.bg,
       color: dark ? "#fff" : C.text,
@@ -127,9 +127,30 @@ function Section({ children, dark, tint, style, id }) {
   );
 }
 
+// Soft hive-shaped (rounded hexagon) background blob. The fat stroke with
+// round joins is what rounds the corners; `float` picks one of three gentle
+// bob animations defined in the root style block.
+function Hex({ size = 120, color = C.orangeLight, opacity = 0.5, outline = false,
+               blur = 0, float: floatAnim = 1, style }) {
+  return (
+    <svg width={size} height={size * 1.15} viewBox="0 0 100 115" aria-hidden="true"
+      style={{
+        position: "absolute", pointerEvents: "none",
+        opacity,
+        filter: blur ? `blur(${blur}px)` : "none",
+        animation: `dhFloat${floatAnim} ${9 + floatAnim * 2.5}s ease-in-out infinite alternate`,
+        ...style,
+      }}>
+      <polygon points="50,6 94,31 94,84 50,109 6,84 6,31"
+        fill={outline ? "none" : color}
+        stroke={color} strokeWidth="11" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
   return (
-    <div style={{ textAlign: center ? "center" : "left", marginBottom: 56, maxWidth: 720, margin: center ? "0 auto 56px" : "0 0 56px" }}>
+    <div className="dh-sec-head" style={{ textAlign: center ? "center" : "left", marginBottom: 56, maxWidth: 720, margin: center ? "0 auto 56px" : "0 0 56px" }}>
       {eyebrow && <div style={{ marginBottom: 16 }}><Eyebrow>{eyebrow}</Eyebrow></div>}
       <h2 style={{
         fontSize: "clamp(28px, 4.2vw, 44px)", fontWeight: 700, fontFamily: F,
@@ -153,7 +174,7 @@ function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
 // Compact hero for subpages (Features, Pricing, FAQ, …).
 function PageHero({ eyebrow, title, subtitle }) {
   return (
-    <section style={{
+    <section className="dh-page-hero" style={{
       padding: "64px 24px 56px",
       background: `radial-gradient(ellipse at 50% 0%, ${C.orangeSubtle} 0%, transparent 60%), ${C.bg}`,
       textAlign: "center",
@@ -255,7 +276,7 @@ function Stat({ label, value, accent }) {
 // -- Phone mockup with stacked deal cards -------------------------------------
 function HeroVisual() {
   return (
-    <div style={{
+    <div className="dh-hv-tilt" style={{
       position: "relative",
       transform: "perspective(1400px) rotateY(-7deg) rotateX(3deg)",
       transformOrigin: "center center",
@@ -274,7 +295,7 @@ function HeroVisual() {
           beds={3} baths={1} sqft={1240}
           badge="New today"
         />
-        <div style={{ transform: "translateX(40px)" }}>
+        <div className="dh-hv-b" style={{ transform: "translateX(40px)" }}>
           <MockDealCard
             photo={["#dbeafe", "#bfdbfe"]}
             imgUrl="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80"
@@ -284,7 +305,7 @@ function HeroVisual() {
             badge="Off-market"
           />
         </div>
-        <div style={{ transform: "translateX(-30px)" }}>
+        <div className="dh-hv-c" style={{ transform: "translateX(-30px)" }}>
           <MockDealCard
             photo={["#e0e7ff", "#c7d2fe"]}
             imgUrl="https://images.unsplash.com/photo-1570129477492-45c003edd2be?auto=format&fit=crop&w=720&h=400&q=80"
@@ -333,7 +354,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
       }}>
         <a href="/" onClick={e => { e.preventDefault(); go("/"); }}
           style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-          <img src="/logo.png" alt="DealHive" style={{ height: 30, width: "auto" }}/>
+          <img src="/logo.png" alt="DealHive" style={{ height: 40, width: "auto" }}/>
         </a>
 
         <div style={{ display: "flex", alignItems: "center", gap: 32 }} className="dh-nav-links">
@@ -398,7 +419,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
 // -- Hero ---------------------------------------------------------------------
 function Hero({ onSignUp }) {
   return (
-    <section style={{
+    <section className="dh-hero" style={{
       position: "relative", overflow: "hidden",
       padding: "72px 24px 96px",
       background: `radial-gradient(ellipse at 80% 0%, ${C.orangeSubtle} 0%, transparent 50%), ${C.bg}`,
@@ -407,13 +428,31 @@ function Hero({ onSignUp }) {
         position: "absolute", top: 0, left: 0, right: 0, height: 1,
         background: `linear-gradient(90deg, transparent, ${C.border}, transparent)`,
       }}/>
+
+      {/* Hive blobs — decorative rounded hexagons floating behind the content */}
+      <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+        <Hex size={340} color={C.orangeLight} opacity={0.55} blur={46} float={1}
+          style={{ top: -90, right: -70 }}/>
+        <Hex size={150} color={C.orangeBorder} opacity={0.35} outline float={2}
+          style={{ top: "16%", left: "-46px" }}/>
+        <Hex size={64} color={C.orange} opacity={0.16} float={3}
+          style={{ top: "9%", left: "38%" }}/>
+        <Hex size={210} color={C.orangeLight} opacity={0.5} blur={30} float={2}
+          style={{ bottom: -70, left: "12%" }}/>
+        <Hex size={90} color={C.orangeBorder} opacity={0.4} outline float={1}
+          style={{ bottom: "14%", right: "40%" }}/>
+        <Hex size={44} color={C.orange} opacity={0.2} float={2}
+          style={{ bottom: "26%", right: "44.5%" }}/>
+      </div>
+
       <div style={{
         maxWidth: 1180, margin: "0 auto",
         display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 64, alignItems: "center",
+        position: "relative", zIndex: 1,
       }} className="dh-hero-grid">
         <div>
           <div style={{ marginBottom: 24 }}>
-            <Eyebrow>Fresh deals every day · Markets nationwide</Eyebrow>
+            <Eyebrow>Fresh deals every day, nationwide</Eyebrow>
           </div>
           <h1 style={{
             fontSize: "clamp(36px, 5.6vw, 64px)", fontWeight: 700, fontFamily: F,
@@ -433,26 +472,26 @@ function Hero({ onSignUp }) {
             fontSize: "clamp(16px, 1.7vw, 19px)", color: C.textSub, fontFamily: F,
             lineHeight: 1.55, margin: "0 0 32px", maxWidth: 540,
           }}>
-            DealHive scans hundreds of wholesale and off-market listings across the country, every single day. The deals that actually pencil land in your feed — already analyzed.
+            DealHive scans hundreds of wholesale and off-market listings across the country, every single day. The deals that actually pencil land in your feed, already analyzed.
           </p>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
+          <div className="dh-hero-ctas" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
             <Button onClick={onSignUp} size="lg">
-              Get started — it's free {I.arrow}
+              Get started free {I.arrow}
             </Button>
             <Button onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })}
               variant="secondary" size="lg">
               {I.play} See how it works
             </Button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13, color: C.textMuted, fontFamily: F }}>
+          <div className="dh-hero-checks" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 16px", fontSize: 13, color: C.textMuted, fontFamily: F }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ color: C.cashPos }}>{I.check}</span> No credit card
             </div>
-            <div style={{ width: 1, height: 14, background: C.border }}/>
+            <div className="dh-check-divider" style={{ width: 1, height: 14, background: C.border }}/>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ color: C.cashPos }}>{I.check}</span> Free tier forever
             </div>
-            <div style={{ width: 1, height: 14, background: C.border }}/>
+            <div className="dh-check-divider" style={{ width: 1, height: 14, background: C.border }}/>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ color: C.cashPos }}>{I.check}</span> Cancel anytime
             </div>
@@ -466,8 +505,8 @@ function Hero({ onSignUp }) {
 
       <style>{`
         @media (max-width: 920px) {
-          .dh-hero-grid { grid-template-columns: 1fr !important; gap: 56px !important; }
-          .dh-hero-visual { max-width: 380px; margin: 0 auto; }
+          .dh-hero-grid { grid-template-columns: 1fr !important; gap: 48px !important; }
+          .dh-hero-visual { max-width: 380px; margin: 0 auto; width: 100%; }
         }
       `}</style>
     </section>
@@ -476,9 +515,11 @@ function Hero({ onSignUp }) {
 
 // -- Trust bar (markets covered) ----------------------------------------------
 function TrustBar() {
-  const markets = [
-    "Cleveland", "Detroit", "Memphis", "Birmingham", "Indianapolis", "Kansas City",
-    "Pittsburgh", "Milwaukee", "Baltimore", "Jacksonville", "Oklahoma City", "Tampa",
+  const chips = [
+    { icon: I.bolt,   label: "Wholesale assignments" },
+    { icon: I.home,   label: "Off-market properties" },
+    { icon: I.search, label: "Investor-friendly listings" },
+    { icon: I.chart,  label: "Analyzed before you see them" },
   ];
   return (
     <section style={{
@@ -490,25 +531,19 @@ function TrustBar() {
           fontSize: 11, fontWeight: 600, color: C.textMuted, fontFamily: F,
           letterSpacing: "0.12em", textTransform: "uppercase", textAlign: "center", marginBottom: 16,
         }}>
-          Deals flowing in from cash-flow markets nationwide
+          Built for cash-flow investors, coast to coast
         </div>
         <div style={{
-          display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "16px 32px",
+          display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "12px 32px",
         }}>
-          {markets.map(m => (
-            <div key={m} style={{
+          {chips.map(c => (
+            <div key={c.label} style={{
               display: "flex", alignItems: "center", gap: 8,
               fontSize: 14, fontWeight: 600, color: C.navy, fontFamily: F,
             }}>
-              <span style={{ color: C.orange }}>{I.home}</span> {m}
+              <span style={{ color: C.orange }}>{c.icon}</span> {c.label}
             </div>
           ))}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            fontSize: 14, fontWeight: 600, color: C.textMuted, fontFamily: F,
-          }}>
-            + more added every month
-          </div>
         </div>
       </div>
     </section>
@@ -526,7 +561,7 @@ function HowItWorks() {
     {
       n: "02",
       title: "Every deal comes pre-analyzed",
-      body: "Cap rate, cash flow, BRRRR potential, fix-and-flip numbers — calculated automatically against the pro forma. No spreadsheet required.",
+      body: "Cap rate, cash flow, BRRRR potential, fix-and-flip numbers, all calculated automatically against the pro forma. No spreadsheet required.",
     },
     {
       n: "03",
@@ -574,17 +609,17 @@ function HowItWorks() {
 // -- Features grid ------------------------------------------------------------
 const FEATURES = [
   { icon: I.bolt,   title: "Off-market deal feed",
-    body: "Wholesale assignments, off-market listings, and cash-flow rentals — a feed that refreshes every day, from markets across the country." },
+    body: "Wholesale assignments, off-market listings, and cash-flow rentals in one feed that refreshes every day, from markets across the country." },
   { icon: I.chart,  title: "Built-in deal analyzer",
-    body: "Tap any deal to open it in the analyzer pre-filled with the numbers. Adjust your purchase price, rent, repairs — recalculates instantly." },
+    body: "Tap any deal to open it in the analyzer pre-filled with the numbers. Adjust your purchase price, rent, or repairs and it recalculates instantly." },
   { icon: I.brrrr,  title: "Buy-and-hold, BRRRR, or flip",
     body: "Every deal scored against three strategies. See which model wins before you make an offer." },
   { icon: I.search, title: "Comps that actually match",
-    body: "Pull rental and sale comps for any address. See what the market really pays — not what Zillow guesses." },
+    body: "Pull rental and sale comps for any address. See what the market really pays, not what Zillow guesses." },
   { icon: I.star,   title: "Saved deals & alerts",
     body: "Watchlist your favorites, get notified when new deals hit your target markets. Never miss the one that prices right." },
   { icon: I.device, title: "Mobile-first",
-    body: "Designed for driving for dollars and quick decisions. Underwrite on your phone in the parking lot — full power, no compromise." },
+    body: "Designed for driving for dollars and quick decisions. Underwrite on your phone in the parking lot with full power, no compromise." },
 ];
 
 function Features() {
@@ -647,7 +682,7 @@ function NumbersStrip() {
   ];
   return (
     <Section dark style={{ padding: "64px 24px" }}>
-      <div style={{
+      <div className="dh-numbers" style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 32,
         textAlign: "center",
       }}>
@@ -694,9 +729,9 @@ function Pricing({ onSignUp }) {
     name: "Pro",
     price: "$29.99",
     period: "per month",
-    blurb: "The full picture. Every deal, every market, every day — no limits.",
+    blurb: "The full picture. Every deal, every market, every day, no limits.",
     features: [
-      "Full deal feed — all markets, all deals",
+      "Full deal feed with all markets and all deals",
       "Exact addresses (not just neighborhoods)",
       "Pre-filled analyzer on every deal",
       "Unlimited saved deals",
@@ -780,31 +815,31 @@ function Pricing({ onSignUp }) {
 const FAQ_ITEMS = [
   {
     q: "What is DealHive?",
-    a: "DealHive is a deal-finding tool for real estate investors. We scan the off-market wholesale market across the country and surface deals that pencil out — already analyzed against buy-and-hold, BRRRR, and fix-and-flip models. You browse, save the ones you like, and underwrite further in the built-in analyzer.",
+    a: "DealHive is a deal-finding tool for real estate investors. We scan the off-market wholesale market across the country and surface deals that pencil out, already analyzed against buy-and-hold, BRRRR, and fix-and-flip models. You browse, save the ones you like, and underwrite further in the built-in analyzer.",
   },
   {
     q: "Where do the deals come from?",
-    a: "Off-market wholesale assignment lists, investor-friendly listings, and public records — aggregated daily by our pipeline. We focus on properties that already make sense at list price, not flips that depend on hot markets.",
+    a: "Off-market wholesale assignment lists, investor-friendly listings, and public records, aggregated daily by our pipeline. We focus on properties that already make sense at list price, not flips that depend on hot markets.",
   },
   {
     q: "Which markets do you cover?",
-    a: "We source from cash-flow markets across the country — Cleveland, Detroit, Memphis, Birmingham, Indianapolis, Kansas City, Pittsburgh, Milwaukee, Baltimore, Jacksonville, Oklahoma City, Tampa, and dozens more. Coverage grows every month, and the feed's market filter always shows exactly what's live right now.",
+    a: "We source from cash-flow markets across the country and add new ones constantly. The market filter in the app always shows exactly which markets are live right now, so you never have to guess.",
   },
   {
     q: "How fresh are the deals?",
-    a: "The pipeline runs every day and each deal shows when it was sourced. Wholesale deals move fast — that's why every deal comes pre-analyzed, so you can make a call in minutes instead of hours.",
+    a: "The pipeline runs every day and each deal shows when it was sourced. Wholesale deals move fast, which is why every deal comes pre-analyzed, so you can make a call in minutes instead of hours.",
   },
   {
     q: "Can I try it before paying?",
-    a: "Yes. The Free plan lets you preview deals, use the analyzer, and save up to 5 deals to your watchlist — no credit card required. When you want the full feed and exact addresses, Pro is $29.99/mo, cancel anytime.",
+    a: "Yes. The Free plan lets you preview deals, use the analyzer, and save up to 5 deals to your watchlist, with no credit card required. When you want the full feed and exact addresses, Pro is $29.99/mo, cancel anytime.",
   },
   {
     q: "Do you guarantee these deals make money?",
-    a: "No tool can guarantee that — and we wouldn't trust one that did. DealHive does the work of finding and pre-analyzing deals so you can underwrite faster, but you're still the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
+    a: "No tool can guarantee that, and we wouldn't trust one that did. DealHive does the work of finding and pre-analyzing deals so you can underwrite faster, but you're still the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
   },
   {
     q: "Do I need an MLS license or realtor access?",
-    a: "No. DealHive aggregates off-market and publicly available listing data — you don't need an MLS membership, a license, or any special access to use it.",
+    a: "No. DealHive aggregates off-market and publicly available listing data, so you don't need an MLS membership, a license, or any special access to use it.",
   },
   {
     q: "Is my data private?",
@@ -876,10 +911,10 @@ function FinalCTA({ onSignUp, title = "Stop scrolling Zillow at 6am." }) {
           fontSize: "clamp(15px, 1.8vw, 18px)", color: "rgba(255,255,255,.7)",
           fontFamily: F, margin: "0 0 32px", lineHeight: 1.55,
         }}>
-          DealHive does the hunting for you. Open the app to deals worth your time. Get started for free — no card, no commitment.
+          DealHive does the hunting for you. Open the app to deals worth your time. Get started for free with no card and no commitment.
         </p>
         <Button onClick={onSignUp} size="lg" style={{ padding: "16px 28px", fontSize: 16 }}>
-          Get started — it's free {I.arrow}
+          Get started free {I.arrow}
         </Button>
       </div>
     </Section>
@@ -908,7 +943,7 @@ function Footer({ navigate, onSignIn, onSignUp }) {
           display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 32, marginBottom: 40,
         }} className="dh-footer-grid">
           <div>
-            <img src="/logo.png" alt="DealHive" style={{ height: 28, width: "auto", marginBottom: 14 }}/>
+            <img src="/logo.png" alt="DealHive" style={{ height: 36, width: "auto", marginBottom: 14 }}/>
             <p style={{ fontSize: 13, color: C.textSub, lineHeight: 1.55, margin: 0, maxWidth: 320 }}>
               The off-market deal feed for real estate investors. Fresh deals from markets across the country, every day.
             </p>
@@ -997,7 +1032,7 @@ const STRATEGIES = [
     id: "rental",
     eyebrow: "Buy & hold",
     title: "Rental property analysis, done before you open the deal.",
-    body: "Every deal in the feed is scored as a rental first: cap rate, monthly cash flow, cash-on-cash return, and operating expenses estimated from real tax rates for that state — not national averages. If a property doesn't pencil as a rental or a flip, it never reaches your feed.",
+    body: "Every deal in the feed is scored as a rental first: cap rate, monthly cash flow, cash-on-cash return, and operating expenses estimated from real tax rates for that state, not national averages. If a property doesn't pencil as a rental or a flip, it never reaches your feed.",
     points: [
       "Cap rate and cash flow computed on arrival",
       "State-accurate property tax rates",
@@ -1021,7 +1056,7 @@ const STRATEGIES = [
     id: "flip",
     eyebrow: "Fix & flip",
     title: "Flip numbers that include the costs everyone forgets.",
-    body: "Flip scoring accounts for purchase, rehab, holding costs, and selling costs — then shows projected profit and ROI. Deals only earn the flip tag when the ROI clears a real threshold, so a \"flip deal\" in DealHive actually means something.",
+    body: "Flip scoring accounts for purchase, rehab, holding costs, and selling costs, then shows projected profit and ROI. Deals only earn the flip tag when the ROI clears a real threshold, so a \"flip deal\" in DealHive actually means something.",
     points: [
       "Projected profit and ROI on every flip-tagged deal",
       "Holding and selling costs included, not ignored",
@@ -1110,11 +1145,11 @@ function PricingPage({ onSignUp }) {
   const pricingFaq = [
     {
       q: "Can I cancel anytime?",
-      a: "Yes — cancel from Settings in two clicks and you keep Pro access until the end of your billing period. No calls, no emails, no retention flows.",
+      a: "Yes. Cancel from Settings in two clicks and you keep Pro access until the end of your billing period. No calls, no emails, no retention flows.",
     },
     {
       q: "What happens to my saved deals if I downgrade?",
-      a: "They stay saved. You keep your watchlist and all your analyses on the Free plan — you just see the preview feed instead of the full one.",
+      a: "They stay saved. You keep your watchlist and all your analyses on the Free plan. You just see the preview feed instead of the full one.",
     },
     {
       q: "Is there a contract or setup fee?",
@@ -1130,7 +1165,7 @@ function PricingPage({ onSignUp }) {
       <PageHero
         eyebrow="Pricing"
         title="Less than one bad showing costs you."
-        subtitle="Start free, no credit card. Upgrade when you want the full feed — cancel anytime."
+        subtitle="Start free, no credit card. Upgrade when you want the full feed. Cancel anytime."
       />
       <Pricing onSignUp={onSignUp}/>
       <FAQ items={pricingFaq}/>
@@ -1145,7 +1180,7 @@ function FAQPage({ onSignUp }) {
       <PageHero
         eyebrow="FAQ"
         title="Everything people ask us."
-        subtitle="Can't find your answer? Email support@dealhive.io — a human reads every message."
+        subtitle="Can't find your answer? Email support@dealhive.io and a human will read it."
       />
       <FAQ items={FAQ_ITEMS}/>
       <FinalCTA onSignUp={onSignUp}/>
@@ -1157,7 +1192,7 @@ function AboutPage({ onSignUp }) {
   const beliefs = [
     {
       title: "The deal is everything",
-      body: "Returns are made at the buy. Software should make finding the right buy faster — not bury you in dashboards.",
+      body: "Returns are made at the buy. Software should make finding the right buy faster, not bury you in dashboards.",
     },
     {
       title: "Numbers before feelings",
@@ -1179,19 +1214,19 @@ function AboutPage({ onSignUp }) {
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
             Every real estate investor knows the routine: coffee, laptop, and an hour of scrolling
-            listings that stopped making sense three price cuts ago. The deals that actually work —
-            wholesale assignments, off-market properties, mispriced rentals in cash-flow markets —
-            never sit on page one of Zillow.
+            listings that stopped making sense three price cuts ago. The deals that actually work, the wholesale assignments, off-market
+            properties, and mispriced rentals in cash-flow markets, never sit on page one of
+            Zillow.
           </p>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
             DealHive flips that routine. Our pipeline watches the wholesale and off-market space
             across the country and pre-analyzes everything it finds against buy-and-hold, BRRRR,
-            and fix-and-flip models. What lands in your feed is the short list — the properties
+            and fix-and-flip models. What lands in your feed is the short list: the properties
             worth your next hour, not your next month.
           </p>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
             We're independent, investor-run, and built for people who close. No venture pressure to
-            juice engagement metrics — just a tool we wanted for ourselves, opened up to everyone.
+            juice engagement metrics, just a tool we wanted for ourselves, opened up to everyone.
           </p>
         </div>
       </Section>
@@ -1223,7 +1258,7 @@ function ContactPage() {
       <PageHero
         eyebrow="Contact"
         title="Talk to a human."
-        subtitle="Questions, feedback, billing, partnership ideas — one inbox, real replies."
+        subtitle="Questions, feedback, billing, partnership ideas. One inbox, real replies."
       />
       <Section style={{ padding: "24px 24px 96px" }}>
         <div style={{
@@ -1285,7 +1320,7 @@ function PrivacyPage() {
 
       <h2>1. Information we collect</h2>
       <ul>
-        <li><strong>Account information.</strong> Your email address and a password (stored in hashed form by our authentication provider — we never see or store your plain-text password).</li>
+        <li><strong>Account information.</strong> Your email address and a password (stored in hashed form by our authentication provider, so we never see or store your plain-text password).</li>
         <li><strong>Content you create.</strong> Deals you save, analyses you run, settings you configure, and notes you enter. This data exists so the app can work for you and is private to your account.</li>
         <li><strong>Payment information.</strong> Payments are processed by Stripe. Your card number goes directly to Stripe and never touches our servers. We store only your subscription status and Stripe customer reference.</li>
         <li><strong>Usage and device data.</strong> Basic technical logs (browser type, approximate region, error reports) used to keep the Service reliable and secure.</li>
@@ -1293,7 +1328,7 @@ function PrivacyPage() {
 
       <h2>2. How we use your information</h2>
       <ul>
-        <li>To provide and improve the Service — syncing your data across devices, showing your saved deals, operating the deal feed.</li>
+        <li>To provide and improve the Service: syncing your data across devices, showing your saved deals, operating the deal feed.</li>
         <li>To process subscriptions and send transactional emails (receipts, password resets, important account notices).</li>
         <li>To protect the Service against abuse, fraud, and security issues.</li>
       </ul>
@@ -1306,10 +1341,10 @@ function PrivacyPage() {
       <h2>3. Service providers</h2>
       <p>We rely on a small set of processors to run the Service:</p>
       <ul>
-        <li><strong>Google Firebase</strong> — authentication and database hosting for your account data.</li>
-        <li><strong>Stripe</strong> — payment processing and subscription billing.</li>
-        <li><strong>Netlify</strong> — website hosting.</li>
-        <li><strong>Google Maps Platform</strong> — property imagery and address lookup.</li>
+        <li><strong>Google Firebase</strong>: authentication and database hosting for your account data.</li>
+        <li><strong>Stripe</strong>: payment processing and subscription billing.</li>
+        <li><strong>Netlify</strong>: website hosting.</li>
+        <li><strong>Google Maps Platform</strong>: property imagery and address lookup.</li>
       </ul>
       <p>Each provider processes data only as needed to provide their service to us.</p>
 
@@ -1324,8 +1359,8 @@ function PrivacyPage() {
       <p>
         We keep your account data for as long as your account exists. You can delete your account
         and all associated data at any time by emailing{" "}
-        <a href="mailto:support@dealhive.io">support@dealhive.io</a> from your account email —
-        deletion is completed within 30 days. You can also request an export of your data.
+        <a href="mailto:support@dealhive.io">support@dealhive.io</a> from your account email.
+        Deletion is completed within 30 days. You can also request an export of your data.
       </p>
 
       <h2>6. Security</h2>
@@ -1367,7 +1402,7 @@ function TermsPage() {
       <p>
         DealHive aggregates real estate deal information from third-party and public sources and
         provides analysis tools for evaluating potential investments. The Service is an
-        informational tool — it is not a brokerage, lender, appraiser, or investment advisor.
+        informational tool. It is not a brokerage, lender, appraiser, or investment advisor.
       </p>
 
       <h2>2. Accounts</h2>
@@ -1403,13 +1438,13 @@ function TermsPage() {
         estimates, analyses, and reports in the Service are generated from data provided by third
         parties and public records. We do not independently verify this data, and it may be
         incomplete, outdated, or inaccurate. Analyses and projections are mathematical models based
-        on assumptions — they are <strong>not</strong> certified appraisals, broker price opinions,
+        on assumptions. They are <strong>not</strong> certified appraisals, broker price opinions,
         or investment, legal, tax, or financial advice.
       </p>
       <p>
         Real estate investing involves substantial risk, including loss of capital. You are solely
         responsible for your investment decisions. Always independently verify property details,
-        condition, title, rents, and values — and consult licensed professionals — before
+        condition, title, rents, and values, and consult licensed professionals, before
         purchasing any property.
       </p>
 
@@ -1480,18 +1515,30 @@ function TermsPage() {
   );
 }
 
+// Marketing chrome (nav + footer) as a wrapper, so the auth pages in App.jsx
+// can live inside the same shell as the rest of the site.
+export function MarketingChrome({ navigate, onSignIn, onSignUp, children }) {
+  return (
+    <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
+      <TopNav navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
+      {children}
+      <Footer navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
+    </div>
+  );
+}
+
 // ==============================================================================
 // Top-level export — routes to the right page
 // ==============================================================================
 const PAGE_TITLES = {
-  "/":          "DealHive — off-market deals, pre-analyzed, every day",
-  "/features":  "Features — DealHive",
-  "/pricing":   "Pricing — DealHive",
-  "/faq":       "FAQ — DealHive",
-  "/about":     "About — DealHive",
-  "/contact":   "Contact — DealHive",
-  "/privacy":   "Privacy Policy — DealHive",
-  "/terms":     "Terms of Use — DealHive",
+  "/":          "DealHive: Off-Market Deals, Pre-Analyzed, Every Day",
+  "/features":  "DealHive Features",
+  "/pricing":   "DealHive Pricing",
+  "/faq":       "DealHive FAQ",
+  "/about":     "About DealHive",
+  "/contact":   "Contact DealHive",
+  "/privacy":   "DealHive Privacy Policy",
+  "/terms":     "DealHive Terms of Use",
 };
 
 export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
@@ -1512,6 +1559,28 @@ export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
 
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
+      <style>{`
+        @keyframes dhFloat1 { from { transform: translateY(0); }    to { transform: translateY(-14px); } }
+        @keyframes dhFloat2 { from { transform: translateY(-8px); } to { transform: translateY(10px); } }
+        @keyframes dhFloat3 { from { transform: translateY(6px); }  to { transform: translateY(-10px); } }
+        @media (prefers-reduced-motion: reduce) {
+          .dh-hero svg { animation: none !important; }
+        }
+        @media (max-width: 640px) {
+          .dh-section { padding: 52px 20px !important; }
+          .dh-hero { padding: 48px 20px 64px !important; }
+          .dh-page-hero { padding: 44px 20px 36px !important; }
+          .dh-sec-head { margin-bottom: 32px !important; }
+          .dh-hero-ctas { flex-direction: column; }
+          .dh-hero-ctas > button { width: 100%; justify-content: center; }
+          .dh-check-divider { display: none !important; }
+          .dh-hero-checks { justify-content: center; }
+          .dh-numbers { grid-template-columns: repeat(2, 1fr) !important; gap: 26px !important; }
+          .dh-hv-tilt { transform: perspective(1200px) rotateY(-4deg) rotateX(2deg); }
+          .dh-hv-b { transform: translateX(18px) !important; }
+          .dh-hv-c { transform: translateX(-12px) !important; }
+        }
+      `}</style>
       <TopNav navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
       {body}
       <Footer navigate={navigate} onSignIn={onSignIn} onSignUp={onSignUp}/>
