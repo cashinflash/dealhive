@@ -1515,20 +1515,15 @@ function DealSummaryBlock({p, m, exit}) {
     ];
   } else if (exit === "brrrr") {
     const refiCash = cash ? m.brrrCashOut : m.brrrNetCash;
-    const leftIn   = Math.max(m.chosenOOP - Math.max(refiCash, 0), 0);
     // Cash that actually ends up in your pocket: refi proceeds beyond what
-    // you put in. Zero when the refi returns less than your investment
-    // (that shortfall shows as Cash Left In Deal instead).
+    // you put in (zero when the refi returns less than your investment).
     const inPocket = Math.max(Math.max(refiCash, 0) - m.chosenOOP, 0);
-    const cocAfter = leftIn > 0 ? pct((m.brrrCF*12/leftIn)*100) : (m.brrrCF > 0 ? "All Cash Back" : "—");
     rows = [
       ["Out of Pocket", $(m.chosenOOP), C.text],
       [cash ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
       ["hr"],
-      ["Cash Left In Deal", $(leftIn), leftIn === 0 ? cfC(1) : C.text],
       ["Cash Flow / mo (After Refi)", $mo(m.brrrCF), cfC(m.brrrCF)],
       ["Cash in Pocket", $(inPocket), cfC(inPocket)],
-      ["Cash-on-Cash (After Refi)", cocAfter, cfC(m.brrrCF)],
     ];
   } else {
     rows = [
