@@ -251,11 +251,23 @@ const calc = (p) => {
   const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding;
   const flipROI  = cashOOP>0 ? (flipProfit/cashOOP)*100 : 0;
 
+  // Financed flip: carrying costs include the debt service, the loan gets
+  // paid off out of the sale, and ROI is measured on cash actually invested —
+  // that's the leverage story.
+  const finFlipHolding = holdMonths * (exp + mtg);
+  const finFlipProfit  = (p.flipSalePrice||0) - agentFee - finFlipHolding - loan - finOOP;
+  const finFlipROI     = finOOP>0 ? (finFlipProfit/finOOP)*100 : 0;
+
+  // Financed BRRRR: the refi pays off the existing loans first; what's left
+  // is the cash that actually reaches your pocket.
+  const brrrNetCash = brrrCashOut - loan;
+
   const s = p.chosenStrategy || "finance";
   return {
     exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
     rolledIn, loanBreakdown, holdMonths, flipHolding,
+    finFlipHolding, finFlipProfit, finFlipROI, brrrNetCash,
     brrrCashOut, brrrMtg, brrrCF, agentFee, flipProfit, flipROI,
     chosenCF:  s==="cash" ? cashCF  : finCF,
     chosenCoC: s==="cash" ? cashCoC : finCoC,
@@ -1413,7 +1425,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
           const active = s===id;
           return (
-            <button key={id} onClick={()=>{ u("chosenStrategy",id); if (id==="finance") setXtra(null); }}
+            <button key={id} onClick={()=>u("chosenStrategy",id)}
               style={{
                 flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
                 background: active ? accent : "transparent",
@@ -1475,11 +1487,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <button onClick={()=>setItemize("repair")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Repairs" : "Itemize"}
           </button>
-          {s==="cash" && (
-            <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
-              note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
-              mobile={mobile} />
-          )}
+          <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
+            note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
+            mobile={mobile} />
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
@@ -1599,8 +1609,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
 
-        {/* After Repair Value — cash tab only (drives BRRRR / flip exits) */}
-        {s==="cash" && (
+        {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
         <SectionBlock title="After Repair Value (ARV)" color={C.blue}>
           <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
@@ -1624,11 +1633,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {p.homeValueMedian > 0 && <DataRow label="Current Value (Est.)" value={$(p.homeValueMedian)} />}
           {p.taxValue > 0 && <DataRow label="Tax Value" value={$(p.taxValue)} />}
         </SectionBlock>
-        )}
 
-        {/* Summary — on the Cash tab the analyzer renders this lower on the
-            page (right above Notes) instead */}
-        {!(externalSummary && s === "cash") && <DealSummaryBlock p={p} m={m}/>}
+        {/* Summary — the analyzer relocates this to sit right above Notes */}
+        {!externalSummary && <DealSummaryBlock p={p} m={m}/>}
 
       </div>
 
@@ -1636,8 +1643,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           under the ARV section and above the exit-strategy toggle */}
       {midSlot}
 
-      {/* Exit strategies — BRRRR / Fix & Flip toggle, cash tab only */}
-      {s==="cash" && (
+      {/* Exit strategies — BRRRR / Fix & Flip toggle, both tabs (the math
+          adapts: financed exits carry debt service and loan payoffs) */}
       <div style={{marginTop:14}}>
         <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
           letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
@@ -1674,9 +1681,21 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             )}
             <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.8)}
               set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
-            <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
+            {s === "finance" && <DataRow label="Pays Off Existing Loans" value={$(m.loan)} />}
+            {s === "finance" && (
+              <DataRow label="Net Cash at Refi" value={$(m.brrrNetCash)} color={cfC(m.brrrNetCash)} />
+            )}
+            <DataRow label="Est. Mortgage / mo (After Refi)" value={$mo(m.brrrMtg)} />
             <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-            <DataRow label="Cash Received at Refi" value={$(m.brrrCashOut)} color={cfC(m.brrrCashOut)} />
+            {s === "cash" && (
+              <DataRow label="Cash Received at Refi" value={$(m.brrrCashOut)} color={cfC(m.brrrCashOut)} />
+            )}
+            {s === "finance" && m.brrrNetCash < 0 && (
+              <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+                padding:"8px 12px", borderRadius:C.r2, marginTop:8, fontFamily:F, lineHeight:1.5}}>
+                The refinance doesn't fully cover your existing loans — you'd bring cash to close the refi.
+              </div>
+            )}
           </SectionBlock>
         )}
 
@@ -1691,15 +1710,27 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$"
               note="From your ARV above — adjust if you'd list differently" mobile={mobile} />
             <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
-            <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
-            <DataRow label="Agent Fee" value={$(m.agentFee)} />
-            <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
-            <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
-            <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+            {s === "cash" ? (
+              <>
+                <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
+                <DataRow label="Agent Fee" value={$(m.agentFee)} />
+                <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
+                <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
+                <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+              </>
+            ) : (
+              <>
+                <DataRow label="Total Cash In" value={$(m.finOOP)} />
+                <DataRow label="Agent Fee" value={$(m.agentFee)} />
+                <DataRow label={"Holding Costs (" + m.holdMonths + " mo, incl. loan payments)"} value={$(m.finFlipHolding)} />
+                <DataRow label="Loan Payoff at Sale" value={$(m.loan)} />
+                <DataRow label="Net Profit" value={$(m.finFlipProfit)} color={cfC(m.finFlipProfit)} />
+                <DataRow label="ROI on Cash" value={pct(m.finFlipROI)} color={cfC(m.finFlipProfit)} />
+              </>
+            )}
           </SectionBlock>
         )}
       </div>
-      )}
 
       {/* Itemize sheets */}
       {itemize === "closing" && (
@@ -5776,9 +5807,100 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   };
 
   const m = calc(d);
-  const cashScore = (m.cashCF>0?30:0) + Math.min(m.cashCoC,20) + (m.cashCoC>8?20:0);
-  const finScore  = (m.finCF>0?30:0)  + Math.min(m.finCoC,20)  + (m.finCoC>10?20:0);
-  const winner    = finScore >= cashScore ? "finance" : "cash";
+
+  // Financed exit-strategy recommendation (Rental vs BRRRR vs Fix & Flip, all
+  // on the financed math). Same placement as the cash card: under ARV, above
+  // the exit toggle.
+  const finRecommendation = d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
+    const arv = d.homeValueHigh || 0;
+    const netAtRefi = Math.max(m.brrrNetCash, 0);
+    const leftIn    = Math.max(m.finOOP - netAtRefi, 0);
+    const holdYears = Math.max((m.holdMonths || 6) / 12, 0.25);
+    const scores = {
+      rental: m.finCF > 0 ? m.finCoC : 0,
+      brrrr:  !arv || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+      flip:   !arv || m.finFlipProfit <= 0 ? 0 : m.finFlipROI / holdYears,
+    };
+    const order = ["rental","brrrr","flip"];
+    const winId = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "rental");
+    const NAMES = {rental:"Rental", brrrr:"BRRRR", flip:"Fix & Flip"};
+    const WHY   = {
+      rental: "Solid leveraged cash flow with the simplest execution.",
+      brrrr:  m.brrrNetCash >= 0
+        ? "The refinance pays off your loans and returns cash, and it still cash flows."
+        : "Strong return on the cash left in after the refinance.",
+      flip:   "Highest annualized return on your invested cash for this deal.",
+    };
+    const cards = [
+      {id:"rental", label:"Rental", rows:[
+        ["Total Cash In", $(m.finOOP), C.text],
+        ["Cash Flow / mo", $mo(m.finCF), cfC(m.finCF)],
+        ["Cash-on-Cash", pct(m.finCoC), C.text],
+      ]},
+      {id:"brrrr", label:"BRRRR", rows:[
+        ["Total Cash In", $(m.finOOP), C.text],
+        ["Net Cash at Refi", $(m.brrrNetCash), cfC(m.brrrNetCash)],
+        ["Cash Flow / mo", $mo(m.brrrCF), cfC(m.brrrCF)],
+      ]},
+      {id:"flip", label:"Fix & Flip", rows:[
+        ["Total Cash In", $(m.finOOP), C.text],
+        ["Net Profit", $(m.finFlipProfit), cfC(m.finFlipProfit)],
+        ["ROI on Cash", pct(m.finFlipROI), cfC(m.finFlipProfit)],
+      ]},
+    ];
+    return (
+      <Card style={{padding:20, marginBottom:16}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:14}}>
+          <div style={{width:28, height:28, borderRadius:C.r2, background:C.greenSubtle, color:C.greenDark,
+            display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <I.check size={15} stroke={2.5}/>
+          </div>
+          <div>
+            <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
+            <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
+              Best exit: {NAMES[winId]}
+            </div>
+          </div>
+        </div>
+        {!arv && (
+          <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+            padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F, lineHeight:1.5}}>
+            Enter an After Repair Value to bring BRRRR and Fix & Flip into the comparison.
+          </div>
+        )}
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap:10, marginBottom:14}}>
+          {cards.map(sv => {
+            const win = winId === sv.id;
+            const muted = (sv.id !== "rental") && !arv;
+            return (
+              <div key={sv.id} style={{
+                background: win ? C.greenSubtle : C.bgSubtle,
+                border: "1px solid " + (win ? C.greenBorder : C.border),
+                borderRadius:C.r3, padding:"14px 16px", opacity: muted ? .55 : 1,
+              }}>
+                <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap"}}>
+                  <span style={{fontSize:12, fontWeight:600, color:win?C.greenDark:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>{sv.label}</span>
+                  {win && <Badge label="Recommended" bg={C.green} c="#fff"/>}
+                </div>
+                <div style={{display:"flex", flexDirection:"column", gap:6, marginTop:2}}>
+                  {sv.rows.map(([l, v, color]) => (
+                    <div key={l} style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
+                      <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{l}</span>
+                      <span style={{fontSize:14, fontWeight:700, color, fontFamily:F,
+                        fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
+          {WHY[winId]}
+        </div>
+      </Card>
+    );
+  })();
 
   // Cash-tab exit-strategy recommendation. Rendered inside the Calculator via
   // midSlot so it sits right under the ARV section, above the BRRRR / Fix &
@@ -5954,60 +6076,11 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* Calculator */}
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
         exit={exitStrategy} onExitChange={setExitStrategy} externalSummary
-        midSlot={cashRecommendation}
+        midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
-
-      {d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
-        const isFinance = winner==="finance";
-        return (
-          <Card style={{padding:20, marginBottom:16}}>
-            <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:14}}>
-              <div style={{width:28, height:28, borderRadius:C.r2, background:C.greenSubtle, color:C.greenDark,
-                display:"flex", alignItems:"center", justifyContent:"center"}}>
-                <I.check size={15} stroke={2.5}/>
-              </div>
-              <div>
-                <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
-                <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
-                  {isFinance ? "Finance this deal" : "Buy with cash"}
-                </div>
-              </div>
-            </div>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14}}>
-              {[{id:"cash",label:"Cash",cf:m.cashCF,coc:m.cashCoC,oop:m.cashOOP},
-                {id:"finance",label:"Finance",cf:m.finCF,coc:m.finCoC,oop:m.finOOP}].map(sv => {
-                const win = winner===sv.id;
-                return (
-                  <div key={sv.id} style={{
-                    background: win ? C.greenSubtle : C.bgSubtle,
-                    border: "1px solid " + (win ? C.greenBorder : C.border),
-                    borderRadius:C.r3, padding:"14px 16px",
-                  }}>
-                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
-                      <span style={{fontSize:12, fontWeight:600, color:win?C.greenDark:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>{sv.label}</span>
-                      {win && <Badge label="Recommended" bg={C.green} c="#fff"/>}
-                    </div>
-                    <div style={{fontSize:24, fontWeight:700, color:cfC(sv.cf), fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>{$mo(sv.cf)}</div>
-                    <div style={{display:"flex", gap:14, marginTop:6, fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                      <span>CoC <b style={{color:C.text, fontWeight:600}}>{pct(sv.coc)}</b></span>
-                      <span>OOP <b style={{color:C.text, fontWeight:600}}>{$(sv.oop)}</b></span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
-              {isFinance
-                ? <>Financing wins — cash-on-cash of <b style={{color:C.text, fontWeight:600}}>{pct(m.finCoC)}</b> is strong, and you keep <b style={{color:C.text, fontWeight:600}}>${Math.round(m.cashOOP-m.finOOP).toLocaleString()}</b> in your pocket. After-mortgage cash flow: <b style={{color:C.text, fontWeight:600}}>{$mo(m.finCF)}</b>.</>
-                : <>Cash wins — financed cash flow of <b style={{color:C.text, fontWeight:600}}>{$mo(m.finCF)}</b> is too thin after the mortgage. All-cash gives you <b style={{color:C.text, fontWeight:600}}>{$mo(m.cashCF)}</b>/mo.</>}
-            </div>
-          </Card>
-        );
-      })()}
-
-      {/* Summary — Cash tab renders it here, right above Notes */}
-      {(d.chosenStrategy||"finance") === "cash" && <DealSummaryBlock p={d} m={m}/>}
+      {/* Summary — always right above Notes */}
+      <DealSummaryBlock p={d} m={m}/>
 
       {/* Deal Notes */}
       <SectionBlock title="Notes" color={C.text}>
@@ -6019,8 +6092,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* Save */}
       <button onClick={saveDeal}
         {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-        <I.star size={15}/> Save as {(d.chosenStrategy||"finance") === "finance" ? "Rental"
-          : exitStrategy === "brrrr" ? "BRRRR" : exitStrategy === "flip" ? "Fix & Flip" : "Buy & Hold"}
+        <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
+          : exitStrategy === "flip" ? "Fix & Flip"
+          : (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
       </button>
 
       {/* Saved Deals */}
