@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import Landing, { MarketingChrome } from "./Landing.jsx";
 
 // -- Error Boundary ------------------------------------------------------------
@@ -736,23 +736,51 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
   const isNum = type === "number";
   const [focused, setFocused] = useState(false);
   const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+  const caretRef = useRef(null); // raw chars (digits/dot) left of the caret
 
-  // While editing a number field we show a raw, freely-editable string (so it
-  // can be cleared with backspace); when idle we show it with thousands commas.
+  // Strip everything but digits and the first decimal point.
+  const sanitize = v => v.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+  // Thousands commas on the integer part, decimals left as typed.
+  const addCommas = raw => {
+    if (raw === "") return "";
+    const dot = raw.indexOf(".");
+    const int = dot === -1 ? raw : raw.slice(0, dot);
+    const dec = dot === -1 ? null : raw.slice(dot + 1);
+    const intFmt = int === "" ? "" : Number(int).toLocaleString("en-US");
+    return dec === null ? intFmt : `${intFmt}.${dec}`;
+  };
+
+  // Numbers format live as you type; the caret is restored to sit after the
+  // same digit it was on, however many commas appear or disappear around it.
   const display = !isNum
     ? (val ?? "")
     : focused
       ? draft
       : (val === "" || val == null ? "" : Number(val).toLocaleString());
 
+  useLayoutEffect(() => {
+    if (caretRef.current == null || !inputRef.current) return;
+    const f = draft;
+    let pos = 0, seen = 0;
+    while (pos < f.length && seen < caretRef.current) {
+      if (/[0-9.]/.test(f[pos])) seen++;
+      pos++;
+    }
+    inputRef.current.setSelectionRange(pos, pos);
+    caretRef.current = null;
+  }, [draft]);
+
   const onFocus = () => {
-    if (isNum) setDraft(val && Number(val) !== 0 ? String(val) : "");
+    if (isNum) setDraft(val && Number(val) !== 0 ? addCommas(String(val)) : "");
     setFocused(true);
   };
   const onChange = e => {
     if (!isNum) { set(e.target.value); return; }
-    const raw = e.target.value.replace(/[^0-9.]/g, "");
-    setDraft(raw);
+    const el = e.target;
+    caretRef.current = el.value.slice(0, el.selectionStart ?? el.value.length).replace(/[^0-9.]/g, "").length;
+    const raw = sanitize(el.value);
+    setDraft(addCommas(raw));
     set(raw === "" ? 0 : (parseFloat(raw) || 0));
   };
 
@@ -772,7 +800,7 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
             pointerEvents:"none",
           }}>{pre}</span>
         )}
-        <input type={isNum ? "text" : type} value={display}
+        <input ref={inputRef} type={isNum ? "text" : type} value={display}
           inputMode={isNum ? "decimal" : undefined}
           onFocus={onFocus}
           onBlur={()=>setFocused(false)}
