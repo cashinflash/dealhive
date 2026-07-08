@@ -94,20 +94,56 @@ const saveData = async (uid, token, d) => {
     const r = await fetch(`${dbPath(uid)}?auth=${token}`, {
       method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d)
     });
-    if (r.ok) return true;            // saved to the cloud — synced across devices
+    if (r.ok) {
+      // Saved to the cloud — the local fallback copy (if any) is now stale;
+      // drop it so an old island can never overwrite fresher cloud data.
+      try { localStorage.removeItem(`dh_${uid}`); } catch {}
+      return true;
+    }
   } catch {}
   // Cloud save failed (offline, or expired token): keep a local backup so the
   // change isn't lost. The caller refreshes the token and retries.
   try { localStorage.setItem(`dh_${uid}`, JSON.stringify(d)); } catch {}
   return false;
 };
+
+// Merge two copies of a keyed list: union by id, the newer stamp wins a
+// conflict, first list wins ties (pass cloud first).
+const mergeLists = (a, b) => {
+  const stamp = x => (x && (x.updatedAt || x.savedAt)) || "";
+  const by = new Map();
+  [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach(x => {
+    if (!x || !x.id) return;
+    const prev = by.get(x.id);
+    if (!prev || stamp(x) > stamp(prev)) by.set(x.id, x);
+  });
+  return [...by.values()];
+};
+// Cloud wins scalars; the deal/property lists union so a device that saved
+// offline contributes its entries instead of being silently shadowed.
+const mergeData = (cloud, local) => ({
+  ...local, ...cloud,
+  savedDeals: mergeLists(cloud.savedDeals, local.savedDeals),
+  properties: mergeLists(cloud.properties, local.properties),
+  deals:      mergeLists(cloud.deals,      local.deals),
+});
+
 const loadData = async (uid, token) => {
+  let cloud = null;
   try {
     const r = await fetch(`${dbPath(uid)}?auth=${token}`);
-    if(r.ok) { const d = await r.json(); if(d?.properties) return d; }
+    if (r.ok) { const d = await r.json(); if (d && typeof d === "object") cloud = d; }
   } catch {}
-  try { const r = localStorage.getItem(`dh_${uid}`); if(r) return JSON.parse(r); } catch {}
-  return null;
+  let local = null;
+  try { const raw = localStorage.getItem(`dh_${uid}`); if (raw) local = JSON.parse(raw); } catch {}
+  if (cloud && local) {
+    // A device that saved offline left changes in its mirror. Merge the two
+    // and heal the cloud copy so every device converges on one truth.
+    const merged = mergeData(cloud, local);
+    await saveData(uid, token, merged); // success also clears the mirror
+    return merged;
+  }
+  return cloud || local;
 };
 const saveMeta = async (uid, token, m) => {
   try {
@@ -7485,11 +7521,15 @@ export default function App() {
 
   // Save to the cloud; if it fails (likely an expired token), refresh and retry
   // once so the change still syncs instead of going local-only.
+  const [syncWarn, setSyncWarn] = useState(false);
   const saveCloud = useCallback(async (next) => {
     const u = userRef.current;
     if (!u) return;
     const ok = await saveData(u.localId, u.idToken, next);
-    if (!ok) { const nu = await refreshSession(); if (nu) saveData(nu.localId, nu.idToken, next); }
+    if (ok) { setSyncWarn(false); return; }
+    const nu = await refreshSession();
+    const ok2 = nu ? await saveData(nu.localId, nu.idToken, next) : false;
+    setSyncWarn(!ok2);
   }, [refreshSession]);
 
   const persist = useCallback((next) => {
@@ -7717,6 +7757,13 @@ export default function App() {
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"clip"}}>
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft} />
       <TrialBanner daysLeft={daysLeft} />
+      {syncWarn && (
+        <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
+          padding:"8px 16px", display:"flex", alignItems:"center", gap:8,
+          fontSize:12.5, color:C.amberDark, fontFamily:F}}>
+          <I.alert size={14}/> Changes are saving to this device only right now — they'll sync automatically once your connection is back.
+        </div>
+      )}
       <ErrorBoundary>
         {showProp ? (
           <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
@@ -7772,6 +7819,13 @@ export default function App() {
       <div style={{marginLeft:230, flex:1, minWidth:0}}>
         <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast} />
         <TrialBanner daysLeft={daysLeft} />
+      {syncWarn && (
+        <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
+          padding:"8px 16px", display:"flex", alignItems:"center", gap:8,
+          fontSize:12.5, color:C.amberDark, fontFamily:F}}>
+          <I.alert size={14}/> Changes are saving to this device only right now — they'll sync automatically once your connection is back.
+        </div>
+      )}
         <div style={{maxWidth:1200, margin:"0 auto"}}>
           <ErrorBoundary>
             {showProp ? (
