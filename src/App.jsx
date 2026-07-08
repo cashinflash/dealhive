@@ -6027,6 +6027,42 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
   const m = calc(d);
 
+  // Which exit the recommendation would pick — mirrors the scoring inside the
+  // recommendation cards below (null = Buy & Hold / Rental). Used to
+  // auto-select the Explore Exit Strategies toggle until the user taps it
+  // themselves.
+  const recWinner = (() => {
+    if (!(d.purchasePrice > 0)) return null;
+    const arvW  = d.homeValueHigh || 0;
+    const holdY = Math.max((m.holdMonths || 6) / 12, 0.25);
+    let scores, order;
+    if ((d.chosenStrategy||"finance") === "cash") {
+      const leftIn = Math.max(m.cashOOP - m.brrrCashOut, 0);
+      scores = {
+        base:  m.cashCF > 0 ? m.cashCoC : 0,
+        brrrr: !arvW || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+        flip:  !arvW || m.flipProfit <= 0 ? 0 : m.flipROI / holdY,
+      };
+    } else {
+      const leftIn = Math.max(m.finOOP - Math.max(m.brrrNetCash, 0), 0);
+      scores = {
+        base:  m.finCF > 0 ? m.finCoC : 0,
+        brrrr: !arvW || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+        flip:  !arvW || m.finFlipProfit <= 0 ? 0 : m.finFlipROI / holdY,
+      };
+    }
+    order = ["base","brrrr","flip"];
+    const win = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "base");
+    return win === "base" ? null : win;
+  })();
+
+  // Follow the recommendation until the user taps the toggle themselves.
+  const exitTouched = useRef(false);
+  useEffect(() => {
+    if (exitTouched.current) return;
+    setExitStrategy(prev => prev === recWinner ? prev : recWinner);
+  }, [recWinner]);
+
   // Financed exit-strategy recommendation (Rental vs BRRRR vs Fix & Flip, all
   // on the financed math). Same placement as the cash card: under ARV, above
   // the exit toggle.
@@ -6294,7 +6330,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
       {/* Calculator */}
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
-        exit={exitStrategy} onExitChange={setExitStrategy} externalSummary
+        exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
         midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
