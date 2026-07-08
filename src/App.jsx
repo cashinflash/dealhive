@@ -1639,6 +1639,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       {/* Exit strategies — BRRRR / Fix & Flip toggle, cash tab only */}
       {s==="cash" && (
       <div style={{marginTop:14}}>
+        <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
+          Explore Exit Strategies
+        </div>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
           {[["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent]) => {
