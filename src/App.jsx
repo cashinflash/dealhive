@@ -1333,8 +1333,23 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
   );
 }
 
+// Shared Summary block — rendered in the calculator grid normally, but the
+// analyzer relocates it to sit right above Notes on the Cash tab.
+function DealSummaryBlock({p, m}) {
+  return (
+    <SectionBlock title="Summary" color={C.text}>
+      <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
+      <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
+      <DataRow label="Net Cash Flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
+      <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
+      <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
+      <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
+    </SectionBlock>
+  );
+}
+
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange, externalSummary}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
@@ -1611,15 +1626,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
         )}
 
-        {/* Summary */}
-        <SectionBlock title="Summary" color={C.text}>
-          <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
-          <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
-          <DataRow label="Net Cash Flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
-          <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
-          <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
-          <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
-        </SectionBlock>
+        {/* Summary — on the Cash tab the analyzer renders this lower on the
+            page (right above Notes) instead */}
+        {!(externalSummary && s === "cash") && <DealSummaryBlock p={p} m={m}/>}
 
       </div>
 
@@ -5843,7 +5852,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
       {/* Calculator */}
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
-        exit={exitStrategy} onExitChange={setExitStrategy}
+        exit={exitStrategy} onExitChange={setExitStrategy} externalSummary
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
       {/* Recommendation — Cash tab compares exit strategies (Buy & Hold vs
@@ -5985,6 +5994,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           </Card>
         );
       })()}
+
+      {/* Summary — Cash tab renders it here, right above Notes */}
+      {(d.chosenStrategy||"finance") === "cash" && <DealSummaryBlock p={d} m={m}/>}
 
       {/* Deal Notes */}
       <SectionBlock title="Notes" color={C.text}>
