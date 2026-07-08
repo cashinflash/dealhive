@@ -1349,7 +1349,7 @@ function DealSummaryBlock({p, m}) {
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange, externalSummary}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange, externalSummary, midSlot}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
@@ -1631,6 +1631,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {!(externalSummary && s === "cash") && <DealSummaryBlock p={p} m={m}/>}
 
       </div>
+
+      {/* Analyzer slot — the cash recommendation card renders here, right
+          under the ARV section and above the exit-strategy toggle */}
+      {midSlot}
 
       {/* Exit strategies — BRRRR / Fix & Flip toggle, cash tab only */}
       {s==="cash" && (
@@ -5772,92 +5776,10 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const finScore  = (m.finCF>0?30:0)  + Math.min(m.finCoC,20)  + (m.finCoC>10?20:0);
   const winner    = finScore >= cashScore ? "finance" : "cash";
 
-  return (
-    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
-      {fromDeals && onBackToDeals && (
-        <button onClick={onBackToDeals} {...btnStyle("ghost","sm", {marginBottom:14, color:C.textSub, padding:"6px 10px"})}>
-          <I.arrowLeft size={14}/> Back to deals
-        </button>
-      )}
-      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
-        action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
-
-      {/* Property — photo up top, then the address fields together */}
-      <SectionBlock title="Property" color={C.green}>
-        {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
-            show that deal's photo carousel. Otherwise (custom address search)
-            fall back to a Street View image. */}
-        {Array.isArray(d.photos) && d.photos.length > 0 ? (
-          <div style={{borderRadius:C.r4, overflow:"hidden", marginBottom:16,
-            border:"1px solid "+C.border, boxShadow:C.sh1}}>
-            <PhotoCarousel photos={d.photos}
-              fallbackLat={d.lat} fallbackLng={d.lng}
-              height={mobile ? 220 : 280} mobile={mobile} />
-          </div>
-        ) : (
-          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={200} />
-        )}
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
-            Address
-          </label>
-          <AddressInput value={d.address} onChange={v=>u("address",v)}
-            onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
-            placeholder="Start typing an address…"
-            mobile={mobile} />
-        </div>
-        {d.city && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (
-              <div key={f}>
-                <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>{l}</label>
-                <input value={d[f]||""} onChange={e=>u(f,e.target.value)} style={iS(mobile)} />
-              </div>
-            ))}
-          </div>
-        )}
-        {rentcastKey && (
-          <button onClick={runSearch} disabled={loading}
-            {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
-            {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
-          </button>
-        )}
-        {err && (
-          <div style={{display:"flex", gap:8, alignItems:"center",
-            color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
-            <I.alert size={14}/> {err}
-          </div>
-        )}
-        {d.taxValue > 0 && (
-          <div style={{marginTop:12, background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2, padding:"10px 12px", fontSize:13, fontFamily:F, color:C.greenDark, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
-            <I.check size={14}/> Found data:
-            <span><b style={{fontWeight:600}}>Tax {$(d.expPropTax)}/mo</b></span>
-            {d.homeValueMedian>0 && <span>· Market <b style={{fontWeight:600}}>{$(d.homeValueMedian)}</b></span>}
-            {d.rentEstimate>0 && <span>· Rent est. <b style={{fontWeight:600}}>{$(d.rentEstimate)}/mo</b></span>}
-          </div>
-        )}
-      </SectionBlock>
-
-      {/* Property snapshot */}
-      {d.beds > 0 && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",gap:10,marginBottom:18}}>
-          {[["Beds",d.beds],["Baths",d.baths],["Sqft",(d.sqft||0).toLocaleString()],["Built",d.yearBuilt]].map(([l,v]) => (
-            <Card key={l} style={{padding:"12px 14px"}}>
-              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
-              <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v||"—"}</div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
-        exit={exitStrategy} onExitChange={setExitStrategy} externalSummary
-        stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
-
-      {/* Recommendation — Cash tab compares exit strategies (Buy & Hold vs
-          BRRRR vs Fix & Flip); Finance tab keeps the cash-vs-finance call. */}
-      {d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "cash" && (() => {
+  // Cash-tab exit-strategy recommendation. Rendered inside the Calculator via
+  // midSlot so it sits right under the ARV section, above the BRRRR / Fix &
+  // Flip toggle.
+  const cashRecommendation = d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "cash" && (() => {
         const arv = d.homeValueHigh || 0;
         // Comparable "annualized return on capital" scores for each exit.
         const leftIn     = Math.max(m.cashOOP - m.brrrCashOut, 0);
@@ -5945,7 +5867,92 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             </div>
           </Card>
         );
-      })()}
+      })();
+
+  return (
+    <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
+      {fromDeals && onBackToDeals && (
+        <button onClick={onBackToDeals} {...btnStyle("ghost","sm", {marginBottom:14, color:C.textSub, padding:"6px 10px"})}>
+          <I.arrowLeft size={14}/> Back to deals
+        </button>
+      )}
+      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
+        action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
+
+      {/* Property — photo up top, then the address fields together */}
+      <SectionBlock title="Property" color={C.green}>
+        {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
+            show that deal's photo carousel. Otherwise (custom address search)
+            fall back to a Street View image. */}
+        {Array.isArray(d.photos) && d.photos.length > 0 ? (
+          <div style={{borderRadius:C.r4, overflow:"hidden", marginBottom:16,
+            border:"1px solid "+C.border, boxShadow:C.sh1}}>
+            <PhotoCarousel photos={d.photos}
+              fallbackLat={d.lat} fallbackLng={d.lng}
+              height={mobile ? 220 : 280} mobile={mobile} />
+          </div>
+        ) : (
+          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={200} />
+        )}
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
+            Address
+          </label>
+          <AddressInput value={d.address} onChange={v=>u("address",v)}
+            onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
+            placeholder="Start typing an address…"
+            mobile={mobile} />
+        </div>
+        {d.city && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (
+              <div key={f}>
+                <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>{l}</label>
+                <input value={d[f]||""} onChange={e=>u(f,e.target.value)} style={iS(mobile)} />
+              </div>
+            ))}
+          </div>
+        )}
+        {rentcastKey && (
+          <button onClick={runSearch} disabled={loading}
+            {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
+            {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
+          </button>
+        )}
+        {err && (
+          <div style={{display:"flex", gap:8, alignItems:"center",
+            color:C.redDark, fontSize:13, marginTop:10, fontFamily:F}}>
+            <I.alert size={14}/> {err}
+          </div>
+        )}
+        {d.taxValue > 0 && (
+          <div style={{marginTop:12, background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2, padding:"10px 12px", fontSize:13, fontFamily:F, color:C.greenDark, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <I.check size={14}/> Found data:
+            <span><b style={{fontWeight:600}}>Tax {$(d.expPropTax)}/mo</b></span>
+            {d.homeValueMedian>0 && <span>· Market <b style={{fontWeight:600}}>{$(d.homeValueMedian)}</b></span>}
+            {d.rentEstimate>0 && <span>· Rent est. <b style={{fontWeight:600}}>{$(d.rentEstimate)}/mo</b></span>}
+          </div>
+        )}
+      </SectionBlock>
+
+      {/* Property snapshot */}
+      {d.beds > 0 && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",gap:10,marginBottom:18}}>
+          {[["Beds",d.beds],["Baths",d.baths],["Sqft",(d.sqft||0).toLocaleString()],["Built",d.yearBuilt]].map(([l,v]) => (
+            <Card key={l} style={{padding:"12px 14px"}}>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+              <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v||"—"}</div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Calculator */}
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
+        exit={exitStrategy} onExitChange={setExitStrategy} externalSummary
+        midSlot={cashRecommendation}
+        stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+
 
       {d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
         const isFinance = winner==="finance";
