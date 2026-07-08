@@ -1497,17 +1497,42 @@ function RentCompsSheet({p, apiLookup, rentcastKey, onUseRent, onClose, mobile})
 // Shared Summary block — rendered in the calculator grid normally, but the
 // analyzer relocates it to sit right above Notes on the Cash tab.
 function DealSummaryBlock({p, m, exit}) {
+  const cash = (p.chosenStrategy||"finance") === "cash";
   const exitLabel = exit === "brrrr" ? "BRRRR"
     : exit === "flip" ? "Fix & Flip"
-    : (p.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold";
+    : cash ? "Buy & Hold" : "Rental";
+  // Rows adapt to the exit: a flip is sold (profit + return on cash, no cap
+  // rate or monthly cash flow); a BRRRR's story is the refi proceeds and the
+  // post-refi cash flow; a hold shows the rental metrics.
+  let rows;
+  if (exit === "flip") {
+    const profit = cash ? m.flipProfit : m.finFlipProfit;
+    const roi    = cash ? m.flipROI    : m.finFlipROI;
+    rows = [
+      ["Out of Pocket", $(m.chosenOOP), C.text],
+      ["Total Profit",  $(profit),      cfC(profit)],
+      ["Cash-on-Cash",  pct(roi),       cfC(profit)],
+    ];
+  } else if (exit === "brrrr") {
+    const refiCash = cash ? m.brrrCashOut : m.brrrNetCash;
+    rows = [
+      ["Out of Pocket", $(m.chosenOOP), C.text],
+      [cash ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
+      ["Cash Flow / mo (After Refi)", $mo(m.brrrCF), cfC(m.brrrCF)],
+    ];
+  } else {
+    rows = [
+      ["Out of Pocket",      $(m.chosenOOP),   C.text],
+      ["Net Cash Flow / mo", $mo(m.chosenCF),  cfC(m.chosenCF)],
+      ["Cash-on-Cash",       pct(m.chosenCoC), cfC(m.chosenCoC)],
+      ["Cap Rate",           pct(m.chosenCap), C.text],
+    ];
+  }
   return (
     <SectionBlock title="Summary" color={C.text}>
-      <DataRow label="Purchase Method" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
+      <DataRow label="Purchase Method" value={cash ? "Cash" : "Finance"} />
       <DataRow label="Exit Strategy" value={exitLabel} />
-      <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
-      <DataRow label="Net Cash Flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
-      <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
-      <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
+      {rows.map(([l, v, color]) => <DataRow key={l} label={l} value={v} color={color} />)}
     </SectionBlock>
   );
 }
