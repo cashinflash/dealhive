@@ -148,6 +148,52 @@ const monthlyPI = (principal, rate, years=30) => {
   return principal * (r * Math.pow(1+r,n)) / (Math.pow(1+r,n)-1);
 };
 
+// -- Loans (multi-loan financing) ----------------------------------------------
+// A pro forma can carry p.loans = [{financeOf, ltvPct, customAmount, loanType,
+// rate, termYears}]. When absent, calc() falls back to the legacy single-loan
+// model (downPaymentPct + interestRate) so existing portfolio properties and
+// saved analyses keep their exact numbers.
+const newLoan = (n=1) => ({
+  id: "l" + Date.now() + n,
+  financeOf: "purchase",      // purchase | rehab | purchase_rehab | arv | custom
+  ltvPct: 80,                 // % of the financed base (ignored for custom)
+  customAmount: 0,
+  loanType: "amortizing",     // amortizing | interest_only
+  rate: 12,
+  termYears: 30,
+});
+const loanBase = (loan, p) =>
+  loan.financeOf === "purchase"       ? (p.purchasePrice||0)
+: loan.financeOf === "rehab"          ? (p.repairCosts||0)
+: loan.financeOf === "purchase_rehab" ? (p.purchasePrice||0) + (p.repairCosts||0)
+: loan.financeOf === "arv"            ? (p.homeValueHigh || p.flipSalePrice || 0)
+: 0;
+const loanAmount = (loan, p) =>
+  loan.financeOf === "custom"
+    ? (loan.customAmount||0)
+    : Math.round(loanBase(loan, p) * ((loan.ltvPct ?? 80)/100));
+const loanPayment = (amount, loan) =>
+  loan.loanType === "interest_only"
+    ? amount * ((loan.rate||12)/100/12)
+    : monthlyPI(amount, loan.rate||12, loan.termYears||30);
+
+// -- Itemized costs --------------------------------------------------------------
+// Closing/repair costs can be itemized: [{id, name, type, value, rollIn}].
+// type: "amount" ($) | "pct_price" (% of purchase) | "pct_loan" (% of loans).
+const itemValue = (it, price, loanAmt) =>
+  it.type === "pct_price" ? Math.round(price   * (it.value||0)/100)
+: it.type === "pct_loan"  ? Math.round(loanAmt * (it.value||0)/100)
+: Math.round(it.value||0);
+const itemTotals = (items, price, loanAmt) => {
+  const list = Array.isArray(items) ? items : [];
+  let upFront = 0, rolled = 0;
+  for (const it of list) {
+    const v = itemValue(it, price, loanAmt);
+    if (it.rollIn) rolled += v; else upFront += v;
+  }
+  return { upFront, rolled, total: upFront + rolled };
+};
+
 const calc = (p) => {
   const vacancyFactor = 1 - ((p.vacancyRate||0)/100);
   const effectiveRent = (p.rentAmount||0) * vacancyFactor;
@@ -157,11 +203,36 @@ const calc = (p) => {
   const cashCF   = effectiveRent - exp;
   const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
   const cashCap  = cashOOP>0 ? (noi*12/cashOOP)*100 : 0;
-  const down     = (p.purchasePrice||0) * (p.downPaymentPct||20)/100;
-  const loan     = (p.purchasePrice||0) - down;
-  const mtg      = monthlyPI(loan, p.interestRate||7.5);
-  const cc       = p.closingCosts != null ? p.closingCosts : DEFAULT_CLOSING;
-  const finOOP   = down + (p.repairCosts||0) + cc;
+
+  const cc = p.closingCosts != null ? p.closingCosts : DEFAULT_CLOSING;
+  const hasLoans = Array.isArray(p.loans) && p.loans.length > 0;
+
+  let down, loan, mtg, finOOP, rolledIn = 0, loanBreakdown = [];
+  if (hasLoans) {
+    // New model: sum every loan; costs marked "roll into loan" ride on top of
+    // the first loan (financed, not paid up front).
+    const baseAmounts = p.loans.map(l => loanAmount(l, p));
+    const baseSum     = baseAmounts.reduce((a,b)=>a+b, 0);
+    rolledIn = itemTotals(p.closingItems, p.purchasePrice||0, baseSum).rolled
+             + itemTotals(p.repairItems,  p.purchasePrice||0, baseSum).rolled;
+    loan = baseSum + rolledIn;
+    mtg  = p.loans.reduce((sum, l, i) =>
+      sum + loanPayment(baseAmounts[i] + (i===0 ? rolledIn : 0), l), 0);
+    loanBreakdown = p.loans.map((l, i) => ({
+      loan: l,
+      amount: baseAmounts[i] + (i===0 ? rolledIn : 0),
+      payment: loanPayment(baseAmounts[i] + (i===0 ? rolledIn : 0), l),
+    }));
+    finOOP = Math.max(0, (p.purchasePrice||0) + (p.repairCosts||0) + cc - loan);
+    down   = Math.max(0, (p.purchasePrice||0) - loan);
+  } else {
+    // Legacy single-loan model.
+    down   = (p.purchasePrice||0) * (p.downPaymentPct||20)/100;
+    loan   = (p.purchasePrice||0) - down;
+    mtg    = monthlyPI(loan, p.interestRate||7.5);
+    finOOP = down + (p.repairCosts||0) + cc;
+  }
+
   const finCF    = effectiveRent - exp - mtg;
   const finCoC   = finOOP>0 ? (finCF*12/finOOP)*100 : 0;
   const finCap   = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
@@ -169,13 +240,19 @@ const calc = (p) => {
   const brrrCashOut = p.brrrCashOut || Math.round((p.homeValueMedian||0)*0.8);
   const brrrMtg  = monthlyPI(brrrCashOut, p.interestRate||7.5);
   const brrrCF   = effectiveRent - exp - brrrMtg;
+
+  // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
+  const holdMonths  = p.holdMonths ?? 6;
+  const flipHolding = holdMonths * exp;
   const agentFee = (p.flipSalePrice||0) * (p.agentFeePct||6)/100;
-  const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee;
+  const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding;
   const flipROI  = cashOOP>0 ? (flipProfit/cashOOP)*100 : 0;
+
   const s = p.chosenStrategy || "finance";
   return {
     exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
+    rolledIn, loanBreakdown, holdMonths, flipHolding,
     brrrCashOut, brrrMtg, brrrCF, agentFee, flipProfit, flipROI,
     chosenCF:  s==="cash" ? cashCF  : finCF,
     chosenCoC: s==="cash" ? cashCoC : finCoC,
@@ -220,6 +297,8 @@ const newDeal = () => ({
   purchasePrice:0, repairCosts:0, rentAmount:0,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
   downPaymentPct:20, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
+  loans:[], holdMonths:6,
+  closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
   brrrCashOut:0, flipSalePrice:0, agentFeePct:6,
@@ -478,6 +557,7 @@ const I = {
   star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
   chevronDown: p => <IconSvg {...p} d="M6 9l6 6 6-6"/>,
   trash:       p => <IconSvg {...p} d={<g><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></g>}/>,
+  menu:        p => <IconSvg {...p} d={<g><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></g>}/>,
   edit:        p => <IconSvg {...p} d={<g><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>,
   alert:       p => <IconSvg {...p} d={<g><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></g>}/>,
   check:       p => <IconSvg {...p} d="M20 6L9 17l-5-5"/>,
@@ -1003,11 +1083,226 @@ function AppreciationProjector({homeValue, purchasePrice, mobile}) {
   );
 }
 
+// -- Itemize sheet ---------------------------------------------------------------
+// Itemized breakdown editor for closing costs or repair costs. Items support
+// $ amounts, % of purchase price, % of loan amount, and roll-into-loan. Rows
+// re-order via the drag handle (desktop) or Move Up/Down in the edit panel.
+const CLOSING_PREFILL = () => [
+  {id:"ci1", name:"Home Inspection",     type:"amount",    value:400,  rollIn:false},
+  {id:"ci2", name:"Appraisal",           type:"amount",    value:500,  rollIn:false},
+  {id:"ci3", name:"Loan Points",         type:"pct_loan",  value:1,    rollIn:true},
+  {id:"ci4", name:"Lender Fees",         type:"amount",    value:1200, rollIn:false},
+  {id:"ci5", name:"Title & Escrow Fees", type:"amount",    value:1800, rollIn:false},
+  {id:"ci6", name:"Transfer Taxes",      type:"amount",    value:600,  rollIn:false},
+  {id:"ci7", name:"Attorney Fees",       type:"amount",    value:750,  rollIn:false},
+  {id:"ci8", name:"Wholesaler Fee",      type:"amount",    value:0,    rollIn:false},
+];
+const REPAIR_PREFILL = () => [
+  {id:"ri1",  name:"Kitchen",            type:"amount", value:8000, rollIn:false},
+  {id:"ri2",  name:"Bathrooms",          type:"amount", value:5000, rollIn:false},
+  {id:"ri3",  name:"Flooring",           type:"amount", value:4000, rollIn:false},
+  {id:"ri4",  name:"Interior Paint",     type:"amount", value:3000, rollIn:false},
+  {id:"ri5",  name:"Roof",               type:"amount", value:0,    rollIn:false},
+  {id:"ri6",  name:"HVAC",               type:"amount", value:0,    rollIn:false},
+  {id:"ri7",  name:"Electrical",         type:"amount", value:0,    rollIn:false},
+  {id:"ri8",  name:"Plumbing",           type:"amount", value:0,    rollIn:false},
+  {id:"ri9",  name:"Windows & Doors",    type:"amount", value:0,    rollIn:false},
+  {id:"ri10", name:"Landscaping",        type:"amount", value:1000, rollIn:false},
+  {id:"ri11", name:"Permits & Fees",     type:"amount", value:500,  rollIn:false},
+  {id:"ri12", name:"Contingency",        type:"pct_price", value:3, rollIn:false},
+];
+const ITEM_TYPE_LABELS = {
+  amount:    "Set Amount",
+  pct_price: "% of Purchase Price",
+  pct_loan:  "% of Loan Amount",
+};
+
+function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, price = 0, loanAmt = 0, mobile}) {
+  const [items, setItems] = useState(() =>
+    Array.isArray(initialItems) && initialItems.length ? initialItems.map(x => ({...x})) : prefill());
+  const [editingId, setEditingId] = useState(null);
+  const dragFrom = useRef(null);
+
+  useEffect(() => {
+    const handler = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [onClose]);
+
+  const totals = itemTotals(items, price, loanAmt);
+  const update = (id, patch) => setItems(list => list.map(x => x.id === id ? {...x, ...patch} : x));
+  const remove = id => { setItems(list => list.filter(x => x.id !== id)); if (editingId === id) setEditingId(null); };
+  const move = (id, dir) => setItems(list => {
+    const i = list.findIndex(x => x.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return list;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
+  const addItem = () => {
+    const it = {id:"c"+Date.now(), name:"New Item", type:"amount", value:0, rollIn:false};
+    setItems(list => [...list, it]);
+    setEditingId(it.id);
+  };
+  const onDrop = id => {
+    const from = dragFrom.current; dragFrom.current = null;
+    if (!from || from === id) return;
+    setItems(list => {
+      const next = [...list];
+      const fi = next.findIndex(x => x.id === from);
+      const ti = next.findIndex(x => x.id === id);
+      const [row] = next.splice(fi, 1);
+      next.splice(ti, 0, row);
+      return next;
+    });
+  };
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:600,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:600,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh",
+       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:560, maxHeight:"90dvh",
+       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:14}}>
+          <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{title}</div>
+          <button onClick={onClose} aria-label="Close"
+            style={{width:32, height:32, borderRadius:"50%", background:C.bgSubtle, border:"none",
+              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <I.x size={15}/>
+          </button>
+        </div>
+
+        <div style={{display:"flex", flexDirection:"column", gap:8}}>
+          {items.map(it => {
+            const v = itemValue(it, price, loanAmt);
+            const editing = editingId === it.id;
+            return (
+              <div key={it.id}
+                draggable={!editing}
+                onDragStart={()=>{ dragFrom.current = it.id; }}
+                onDragOver={e=>e.preventDefault()}
+                onDrop={()=>onDrop(it.id)}
+                style={{border:"1px solid "+(editing ? C.greenBorder : C.border), borderRadius:C.r3,
+                  background: editing ? C.greenSubtle : C.card, overflow:"hidden"}}>
+                <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px"}}>
+                  <span title="Drag to re-arrange"
+                    style={{color:C.textMuted, cursor:"grab", flexShrink:0, display:"inline-flex"}}>
+                    <I.menu size={15}/>
+                  </span>
+                  <div style={{minWidth:0, flex:1}}>
+                    <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:F,
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{it.name}</div>
+                    <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
+                      {it.type === "amount" ? "$ Up Front" : ITEM_TYPE_LABELS[it.type]}
+                      {it.type !== "amount" && ` (${it.value || 0}%)`}
+                      {it.rollIn ? " · Rolled Into Loan" : ""}
+                    </div>
+                  </div>
+                  <span style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F,
+                    fontVariantNumeric:"tabular-nums", flexShrink:0}}>{$(v)}</span>
+                  <button onClick={()=>setEditingId(editing ? null : it.id)} aria-label="Edit item"
+                    style={{width:30, height:30, borderRadius:C.r1, background:"transparent",
+                      border:"1px solid "+C.border, cursor:"pointer", color:C.textSub,
+                      display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+                    <I.edit size={13}/>
+                  </button>
+                  <button onClick={()=>remove(it.id)} aria-label="Delete item"
+                    style={{width:30, height:30, borderRadius:C.r1, background:"transparent",
+                      border:"1px solid "+C.border, cursor:"pointer", color:C.redDark,
+                      display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+                    <I.trash size={13}/>
+                  </button>
+                </div>
+                {editing && (
+                  <div style={{padding:"12px 12px 14px", borderTop:"1px solid "+C.greenBorder, background:C.card}}>
+                    <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:10}}>
+                      <div>
+                        <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Name</label>
+                        <input value={it.name} onChange={e=>update(it.id, {name:e.target.value})} style={iS(mobile)}/>
+                      </div>
+                      <div>
+                        <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Type</label>
+                        <select value={it.type} onChange={e=>update(it.id, {type:e.target.value})} style={iS(mobile)}>
+                          {Object.entries(ITEM_TYPE_LABELS).map(([k,l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>
+                          {it.type === "amount" ? "Amount ($)" : "Percent (%)"}
+                        </label>
+                        <input type="number" value={it.value || ""} placeholder="0"
+                          onChange={e=>update(it.id, {value: parseFloat(e.target.value) || 0})} style={iS(mobile)}/>
+                      </div>
+                      <div>
+                        <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Roll Into Loan?</label>
+                        <div style={{display:"flex", padding:3, background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r2}}>
+                          {[[false,"No"],[true,"Yes"]].map(([val,l]) => (
+                            <button key={l} onClick={()=>update(it.id, {rollIn:val})}
+                              style={{flex:1, padding:"6px 10px", borderRadius:C.r1, border:"none", cursor:"pointer",
+                                background: it.rollIn === val ? C.card : "transparent",
+                                color: it.rollIn === val ? C.text : C.textSub,
+                                fontWeight: it.rollIn === val ? 600 : 500, fontSize:12.5, fontFamily:F,
+                                boxShadow: it.rollIn === val ? C.sh1 : "none"}}>{l}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex", gap:8, marginTop:12}}>
+                      <button onClick={()=>move(it.id, -1)} {...btnStyle("secondary","sm")}>↑ Move Up</button>
+                      <button onClick={()=>move(it.id, 1)} {...btnStyle("secondary","sm")}>↓ Move Down</button>
+                      <button onClick={()=>setEditingId(null)} {...btnStyle("primary","sm", {marginLeft:"auto"})}>Done</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <button onClick={addItem} {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginTop:12})}>
+          <I.plus size={14}/> Add Item
+        </button>
+
+        <div style={{marginTop:16, border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 14px", background:C.bgSubtle}}>
+          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:4}}>
+            <span>Paid Up Front</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.upFront)}</span>
+          </div>
+          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:6}}>
+            <span>Rolled Into Loan</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.rolled)}</span>
+          </div>
+          <div style={{display:"flex", justifyContent:"space-between", fontSize:14.5, fontWeight:700, fontFamily:F, color:C.text,
+            paddingTop:8, borderTop:"1px solid "+C.border}}>
+            <span>Total</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.total)}</span>
+          </div>
+        </div>
+
+        <div style={{display:"flex", gap:10, marginTop:16}}>
+          <button onClick={onClose} {...btnStyle("secondary","lg", {flex:1, justifyContent:"center"})}>Cancel</button>
+          <button onClick={()=>onApply(items, totals)} {...btnStyle("primary","lg", {flex:2, justifyContent:"center"})}>
+            <I.check size={14}/> Apply {$(totals.total)}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // -- Calculator ----------------------------------------------------------------
 function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
+  const [itemize, setItemize] = useState(null); // null | "closing" | "repair"
 
   // Auto-fill monthly property tax from the state's effective rate — every
   // state, not just Ohio. Basis is the assessed/market tax value when a data
@@ -1028,7 +1323,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
         background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
         ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
-        {[["cash","All cash"],["finance","Financed"]].map(([id,label]) => {
+        {[["cash","Cash"],["finance","Finance"]].map(([id,label]) => {
           const active = s===id;
           return (
             <button key={id} onClick={()=>u("chosenStrategy",id)}
@@ -1053,7 +1348,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
             <div>
               <div style={{fontSize:11, fontWeight:600, color:C.greenDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
-                Market rent estimate
+                Market Rent Estimate
               </div>
               <div style={{fontSize:24, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>
                 {$(p.rentEstimate)}<span style={{fontSize:14, color:C.textSub, fontWeight:500}}>/mo</span>
@@ -1063,7 +1358,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               </div>
             </div>
             <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>
-              Use estimate
+              Use Estimate
             </button>
           </div>
           {p.rentAmount > 0 && (
@@ -1076,121 +1371,216 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
-        {/* All cash — shown on the All cash tab only */}
-        {s==="cash" && (
-        <SectionBlock title="All cash" color={C.amber}>
-          <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Repair costs" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile} />
-          <InputField label="Monthly rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
-          <InputField label="Vacancy rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
-          {(p.vacancyRate||0) > 0 && <DataRow label="Effective rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
-          <DataRow label="Cash flow / mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
-          <DataRow label="Out of pocket" value={$(m.cashOOP)} />
-          <DataRow label="Cash-on-cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
-          <DataRow label="Cap rate" value={pct(m.cashCap)} />
+        {/* Purchase — shared by both tabs */}
+        <SectionBlock title="Purchase" color={C.green}>
+          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+          <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:DEFAULT_CLOSING}
+            set={v=>set({...p, closingCosts:v, closingItems:null})} pre="$"
+            note={Array.isArray(p.closingItems) && p.closingItems.length ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown` : undefined}
+            mobile={mobile} />
+          <button onClick={()=>setItemize("closing")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+            <I.edit size={12}/> {Array.isArray(p.closingItems) && p.closingItems.length ? "Edit Itemized Costs" : "Itemize"}
+          </button>
+          <InputField label="Repair Costs" val={p.repairCosts}
+            set={v=>set({...p, repairCosts:v, repairItems:null})} pre="$"
+            note={Array.isArray(p.repairItems) && p.repairItems.length ? `Itemized (${p.repairItems.length} items) — typing here clears the breakdown` : undefined}
+            mobile={mobile} />
+          <button onClick={()=>setItemize("repair")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+            <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Repairs" : "Itemize"}
+          </button>
+          <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
+            note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
+            mobile={mobile} />
+          {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
-        )}
 
-        {/* Financed — shown on the Financed tab only */}
+        {/* Income — shared by both tabs (this used to hide on Finance) */}
+        <SectionBlock title="Income" color={C.green}>
+          <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
+          <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
+          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
+          <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
+        </SectionBlock>
+
+        {/* Financing — Finance tab only */}
         {s==="finance" && (
-        <SectionBlock title="Financed" color={C.green}>
-          <InputField label="Purchase price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Down payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
-          <InputField label="Interest rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
-          <InputField label="Closing costs" val={p.closingCosts!=null?p.closingCosts:DEFAULT_CLOSING}
-            set={v=>u("closingCosts",v)} pre="$" note={"Default $"+DEFAULT_CLOSING.toLocaleString()} mobile={mobile} />
-          <DataRow label="Down payment" value={$(m.down)} />
-          <DataRow label="Loan amount" value={$(m.loan)} />
-          <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
-          <DataRow label="Cash flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
-          <DataRow label="Out of pocket" value={$(m.finOOP)} />
-          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"2px 0 6px"}}>Down + repairs + closing costs</div>
-          <DataRow label="Cash-on-cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
-          <DataRow label="Cap rate" value={pct(m.finCap)} />
-          <DataRow label="Years to payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
+        <SectionBlock title="Financing" color={C.green}>
+          {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
+            <>
+              <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
+              <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
+              <DataRow label="Down Payment" value={$(m.down)} />
+              <DataRow label="Loan Amount" value={$(m.loan)} />
+              <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
+              <button onClick={()=>u("loans", [newLoan()])}
+                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginTop:10})}>
+                <I.plus size={13}/> Advanced Loan Setup
+              </button>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
+                Choose what to finance, interest-only loans, terms, and multiple loans.
+              </div>
+            </>
+          ) : (
+            <>
+              {p.loans.map((ln, i) => {
+                const setLn = patch => u("loans", p.loans.map(x => x.id === ln.id ? {...x, ...patch} : x));
+                const amt = loanAmount(ln, p) + (i === 0 ? m.rolledIn : 0);
+                return (
+                  <div key={ln.id} style={{border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 12px 6px", marginBottom:12, background:C.bgSubtle}}>
+                    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+                      <span style={{fontSize:12, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+                        Loan {i+1}
+                      </span>
+                      <button onClick={()=>u("loans", p.loans.filter(x => x.id !== ln.id))}
+                        style={{background:"transparent", border:"none", cursor:"pointer", color:C.redDark,
+                          fontSize:12, fontWeight:600, fontFamily:F, padding:"2px 4px"}}>
+                        Remove
+                      </button>
+                    </div>
+                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>What to Finance</label>
+                    <select value={ln.financeOf} onChange={e=>setLn({financeOf:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
+                      <option value="purchase">Purchase Price</option>
+                      <option value="rehab">Rehab Costs</option>
+                      <option value="purchase_rehab">Purchase + Rehab Costs</option>
+                      <option value="arv">After Repair Value (ARV)</option>
+                      <option value="custom">Custom Amount</option>
+                    </select>
+                    {ln.financeOf === "custom" ? (
+                      <InputField label="Loan Amount" val={ln.customAmount} set={v=>setLn({customAmount:v})} pre="$" mobile={mobile} />
+                    ) : (
+                      <InputField label="Loan-to-Value" val={ln.ltvPct} set={v=>setLn({ltvPct:v})} suf="%"
+                        note={"Loan Amount: " + $(loanAmount(ln, p))} mobile={mobile} />
+                    )}
+                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Loan Type</label>
+                    <select value={ln.loanType} onChange={e=>setLn({loanType:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
+                      <option value="amortizing">Amortizing</option>
+                      <option value="interest_only">Interest Only</option>
+                    </select>
+                    <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                      <InputField label="Interest Rate" val={ln.rate} set={v=>setLn({rate:v})} suf="%" mobile={mobile} />
+                      <InputField label="Loan Term (Years)" val={ln.termYears} set={v=>setLn({termYears:v})} mobile={mobile} />
+                    </div>
+                    <DataRow label={"Loan " + (i+1) + " Payment / mo"} value={$mo(loanPayment(amt, ln))} />
+                    {i === 0 && m.rolledIn > 0 && (
+                      <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"0 0 8px"}}>
+                        Includes {$(m.rolledIn)} of costs rolled into this loan.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button onClick={()=>u("loans", [...p.loans, newLoan(p.loans.length+1)])}
+                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+                <I.plus size={13}/> Add a Loan
+              </button>
+              <button onClick={()=>u("loans", [])}
+                style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
+                  fontSize:12, fontFamily:F, padding:"8px 4px 0", width:"100%", textAlign:"center"}}>
+                Switch Back to Simple Financing
+              </button>
+            </>
+          )}
         </SectionBlock>
         )}
 
-        {/* Monthly expenses — shown on both tabs (shared data) */}
-        <SectionBlock title="Monthly expenses" color={C.green}>
-          <InputField label="Property tax / mo" val={p.expPropTax}
+        {/* Results — per tab */}
+        {s==="cash" ? (
+          <SectionBlock title="Cash Purchase Results" color={C.amber}>
+            <DataRow label="Out of Pocket" value={$(m.cashOOP)} />
+            <DataRow label="Cash Flow / mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
+            <DataRow label="Cash-on-Cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
+            <DataRow label="Cap Rate" value={pct(m.cashCap)} />
+          </SectionBlock>
+        ) : (
+          <SectionBlock title="Financed Results" color={C.green}>
+            <DataRow label="Total Loan Amount" value={$(m.loan)} />
+            <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />
+            <DataRow label="Cash Needed" value={$(m.finOOP)} />
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"2px 0 6px"}}>
+              Purchase + repairs + closing costs, minus loan proceeds
+            </div>
+            <DataRow label="Cash Flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
+            <DataRow label="Cash-on-Cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
+            <DataRow label="Cap Rate" value={pct(m.finCap)} />
+            <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
+          </SectionBlock>
+        )}
+
+        {/* Monthly expenses — shared */}
+        <SectionBlock title="Monthly Expenses" color={C.green}>
+          <InputField label="Property Tax / mo" val={p.expPropTax}
             set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
           <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
           <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
           <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
-          <DataRow label="Total expenses / mo" value={$(m.exp)} />
+          <DataRow label="Total Expenses / mo" value={$(m.exp)} />
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
-          <DataRow label="Yearly rent" value={$((p.rentAmount||0)*12)} />
         </SectionBlock>
 
-        {/* BRRRR — All cash tab only */}
-        {s==="cash" && (
-        <SectionBlock title="BRRRR estimate" color={C.purple} collapsible defaultOpen={false}>
-          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
-            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
-            Buy with cash → rehab → cash-out refi → keep as rental.
-          </div>
-          <InputField label="Cash-out refi amount" val={p.brrrCashOut ?? Math.round((p.homeValueMedian||0)*0.8)}
-            set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of median" mobile={mobile} />
-          <DataRow label="80% of median (suggested)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.textMuted} />
-          <DataRow label="Est. mortgage / mo" value={$mo(m.brrrMtg)} />
-          <DataRow label="BRRRR cash flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-          <DataRow label="Cash recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
-        </SectionBlock>
-        )}
-
-        {/* Fix & flip — All cash tab only */}
-        {s==="cash" && (
-        <SectionBlock title="Fix & flip" color={C.amber} collapsible defaultOpen={false}>
-          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
-            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
-            ARV pre-filled from your high home value.
-          </div>
-          <InputField label="Sale price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Agent fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
-          <DataRow label="Total into deal" value={$(m.cashOOP)} />
-          <DataRow label="Agent fee" value={$(m.agentFee)} />
-          <DataRow label="Net profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
-          <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
-        </SectionBlock>
-        )}
-
-        {/* Repair Estimator — shown on both tabs */}
-        <SectionBlock title="Repair estimator" color={C.borderHover}>
-          {p.sqft>0 && (
-            <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
-              borderRadius:C.r2, marginBottom:14, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-              {(p.sqft).toLocaleString()} sqft × {`$${renoRates.light}/$${renoRates.medium}/$${renoRates.full}`}/sqft
-            </div>
-          )}
-          <InputField label="Light reno" val={p.repairLight||0} set={v=>u("repairLight",v)} pre="$" mobile={mobile} />
-          <InputField label="Medium reno" val={p.repairMedium||0} set={v=>u("repairMedium",v)} pre="$" mobile={mobile} />
-          <InputField label="Full reno" val={p.repairFull||0} set={v=>u("repairFull",v)} pre="$" mobile={mobile} />
-        </SectionBlock>
-
-        {/* Home Value */}
-        <SectionBlock title="Home value" color={C.blue}>
+        {/* Home value */}
+        <SectionBlock title="Home Value" color={C.blue}>
           <InputField label="Low" val={p.homeValueLow||0} set={v=>u("homeValueLow",v)} pre="$" mobile={mobile} />
           <InputField label="Median" val={p.homeValueMedian||0}
             set={v=>{ set({...p, homeValueMedian:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$" mobile={mobile} />
           <InputField label="High (ARV)" val={p.homeValueHigh||0}
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v}); }} pre="$" mobile={mobile} />
-          <DataRow label="Tax value" value={$(p.taxValue)} />
-          <DataRow label="80% of median (BRRRR)" value={$(Math.round((p.homeValueMedian||0)*0.8))} color={C.purple} />
+          <DataRow label="Tax Value" value={$(p.taxValue)} />
+        </SectionBlock>
+
+        {/* BRRRR — collapsed, both tabs */}
+        <SectionBlock title="BRRRR Estimate" color={C.purple} collapsible defaultOpen={false}>
+          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
+            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
+            Buy → rehab → cash-out refi → keep as rental.
+          </div>
+          <InputField label="Cash-Out Refi Amount" val={p.brrrCashOut ?? Math.round((p.homeValueMedian||0)*0.8)}
+            set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of median value" mobile={mobile} />
+          <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
+          <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
+          <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
+        </SectionBlock>
+
+        {/* Fix & flip — collapsed, both tabs */}
+        <SectionBlock title="Fix & Flip" color={C.amber} collapsible defaultOpen={false}>
+          <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$"
+            note="Pre-filled from your High home value" mobile={mobile} />
+          <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
+          <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
+          <DataRow label="Agent Fee" value={$(m.agentFee)} />
+          <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
+          <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
+          <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
         </SectionBlock>
 
         {/* Summary */}
         <SectionBlock title="Summary" color={C.text}>
-          <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"All cash":"Financed"} />
-          <DataRow label="Out of pocket" value={$(m.chosenOOP)} />
-          <DataRow label="Net cash flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
-          <DataRow label="Cash-on-cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
-          <DataRow label="Cap rate" value={pct(m.chosenCap)} />
-          <DataRow label="Years to payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
-          <DataRow label="Yearly rent (gross)" value={$((p.rentAmount||0)*12)} />
+          <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
+          <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
+          <DataRow label="Net Cash Flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
+          <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
+          <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
+          <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
         </SectionBlock>
 
       </div>
+
+      {/* Itemize sheets */}
+      {itemize === "closing" && (
+        <ItemizeSheet title="Itemized Purchase Costs"
+          items={p.closingItems} prefill={CLOSING_PREFILL}
+          price={p.purchasePrice||0}
+          loanAmt={Array.isArray(p.loans) && p.loans.length ? p.loans.reduce((sum,l)=>sum+loanAmount(l,p),0) : m.loan}
+          onApply={(items, totals)=>{ set({...p, closingItems:items, closingCosts:totals.total}); setItemize(null); }}
+          onClose={()=>setItemize(null)} mobile={mobile} />
+      )}
+      {itemize === "repair" && (
+        <ItemizeSheet title="Itemized Repair Costs"
+          items={p.repairItems} prefill={REPAIR_PREFILL}
+          price={p.purchasePrice||0}
+          loanAmt={Array.isArray(p.loans) && p.loans.length ? p.loans.reduce((sum,l)=>sum+loanAmount(l,p),0) : m.loan}
+          onApply={(items, totals)=>{ set({...p, repairItems:items, repairCosts:totals.total}); setItemize(null); }}
+          onClose={()=>setItemize(null)} mobile={mobile} />
+      )}
 
       {/* Appreciation Projector */}
       <AppreciationProjector homeValue={p.homeValueMedian} purchasePrice={p.purchasePrice} mobile={mobile} />
@@ -1694,7 +2084,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {/* KPI strip */}
         <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(4,1fr)", gap:12, marginBottom:24}}>
           {[
-            [`Cash flow / mo (${prop.chosenStrategy==="cash"?"Cash":"Financed"})`, $mo(m.chosenCF), cfC(m.chosenCF)],
+            [`Cash Flow / mo (${prop.chosenStrategy==="cash"?"Cash":"Finance"})`, $mo(m.chosenCF), cfC(m.chosenCF)],
             ["Cash-on-cash", pct(m.chosenCoC), cfC(m.chosenCoC)],
             ["Cap rate", pct(m.chosenCap), C.text],
             ["Out of pocket", $(m.chosenOOP), C.text],
@@ -4043,7 +4433,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                 padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
                 letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
               }}>
-                {savedFinancing === "cash" ? "Cash" : "Financed"}
+                {savedFinancing === "cash" ? "Cash" : "Finance"}
               </span>
             ) : isBrrrr && (
               <span style={{
@@ -4665,7 +5055,7 @@ function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
             Saved to {label}
           </div>
           <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, marginTop:4}}>
-            {financing === "cash" ? "All cash" : "Financed"} · it's waiting on your Dashboard
+            {financing === "cash" ? "Cash" : "Finance"} · it's waiting on your Dashboard
           </div>
         </div>
       </div>
@@ -4740,7 +5130,7 @@ function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
         </div>
         <div style={{display:"flex", padding:3, background:C.bgSubtle,
           border:"1px solid "+C.border, borderRadius:C.r2}}>
-          {[["finance","Finance"],["cash","All cash"]].map(([id,label]) => {
+          {[["finance","Finance"],["cash","Cash"]].map(([id,label]) => {
             const active = financing === id;
             return (
               <button key={id} onClick={()=>setFinancing(id)}
@@ -5258,17 +5648,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
         action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
-      {/* Address */}
+      {/* Property — photo up top, then the address fields together */}
       <SectionBlock title="Property" color={C.green}>
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
-            Address
-          </label>
-          <AddressInput value={d.address} onChange={v=>u("address",v)}
-            onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
-            placeholder="Start typing an address…"
-            mobile={mobile} />
-        </div>
         {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
             show that deal's photo carousel. Otherwise (custom address search)
             fall back to a Street View image. */}
@@ -5280,10 +5661,19 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               height={mobile ? 220 : 280} mobile={mobile} />
           </div>
         ) : (
-          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={180} />
+          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={200} />
         )}
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
+            Address
+          </label>
+          <AddressInput value={d.address} onChange={v=>u("address",v)}
+            onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
+            placeholder="Start typing an address…"
+            mobile={mobile} />
+        </div>
         {d.city && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:6}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
             {[["City","city"],["State","state"],["ZIP","zip"]].map(([l,f]) => (
               <div key={f}>
                 <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>{l}</label>
@@ -5347,8 +5737,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               </div>
             </div>
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14}}>
-              {[{id:"cash",label:"All cash",cf:m.cashCF,coc:m.cashCoC,oop:m.cashOOP},
-                {id:"finance",label:"Financed",cf:m.finCF,coc:m.finCoC,oop:m.finOOP}].map(sv => {
+              {[{id:"cash",label:"Cash",cf:m.cashCF,coc:m.cashCoC,oop:m.cashOOP},
+                {id:"finance",label:"Finance",cf:m.finCF,coc:m.finCoC,oop:m.finOOP}].map(sv => {
                 const win = winner===sv.id;
                 return (
                   <div key={sv.id} style={{
