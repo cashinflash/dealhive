@@ -7897,10 +7897,15 @@ export default function App() {
               <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
                 onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
             ) : page==="dashboard" ? (
-              <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
-            ) : page==="properties" ? (
+              isAdmin
+                ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+                : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+                    onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+                    onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+                    onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
+            ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
-            ) : page==="projects" ? (
+            ) : page==="projects" && isAdmin ? (
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deals" ? (
               <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
