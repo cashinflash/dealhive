@@ -1506,9 +1506,15 @@ function DealSummaryBlock({p, m, exit}) {
   // post-refi cash flow; a hold shows the rental metrics.
   let rows;
   if (exit === "flip") {
-    const profit = cash ? m.flipProfit : m.finFlipProfit;
-    const roi    = cash ? m.flipROI    : m.finFlipROI;
+    const profit  = cash ? m.flipProfit : m.finFlipProfit;
+    const roi     = cash ? m.flipROI    : m.finFlipROI;
+    const holding = cash ? m.flipHolding : m.finFlipHolding;
     rows = [
+      ["Sale Price (ARV)", $(p.flipSalePrice||0), C.text],
+      ["Agent Fee", $(m.agentFee), C.text],
+      [`Holding Costs (${m.holdMonths} mo)`, $(holding), C.text],
+      ...(cash ? [] : [["Loan Payoff at Sale", $(m.loan), C.text]]),
+      ["hr"],
       ["Out of Pocket", $(m.chosenOOP), C.text],
       ["Total Profit",  $(profit),      cfC(profit)],
       ["Cash-on-Cash",  pct(roi),       cfC(profit)],
@@ -1860,18 +1866,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             );
           })}
         </div>
-
-        {(xtra || "buyhold") === "buyhold" && (
-          <SectionBlock title="Buy & Hold" color={C.cashPos}>
-            <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} />
-            {s === "finance" && <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />}
-            <DataRow label="Operating Expenses / mo" value={$(m.exp)} />
-            <DataRow label="Net Cash Flow / mo" value={$mo(s === "cash" ? m.cashCF : m.finCF)} color={cfC(s === "cash" ? m.cashCF : m.finCF)} />
-            <DataRow label="NOI / yr" value={$(m.noi*12)} />
-            <DataRow label="Cash-on-Cash" value={pct(s === "cash" ? m.cashCoC : m.finCoC)} color={cfC(s === "cash" ? m.cashCoC : m.finCoC)} />
-            <DataRow label="Cap Rate" value={pct(s === "cash" ? m.cashCap : m.finCap)} />
-          </SectionBlock>
-        )}
 
         {xtra === "brrrr" && (
           <SectionBlock title="BRRRR Estimate" color={C.purple}>
