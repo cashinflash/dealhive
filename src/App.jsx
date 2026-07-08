@@ -7625,14 +7625,26 @@ export default function App() {
     return payload;
   }, [data, persistQuiet]);
 
-  // Loading screen
-  if (authLoading) return (
+  // Branded boot screen — shown while restoring a session AND in the moment
+  // between a successful login and the account data arriving (previously that
+  // gap flashed the marketing homepage).
+  const bootScreen = (
     <div style={{minHeight:"100vh", background:C.bg,
-      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16}}>
-      <img src="/logo.png" alt="DealHive" style={{height:46, width:"auto", maxWidth:"70%", objectFit:"contain"}} />
-      <div style={{fontSize:13, color:C.textMuted, fontFamily:F}}>Loading your portfolio…</div>
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:18}}>
+      <style>{`
+        @keyframes dhBootPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.75;transform:scale(.97)}}
+        @keyframes dhBootSpin{to{transform:rotate(360deg)}}
+      `}</style>
+      <img src="/logo.png" alt="DealHive"
+        style={{height:52, width:"auto", maxWidth:"70%", objectFit:"contain",
+          animation:"dhBootPulse 1.6s ease-in-out infinite"}} />
+      <div style={{width:22, height:22, borderRadius:"50%",
+        border:"2.5px solid "+C.border, borderTopColor:C.green,
+        animation:"dhBootSpin .8s linear infinite"}}/>
     </div>
   );
+  if (authLoading) return bootScreen;
+  if (user && !data) return bootScreen;
 
   // Public surface: multi-page marketing site + auth at /login | /signup.
   // Unknown unauth paths fall back to the landing home so stale bookmarks
