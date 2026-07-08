@@ -4590,6 +4590,9 @@ const dealToProForma = (deal) => {
   const addressForAnalyzer = deal.streetAddress || deal.address;
   return {
     ...newDeal(),
+    // Keep the source deal's id so re-saving from the analyzer updates the
+    // existing watchlist entry instead of duplicating it.
+    ...(deal.id ? {id: deal.id} : {}),
     address:      addressForAnalyzer,
     city:         deal.city,
     state:        deal.state,
@@ -5383,7 +5386,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
   // null | "dupe" | "saved" — saved shows a confirmation panel, then closes.
   const [result, setResult] = useState(null);
   useEffect(() => {
-    if (result !== "saved") return;
+    if (result !== "saved" && result !== "updated") return;
     const t = setTimeout(onCancel, 1400);
     return () => clearTimeout(t);
   }, [result, onCancel]);
@@ -5417,7 +5420,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:480,
        boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 24px"};
 
-  if (result === "saved") {
+  if (result === "saved" || result === "updated") {
     const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
     return (
       <div style={outerStyle} onClick={e => e.target === e.currentTarget && onCancel()}>
@@ -5430,7 +5433,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
             <I.check size={28} stroke={2.4}/>
           </div>
           <div style={{fontSize:19, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
-            Saved to {label}
+            {result === "updated" ? `Updated in ${label}` : `Saved to ${label}`}
           </div>
           <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, marginTop:4}}>
             {financing === "cash" ? "Cash" : "Finance"} · it's waiting on your Dashboard
@@ -5531,7 +5534,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
             <I.alert size={14}/> This deal is already in your saved deals.
           </div>
         )}
-        <button onClick={()=>{ setResult(onConfirm(scenario, financing) ? "saved" : "dupe"); }}
+        <button onClick={()=>{ const r = onConfirm(scenario, financing); setResult(r === "updated" ? "updated" : r ? "saved" : "dupe"); }}
           {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop: result === "dupe" ? 12 : 18})}>
           <I.star size={14}/> Save deal
         </button>
@@ -7471,19 +7474,30 @@ export default function App() {
   };
   // Regular-member save: add to data.savedDeals so it shows up on their
   // Dashboard. Keyed by deal.id so re-saving the same deal is a no-op.
-  // Returns true on save, false on duplicate — the save sheet shows the
-  // outcome in place (the header toast hides underneath open modals).
+  // Upsert: saving a deal that's already on the watchlist (same id, or same
+  // address in the same city) updates it in place — new numbers, new
+  // scenario, new financing — instead of rejecting. Returns "created" |
+  // "updated" (both truthy) so callers can phrase their confirmation.
   const saveDealToWatchlist = (deal, scenario, financing) => {
     const existing = data.savedDeals || [];
-    const dupe = existing.some(x => x.id === deal.id ||
-      (x.address === deal.address && x.city === deal.city && x.price === deal.price));
-    if (dupe) return false;
+    const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
+    const fin = financing === "cash" ? "all cash" : "financed";
+    const match = existing.find(x => x.id === deal.id ||
+      (deal.address && x.address === deal.address && x.city === deal.city));
+    if (match) {
+      const updated = {...match, ...deal, id: match.id,
+        savedAt: match.savedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(), scenario, financing};
+      persist({...data, savedDeals: existing.map(x => x.id === match.id ? updated : x)});
+      setToast(`Updated: ${label} (${fin})`);
+      setTimeout(()=>setToast(""), 2200);
+      return "updated";
+    }
     const saved = {...deal, savedAt: new Date().toISOString(), scenario, financing};
     persist({...data, savedDeals: [...existing, saved]});
-    const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
-    setToast(`Saved to ${label} (${financing === "cash" ? "all cash" : "financed"})`);
+    setToast(`Saved to ${label} (${fin})`);
     setTimeout(()=>setToast(""), 2200);
-    return true;
+    return "created";
   };
   const removeFromWatchlist = dealOrId => {
     const id = typeof dealOrId === "string" ? dealOrId : dealOrId.id;
@@ -7536,11 +7550,10 @@ export default function App() {
     // purchase method, so the save is one tap. The Deals-page save keeps its
     // sheet since market cards carry no user choice yet.
     onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
-      const ok = saveDealToWatchlist(
+      saveDealToWatchlist(
         {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy},
         suggested || "buyhold",
         pf.chosenStrategy === "cash" ? "cash" : "finance");
-      if (!ok) { setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000); }
     },
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
