@@ -27,6 +27,25 @@ const FB_AUTH_URL    = "https://identitytoolkit.googleapis.com/v1";
 const FB_DB_URL      = "https://darallc-default-rtdb.firebaseio.com";
 const GOOGLE_API_KEY = "AIzaSyAYrJOulIBpfDZIgC50IXSgbXET05VqOC8";
 const RC_BASE        = "https://api.rentcast.io/v1";
+const RC_PROXY       = "https://us-central1-darallc.cloudfunctions.net/rcProxy";
+// One door to property data: a personal API key (legacy admin path) hits
+// RentCast directly; otherwise any signed-in session goes through our server
+// proxy, so customers never see or handle keys. `path` is "/endpoint?query".
+const rcGet = async (path, auth) => {
+  if (auth && auth.key) {
+    const r = await fetch(RC_BASE + path, {headers: {"X-Api-Key": auth.key}});
+    if (!r.ok) throw new Error("rc " + r.status);
+    return r.json();
+  }
+  if (auth && auth.token) {
+    const r = await fetch(`${RC_PROXY}?path=${encodeURIComponent(path)}`,
+      {headers: {Authorization: "Bearer " + auth.token}});
+    if (!r.ok) throw new Error("rc-proxy " + r.status);
+    return r.json();
+  }
+  throw new Error("rc-noauth");
+};
+const rcOk = auth => !!(auth && (auth.key || auth.token));
 const TRIAL_DAYS     = 7;
 const VERSION        = "1.0.0";
 const DEFAULT_CLOSING = 10895;
@@ -535,14 +554,13 @@ function AddressInput({value, onChange, onSelect, placeholder="Search address...
 // One provider for everything: property record, value estimate (AVM) and
 // long-term rent estimate. Each call is wrapped by the caller in apiLookup()
 // for caching + the monthly cap.
-const rentcastFetch = async (addr, city, state, zip, key) => {
+const rentcastFetch = async (addr, city, state, zip, auth) => {
   const full = [addr, [city, state].filter(Boolean).join(" "), zip].filter(Boolean).join(", ");
   const q = encodeURIComponent(full);
-  const h = {"X-Api-Key": key};
   const out = {};
-  try { const r=await fetch(`${RC_BASE}/properties?address=${q}`, {headers:h}); const d=await r.json(); if(Array.isArray(d) && d[0]) out.property=d[0]; } catch {}
-  try { const r=await fetch(`${RC_BASE}/avm/value?address=${q}`, {headers:h}); const d=await r.json(); if(d && (d.price || d.priceRangeLow)) out.value=d; } catch {}
-  try { const r=await fetch(`${RC_BASE}/avm/rent/long-term?address=${q}`, {headers:h}); const d=await r.json(); if(d && d.rent) out.rent=d; } catch {}
+  try { const d = await rcGet(`/properties?address=${q}`, auth); if(Array.isArray(d) && d[0]) out.property=d[0]; } catch {}
+  try { const d = await rcGet(`/avm/value?address=${q}`, auth); if(d && (d.price || d.priceRangeLow)) out.value=d; } catch {}
+  try { const d = await rcGet(`/avm/rent/long-term?address=${q}`, auth); if(d && d.rent) out.rent=d; } catch {}
   return out;
 };
 
@@ -1437,7 +1455,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 // -- Rent comps sheet ------------------------------------------------------------
 // RentCast rent AVM + nearby active rental listings for the entered address,
 // so Monthly Rent can be sanity-checked without leaving the analyzer.
-function RentCompsSheet({p, apiLookup, rentcastKey, onUseRent, onClose, mobile}) {
+function RentCompsSheet({p, apiLookup, rcAuth, onUseRent, onClose, mobile}) {
   const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
 
   useEffect(() => {
@@ -1452,19 +1470,12 @@ function RentCompsSheet({p, apiLookup, rentcastKey, onUseRent, onClose, mobile})
       try {
         const q    = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
         const beds = p.beds || 3;
-        const h    = {"X-Api-Key": rentcastKey};
-        const avm  = await apiLookup(lookupKey("rc-rentavm", p.address, p.city, p.state, p.zip, beds), async () => {
-          const r = await fetch(`${RC_BASE}/avm/rent/long-term?address=${q}&bedrooms=${beds}`, {headers:h});
-          if (!r.ok) throw new Error("rent avm " + r.status);
-          return r.json();
-        });
+        const avm  = await apiLookup(lookupKey("rc-rentavm", p.address, p.city, p.state, p.zip, beds),
+          () => rcGet(`/avm/rent/long-term?address=${q}&bedrooms=${beds}`, rcAuth));
         let comps = [];
         try {
-          const listings = await apiLookup(lookupKey("rc-rentcomps", p.address, p.city, p.state, p.zip, beds), async () => {
-            const r = await fetch(`${RC_BASE}/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=1&limit=12&status=Active`, {headers:h});
-            if (!r.ok) throw new Error("listings " + r.status);
-            return r.json();
-          });
+          const listings = await apiLookup(lookupKey("rc-rentcomps", p.address, p.city, p.state, p.zip, beds),
+            () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=1&limit=12&status=Active`, rcAuth));
           comps = Array.isArray(listings) ? listings : [];
         } catch { /* comps are a bonus — the estimate alone is still useful */ }
         if (!alive) return;
@@ -1640,7 +1651,7 @@ function DealSummaryBlock({p, m, exit}) {
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange, externalSummary, midSlot}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, rcAuth, exit, onExitChange, externalSummary, midSlot}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
@@ -1658,16 +1669,12 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   // ARV field (high end of the range) and keeps the median for reference.
   const checkHomeValue = async () => {
     if (!p.address || !p.city || !p.state) { setAvmMsg({kind:"err", text:"Enter the property address first."}); return; }
-    if (!rentcastKey || !apiLookup) { setAvmMsg({kind:"err", text:"Live home values are currently unavailable."}); return; }
+    if (!rcOk(rcAuth) || !apiLookup) { setAvmMsg({kind:"err", text:"Live home values are currently unavailable."}); return; }
     setAvmBusy(true); setAvmMsg(null);
     try {
       const q   = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
       const key = lookupKey("rc-value", p.address, p.city, p.state, p.zip);
-      const val = await apiLookup(key, async () => {
-        const r = await fetch(`${RC_BASE}/avm/value?address=${q}`, {headers:{"X-Api-Key":rentcastKey}});
-        if (!r.ok) throw new Error("avm " + r.status);
-        return r.json();
-      });
+      const val = await apiLookup(key, () => rcGet(`/avm/value?address=${q}`, rcAuth));
       const med = val?.price || 0;
       const hi  = val?.priceRangeHigh || (med ? Math.round(med * 1.1) : 0);
       const lo  = val?.priceRangeLow  || (med ? Math.round(med * 0.9) : 0);
@@ -1806,7 +1813,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             </div>
           )}
           <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
-          {(rentcastKey && apiLookup) && (
+          {(rcOk(rcAuth) && apiLookup) && (
             <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
               title={p.address ? undefined : "Enter the property address first"}
               {...btnStyle("secondary","sm", {marginBottom:12, opacity: p.address ? 1 : .55})}>
@@ -1942,7 +1949,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
             note="What the property will be worth after repairs. Drives BRRRR and Fix & Flip below."
             mobile={mobile} />
-          {(rentcastKey && apiLookup) && (
+          {(rcOk(rcAuth) && apiLookup) && (
             <button onClick={checkHomeValue} disabled={avmBusy}
               {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginBottom:10})}>
               {avmBusy ? "Checking…" : <><I.search size={13}/> Check Home Value</>}
@@ -2073,7 +2080,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           onClose={()=>setItemize(null)} mobile={mobile} />
       )}
       {compsOpen && (
-        <RentCompsSheet p={p} apiLookup={apiLookup} rentcastKey={rentcastKey} mobile={mobile}
+        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth} mobile={mobile}
           onUseRent={(rent, lo, hi) => {
             set({...p, rentAmount: rent, rentEstimate: rent, rentEstLow: lo, rentEstHigh: hi});
             setCompsOpen(false);
@@ -2505,7 +2512,7 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
 }
 
 // -- Property Detail -----------------------------------------------------------
-function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile, apiLookup, rentcastKey}) {
+function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile, apiLookup, rentcastKey, rcAuth}) {
   const [tab, setTab] = useState("overview");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState("");
@@ -2520,11 +2527,11 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
   // overwrites public-record + valuation fields, so the user's ownership,
   // lockbox, purchase price, rent, tenant, projects and expenses are kept.
   const refreshData = async () => {
-    if (!rentcastKey) { setRefreshErr("Live property data is currently unavailable."); return; }
+    if (!rcOk(rcAuth)) { setRefreshErr("Live property data is currently unavailable."); return; }
     setRefreshing(true); setRefreshErr("");
     try {
       const key = lookupKey("rc-detail", prop.address, prop.city, prop.state, prop.zip);
-      const d = await apiLookup(key, () => rentcastFetch(prop.address, prop.city, prop.state, prop.zip, rentcastKey));
+      const d = await apiLookup(key, () => rentcastFetch(prop.address, prop.city, prop.state, prop.zip, rcAuth));
       if (rcHasData(d)) onChange(applyRentcast(prop, d, renoRates));
       else setRefreshErr("No public records found for this address.");
     } catch (e) { setRefreshErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Refresh failed."); }
@@ -2643,7 +2650,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
             </div>
           </div>
         )}
-        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
+        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
@@ -6132,7 +6139,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, initial, onConsumeInitial, onBackToDeals}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, initial, onConsumeInitial, onBackToDeals}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
@@ -6150,7 +6157,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // data" button remains the counted deep fetch).
   const basicsKeyRef = useRef("");
   const fetchBasics = loc => {
-    if (!rentcastKey || !apiLookup || !loc.address || !loc.city) return;
+    if (!rcOk(rcAuth) || !apiLookup || !loc.address || !loc.city) return;
     const key = lookupKey("rc-props", loc.address, loc.city, loc.state, loc.zip);
     if (basicsKeyRef.current === key) return;
     basicsKeyRef.current = key;
@@ -6159,9 +6166,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       try {
         const q = encodeURIComponent(`${loc.address}, ${loc.city}, ${loc.state} ${loc.zip||""}`.trim());
         const rec = await apiLookup(key, async () => {
-          const r = await fetch(`${RC_BASE}/properties?address=${q}`, {headers:{"X-Api-Key": rentcastKey}});
-          if (!r.ok) throw new Error("props " + r.status);
-          const arr = await r.json();
+          const arr = await rcGet(`/properties?address=${q}`, rcAuth);
           return Array.isArray(arr) ? arr[0] || null : arr || null;
         }, {count:false});
         if (rec) {
@@ -6208,11 +6213,11 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
   const runSearch = async () => {
     if (!d.address) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Live property data is currently unavailable."); return; }
+    if (!rcOk(rcAuth)) { setErr("Live property data is currently unavailable."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", d.address, d.city, d.state, d.zip);
-      const data = await apiLookup(key, () => rentcastFetch(d.address, d.city, d.state, d.zip, rentcastKey));
+      const data = await apiLookup(key, () => rentcastFetch(d.address, d.city, d.state, d.zip, rcAuth));
       if (!rcHasData(data)) setErr("No property data found for that address. Try adding city, state and ZIP.");
       else setD(prev => applyRentcast(prev, data, renoRates));
     } catch (e) {
@@ -6500,7 +6505,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             ))}
           </div>
         )}
-        {rentcastKey && (
+        {rcOk(rcAuth) && (
           <button onClick={runSearch} disabled={loading}
             {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
             {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
@@ -6554,7 +6559,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       )}
 
       {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth}
         exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
         midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
@@ -7108,7 +7113,7 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
 }
 
 // -- Add Property Modal --------------------------------------------------------
-function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, rentcastKey}) {
+function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, rentcastKey, rcAuth}) {
   const [p,setP]       = useState(() => newProp());
   const [loading,setL] = useState(false);
   const [err,setErr]   = useState("");
@@ -7124,11 +7129,11 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 
   const pullData = async (addr, city, state, zip) => {
     if (!addr) { setErr("Enter an address first."); return; }
-    if (!rentcastKey) { setErr("Live property data is currently unavailable."); return; }
+    if (!rcOk(rcAuth)) { setErr("Live property data is currently unavailable."); return; }
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", addr, city, state, zip);
-      const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rentcastKey));
+      const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rcAuth));
       if (!rcHasData(data)) setErr("No public records found for that address yet — you can fill the details in manually.");
       else setP(prev => applyRentcast(prev, data, renoRates));
     } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Auto-fill failed."); }
@@ -7791,6 +7796,9 @@ export default function App() {
     mobile,
     apiLookup,
     rentcastKey: data.rentcastKey || "",
+    // Auth for property-data calls: personal key when present (legacy),
+    // else the session token for the server proxy — every signed-in user.
+    rcAuth: {key: data.rentcastKey || "", token: user.idToken},
   };
 
   const dealAnalyzerProps = {
