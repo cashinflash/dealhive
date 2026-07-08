@@ -237,9 +237,11 @@ const calc = (p) => {
     down   = Math.max(0, (p.purchasePrice||0) - loan);
   } else if (owned) {
     // Existing property: today's balance and payment, no acquisition cash.
+    // On the Cash tab "owned" means owned free and clear — no balance.
+    const ownedBal = stratForCC === "cash" ? 0 : (p.ownedLoanBalance || 0);
     down   = 0;
-    loan   = p.ownedLoanBalance || 0;
-    mtg    = p.ownedMonthlyPI || 0;
+    loan   = ownedBal;
+    mtg    = stratForCC === "cash" ? 0 : (p.ownedMonthlyPI || 0);
     finOOP = (p.repairCosts||0) + cc;
   } else {
     // Legacy single-loan model.
@@ -252,7 +254,8 @@ const calc = (p) => {
   // Equity in an owned property: current value (or ARV as fallback) minus
   // what's owed. Zero-balance owners see their full value as equity.
   const equity = owned
-    ? Math.round((p.homeValueMedian || p.homeValueHigh || p.purchasePrice || 0) - (p.ownedLoanBalance || 0))
+    ? Math.round((p.homeValueMedian || p.homeValueHigh || p.purchasePrice || 0)
+        - (stratForCC === "cash" ? 0 : (p.ownedLoanBalance || 0)))
     : 0;
 
   const finCF    = effectiveRent - exp - mtg;
@@ -1711,12 +1714,19 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             mobile={mobile} />
           {p.alreadyOwned && (
             <>
-              <InputField label="Current Loan Balance" val={p.ownedLoanBalance} set={v=>u("ownedLoanBalance",v)} pre="$"
-                note="Today's payoff amount ($0 if owned free and clear)" mobile={mobile} />
               {s === "finance" && (
-                <InputField label="Current Monthly Payment (P&I)" val={p.ownedMonthlyPI} set={v=>u("ownedMonthlyPI",v)} pre="$" mobile={mobile} />
+                <>
+                  <InputField label="Current Loan Balance" val={p.ownedLoanBalance} set={v=>u("ownedLoanBalance",v)} pre="$"
+                    note="Today's payoff amount" mobile={mobile} />
+                  <InputField label="Current Monthly Payment (P&I)" val={p.ownedMonthlyPI} set={v=>u("ownedMonthlyPI",v)} pre="$" mobile={mobile} />
+                </>
               )}
               <DataRow label="Estimated Equity" value={$(m.equity)} color={cfC(m.equity)} />
+              {s === "cash" && (
+                <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:2, lineHeight:1.5}}>
+                  Owned free and clear — full value counts as equity.
+                </div>
+              )}
             </>
           )}
           <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:(s==="cash"?0:DEFAULT_CLOSING)}
