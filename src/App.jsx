@@ -7537,10 +7537,17 @@ export default function App() {
   const dealAnalyzerProps = {
     deals: data.deals || [],
     onSave: saveDeals,
-    // Members file analyses onto their home watchlist (via the save sheet);
-    // the admin account keeps its private analyzer list + portfolio flow.
-    onSaveToWatchlist: isAdmin ? null : (pf, suggested) =>
-      setSavePicker({deal: {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy}, suggested: suggested || null}),
+    // Members file analyses onto their home watchlist. No picker sheet here:
+    // the analyzer already knows the exit (Save button names it) and the
+    // purchase method, so the save is one tap. The Deals-page save keeps its
+    // sheet since market cards carry no user choice yet.
+    onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
+      const ok = saveDealToWatchlist(
+        {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy},
+        suggested || "buyhold",
+        pf.chosenStrategy === "cash" ? "cash" : "finance");
+      if (!ok) { setToast("Already in your saved deals"); setTimeout(()=>setToast(""), 2000); }
+    },
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
