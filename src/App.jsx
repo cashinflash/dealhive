@@ -204,7 +204,10 @@ const calc = (p) => {
   const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
   const cashCap  = cashOOP>0 ? (noi*12/cashOOP)*100 : 0;
 
-  const cc = p.closingCosts != null ? p.closingCosts : DEFAULT_CLOSING;
+  // Cash purchases default to $0 closing costs; financed deals to the
+  // standard default. An explicit value always wins on both tabs.
+  const stratForCC = p.chosenStrategy || "finance";
+  const cc = p.closingCosts != null ? p.closingCosts : (stratForCC === "cash" ? 0 : DEFAULT_CLOSING);
   const hasLoans = Array.isArray(p.loans) && p.loans.length > 0;
 
   let down, loan, mtg, finOOP, rolledIn = 0, loanBreakdown = [];
@@ -237,7 +240,7 @@ const calc = (p) => {
   const finCoC   = finOOP>0 ? (finCF*12/finOOP)*100 : 0;
   const finCap   = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
   const payoff   = (finCF>0 && finOOP>0) ? finOOP/(finCF*12) : 0;
-  const brrrCashOut = p.brrrCashOut || Math.round((p.homeValueMedian||0)*0.8);
+  const brrrCashOut = p.brrrCashOut || Math.round(((p.homeValueHigh || p.homeValueMedian || 0))*0.8);
   const brrrMtg  = monthlyPI(brrrCashOut, p.interestRate||7.5);
   const brrrCF   = effectiveRent - exp - brrrMtg;
 
@@ -296,7 +299,7 @@ const newDeal = () => ({
   repairLight:0, repairMedium:0, repairFull:0,
   purchasePrice:0, repairCosts:0, rentAmount:0,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
-  downPaymentPct:20, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
+  downPaymentPct:20, interestRate:7.5, closingCosts:null,
   loans:[], holdMonths:6,
   closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
@@ -1049,7 +1052,7 @@ function AppreciationProjector({homeValue, purchasePrice, mobile}) {
   const base = homeValue || purchasePrice;
   const years = [1,3,5,10,20];
   return (
-    <SectionBlock title="Appreciation projector" color={C.green} collapsible defaultOpen={false}>
+    <SectionBlock title="Appreciation Projector" color={C.green} collapsible defaultOpen={true}>
       <div style={{marginBottom:16}}>
         <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
           <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Annual appreciation</label>
@@ -1088,14 +1091,14 @@ function AppreciationProjector({homeValue, purchasePrice, mobile}) {
 // $ amounts, % of purchase price, % of loan amount, and roll-into-loan. Rows
 // re-order via the drag handle (desktop) or Move Up/Down in the edit panel.
 const CLOSING_PREFILL = () => [
-  {id:"ci1", name:"Home Inspection",     type:"amount",    value:400,  rollIn:false},
-  {id:"ci2", name:"Appraisal",           type:"amount",    value:500,  rollIn:false},
-  {id:"ci3", name:"Loan Points",         type:"pct_loan",  value:1,    rollIn:true},
-  {id:"ci4", name:"Lender Fees",         type:"amount",    value:1200, rollIn:false},
-  {id:"ci5", name:"Title & Escrow Fees", type:"amount",    value:1800, rollIn:false},
-  {id:"ci6", name:"Transfer Taxes",      type:"amount",    value:600,  rollIn:false},
-  {id:"ci7", name:"Attorney Fees",       type:"amount",    value:750,  rollIn:false},
-  {id:"ci8", name:"Wholesaler Fee",      type:"amount",    value:0,    rollIn:false},
+  {id:"ci1", name:"Home Inspection",     type:"amount",   value:0, rollIn:false},
+  {id:"ci2", name:"Appraisal",           type:"amount",   value:0, rollIn:false},
+  {id:"ci3", name:"Loan Points",         type:"pct_loan", value:0, rollIn:true},
+  {id:"ci4", name:"Lender Fees",         type:"amount",   value:0, rollIn:false},
+  {id:"ci5", name:"Title & Escrow Fees", type:"amount",   value:0, rollIn:false},
+  {id:"ci6", name:"Transfer Taxes",      type:"amount",   value:0, rollIn:false},
+  {id:"ci7", name:"Attorney Fees",       type:"amount",   value:0, rollIn:false},
+  {id:"ci8", name:"Wholesaler Fee",      type:"amount",   value:0, rollIn:false},
 ];
 const REPAIR_PREFILL = () => [
   {id:"ri1",  name:"Kitchen",            type:"amount", value:8000, rollIn:false},
@@ -1298,11 +1301,43 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
-  const [itemize, setItemize] = useState(null); // null | "closing" | "repair"
+  const [itemize, setItemize] = useState(null); // null | "brrrr"-less: "closing" | "repair"
+  const [xtra, setXtra]       = useState(null); // null | "brrrr" | "flip" — exit-strategy toggle
+  const [avmBusy, setAvmBusy] = useState(false);
+  const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
+
+  // "Check Home Value" — RentCast value AVM for the entered address. Fills the
+  // ARV field (high end of the range) and keeps the median for reference.
+  const checkHomeValue = async () => {
+    if (!p.address || !p.city || !p.state) { setAvmMsg({kind:"err", text:"Enter the property address first."}); return; }
+    if (!rentcastKey || !apiLookup) { setAvmMsg({kind:"err", text:"Live home values are currently unavailable."}); return; }
+    setAvmBusy(true); setAvmMsg(null);
+    try {
+      const q   = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
+      const key = lookupKey("rc-value", p.address, p.city, p.state, p.zip);
+      const val = await apiLookup(key, async () => {
+        const r = await fetch(`${RC_BASE}/avm/value?address=${q}`, {headers:{"X-Api-Key":rentcastKey}});
+        if (!r.ok) throw new Error("avm " + r.status);
+        return r.json();
+      });
+      const med = val?.price || 0;
+      const hi  = val?.priceRangeHigh || (med ? Math.round(med * 1.1) : 0);
+      const lo  = val?.priceRangeLow  || (med ? Math.round(med * 0.9) : 0);
+      if (!med && !hi) { setAvmMsg({kind:"err", text:"No value estimate found for that address."}); }
+      else {
+        set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
+          flipSalePrice: hi, brrrCashOut: Math.round(hi * 0.8)});
+        setAvmMsg({kind:"ok", text:`Current value estimate ${$(med)} (range ${$(lo)} – ${$(hi)}). ARV set to the high end — adjust for your rehab.`});
+      }
+    } catch (e) {
+      setAvmMsg({kind:"err", text: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Value lookup failed. Check the address and try again."});
+    }
+    setAvmBusy(false);
+  };
 
   // Auto-fill monthly property tax from the state's effective rate — every
   // state, not just Ohio. Basis is the assessed/market tax value when a data
@@ -1323,17 +1358,17 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
         background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
         ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
-        {[["cash","Cash"],["finance","Finance"]].map(([id,label]) => {
+        {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
           const active = s===id;
           return (
             <button key={id} onClick={()=>u("chosenStrategy",id)}
               style={{
-                flex:1, padding:"7px 14px", borderRadius:C.r1, border:"none",
-                background: active ? C.card : "transparent",
-                color: active ? C.text : C.textSub,
-                fontWeight: active?600:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
+                background: active ? accent : "transparent",
+                color: active ? "#fff" : C.textSub,
+                fontWeight: active?700:500, fontSize:13, cursor:"pointer", fontFamily:F,
                 letterSpacing:"-0.005em",
-                boxShadow: active ? C.sh1 : "none",
+                boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
                 transition:"background .15s, color .15s, box-shadow .15s",
               }}>
               {label}
@@ -1374,7 +1409,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {/* Purchase — shared by both tabs */}
         <SectionBlock title="Purchase" color={C.green}>
           <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:DEFAULT_CLOSING}
+          <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:(s==="cash"?0:DEFAULT_CLOSING)}
             set={v=>set({...p, closingCosts:v, closingItems:null})} pre="$"
             note={Array.isArray(p.closingItems) && p.closingItems.length ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown` : undefined}
             mobile={mobile} />
@@ -1483,15 +1518,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
         )}
 
-        {/* Results — per tab */}
-        {s==="cash" ? (
-          <SectionBlock title="Cash Purchase Results" color={C.amber}>
-            <DataRow label="Out of Pocket" value={$(m.cashOOP)} />
-            <DataRow label="Cash Flow / mo" value={$mo(m.cashCF)} color={cfC(m.cashCF)} />
-            <DataRow label="Cash-on-Cash" value={pct(m.cashCoC)} color={cfC(m.cashCoC)} />
-            <DataRow label="Cap Rate" value={pct(m.cashCap)} />
-          </SectionBlock>
-        ) : (
+        {/* Results — Finance tab only (cash results live in the Summary card) */}
+        {s==="finance" && (
           <SectionBlock title="Financed Results" color={C.green}>
             <DataRow label="Total Loan Amount" value={$(m.loan)} />
             <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />
@@ -1517,39 +1545,29 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
 
-        {/* Home value */}
-        <SectionBlock title="Home Value" color={C.blue}>
-          <InputField label="Low" val={p.homeValueLow||0} set={v=>u("homeValueLow",v)} pre="$" mobile={mobile} />
-          <InputField label="Median" val={p.homeValueMedian||0}
-            set={v=>{ set({...p, homeValueMedian:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$" mobile={mobile} />
-          <InputField label="High (ARV)" val={p.homeValueHigh||0}
-            set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v}); }} pre="$" mobile={mobile} />
-          <DataRow label="Tax Value" value={$(p.taxValue)} />
-        </SectionBlock>
-
-        {/* BRRRR — collapsed, both tabs */}
-        <SectionBlock title="BRRRR Estimate" color={C.purple} collapsible defaultOpen={false}>
-          <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
-            borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
-            Buy → rehab → cash-out refi → keep as rental.
-          </div>
-          <InputField label="Cash-Out Refi Amount" val={p.brrrCashOut ?? Math.round((p.homeValueMedian||0)*0.8)}
-            set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of median value" mobile={mobile} />
-          <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
-          <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-          <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
-        </SectionBlock>
-
-        {/* Fix & flip — collapsed, both tabs */}
-        <SectionBlock title="Fix & Flip" color={C.amber} collapsible defaultOpen={false}>
-          <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$"
-            note="Pre-filled from your High home value" mobile={mobile} />
-          <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
-          <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
-          <DataRow label="Agent Fee" value={$(m.agentFee)} />
-          <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
-          <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
-          <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+        {/* After Repair Value */}
+        <SectionBlock title="After Repair Value (ARV)" color={C.blue}>
+          <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
+            set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
+            note="What the property will be worth after repairs. Drives BRRRR and Fix & Flip below."
+            mobile={mobile} />
+          {(rentcastKey && apiLookup) && (
+            <button onClick={checkHomeValue} disabled={avmBusy}
+              {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginBottom:10})}>
+              {avmBusy ? "Checking…" : <><I.search size={13}/> Check Home Value</>}
+            </button>
+          )}
+          {avmMsg && (
+            <div style={{fontSize:12.5, fontFamily:F, lineHeight:1.55, borderRadius:C.r2, padding:"9px 12px",
+              marginBottom:10,
+              background: avmMsg.kind==="ok" ? C.greenSubtle : C.redSubtle,
+              border:"1px solid "+(avmMsg.kind==="ok" ? C.greenBorder : C.redBorder),
+              color: avmMsg.kind==="ok" ? C.greenDark : C.redDark}}>
+              {avmMsg.text}
+            </div>
+          )}
+          {p.homeValueMedian > 0 && <DataRow label="Current Value (Est.)" value={$(p.homeValueMedian)} />}
+          {p.taxValue > 0 && <DataRow label="Tax Value" value={$(p.taxValue)} />}
         </SectionBlock>
 
         {/* Summary */}
@@ -1562,6 +1580,70 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
         </SectionBlock>
 
+      </div>
+
+      {/* Exit strategies — BRRRR / Fix & Flip toggle, driven by the ARV above */}
+      <div style={{marginTop:14}}>
+        <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
+          borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
+          {[["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent]) => {
+            const active = xtra===id;
+            return (
+              <button key={id} onClick={()=>setXtra(active ? null : id)}
+                style={{
+                  flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
+                  background: active ? accent : "transparent",
+                  color: active ? "#fff" : C.textSub,
+                  fontWeight: active?700:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                  letterSpacing:"-0.005em",
+                  boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
+                  transition:"background .15s, color .15s, box-shadow .15s",
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {xtra === "brrrr" && (
+          <SectionBlock title="BRRRR Estimate" color={C.purple}>
+            <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
+              borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
+              Buy → rehab → cash-out refi at your ARV → keep as rental.
+            </div>
+            {!(p.homeValueHigh > 0) && (
+              <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+                padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
+                Enter an After Repair Value above to size the refinance.
+              </div>
+            )}
+            <InputField label="Cash-Out Refi Amount" val={p.brrrCashOut ?? Math.round((p.homeValueHigh||0)*0.8)}
+              set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
+            <DataRow label="80% of ARV" value={$(Math.round((p.homeValueHigh||0)*0.8))} color={C.textMuted} />
+            <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
+            <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
+            <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
+          </SectionBlock>
+        )}
+
+        {xtra === "flip" && (
+          <SectionBlock title="Fix & Flip" color={C.amber}>
+            {!(p.homeValueHigh > 0) && (
+              <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+                padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
+                Enter an After Repair Value above to set the sale price.
+              </div>
+            )}
+            <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$"
+              note="From your ARV above — adjust if you'd list differently" mobile={mobile} />
+            <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
+            <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
+            <DataRow label="Agent Fee" value={$(m.agentFee)} />
+            <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
+            <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
+            <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+          </SectionBlock>
+        )}
       </div>
 
       {/* Itemize sheets */}
@@ -1583,7 +1665,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       )}
 
       {/* Appreciation Projector */}
-      <AppreciationProjector homeValue={p.homeValueMedian} purchasePrice={p.purchasePrice} mobile={mobile} />
+      <AppreciationProjector homeValue={p.homeValueMedian || p.homeValueHigh} purchasePrice={p.purchasePrice} mobile={mobile} />
 
     </div>
   );
@@ -2136,7 +2218,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
             </div>
           </div>
         )}
-        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
+        {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
@@ -5717,10 +5799,89 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       )}
 
       {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
-      {/* Recommendation */}
-      {d.purchasePrice > 0 && (() => {
+      {/* Recommendation — Cash tab compares exit strategies (Buy & Hold vs
+          BRRRR vs Fix & Flip); Finance tab keeps the cash-vs-finance call. */}
+      {d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "cash" && (() => {
+        const arv = d.homeValueHigh || 0;
+        // Comparable "annualized return on capital" scores for each exit.
+        const leftIn     = Math.max(m.cashOOP - m.brrrCashOut, 0);
+        const holdYears  = Math.max((m.holdMonths || 6) / 12, 0.25);
+        const scores = {
+          buyhold: m.cashCF > 0 ? m.cashCoC : 0,
+          brrrr:   !arv || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+          flip:    !arv || m.flipProfit <= 0 ? 0 : m.flipROI / holdYears,
+        };
+        const order  = ["buyhold","brrrr","flip"];
+        const winId  = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "buyhold");
+        const NAMES  = {buyhold:"Buy & Hold", brrrr:"BRRRR", flip:"Fix & Flip"};
+        const WHY    = {
+          buyhold: "Steady cash flow with the simplest execution.",
+          brrrr:   leftIn <= 0
+            ? "The refi returns all of your capital and it still cash flows."
+            : "Strong return on the capital left in after the refinance.",
+          flip:    "Highest annualized return on your cash for this deal.",
+        };
+        const cards = [
+          {id:"buyhold", label:"Buy & Hold", big:$mo(m.cashCF), bigColor:cfC(m.cashCF),
+           l1:["CoC", pct(m.cashCoC)], l2:["OOP", $(m.cashOOP)]},
+          {id:"brrrr", label:"BRRRR", big:$mo(m.brrrCF), bigColor:cfC(m.brrrCF),
+           l1:["Recovered", $(m.brrrCashOut - m.cashOOP)], l2:["Left In", $(leftIn)]},
+          {id:"flip", label:"Fix & Flip", big:$(m.flipProfit), bigColor:cfC(m.flipProfit),
+           l1:["ROI", pct(m.flipROI)], l2:["Hold", (m.holdMonths||6) + " mo"]},
+        ];
+        return (
+          <Card style={{padding:20, marginBottom:16}}>
+            <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:14}}>
+              <div style={{width:28, height:28, borderRadius:C.r2, background:C.greenSubtle, color:C.greenDark,
+                display:"flex", alignItems:"center", justifyContent:"center"}}>
+                <I.check size={15} stroke={2.5}/>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
+                <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
+                  Best exit: {NAMES[winId]}
+                </div>
+              </div>
+            </div>
+            {!arv && (
+              <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+                padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F, lineHeight:1.5}}>
+                Enter an After Repair Value to bring BRRRR and Fix & Flip into the comparison.
+              </div>
+            )}
+            <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap:10, marginBottom:14}}>
+              {cards.map(sv => {
+                const win = winId === sv.id;
+                const muted = (sv.id !== "buyhold") && !arv;
+                return (
+                  <div key={sv.id} style={{
+                    background: win ? C.greenSubtle : C.bgSubtle,
+                    border: "1px solid " + (win ? C.greenBorder : C.border),
+                    borderRadius:C.r3, padding:"14px 16px", opacity: muted ? .55 : 1,
+                  }}>
+                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap"}}>
+                      <span style={{fontSize:12, fontWeight:600, color:win?C.greenDark:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>{sv.label}</span>
+                      {win && <Badge label="Recommended" bg={C.green} c="#fff"/>}
+                    </div>
+                    <div style={{fontSize:22, fontWeight:700, color:sv.bigColor, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>{sv.big}</div>
+                    <div style={{display:"flex", gap:14, marginTop:6, fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                      <span>{sv.l1[0]} <b style={{color:C.text, fontWeight:600}}>{sv.l1[1]}</b></span>
+                      <span>{sv.l2[0]} <b style={{color:C.text, fontWeight:600}}>{sv.l2[1]}</b></span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
+              {WHY[winId]}
+            </div>
+          </Card>
+        );
+      })()}
+
+      {d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
         const isFinance = winner==="finance";
         return (
           <Card style={{padding:20, marginBottom:16}}>
