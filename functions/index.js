@@ -785,6 +785,48 @@ exports.pullDeals = onSchedule({
 // HTTPS trigger for ad-hoc runs — auth via shared secret in the query string.
 // Useful right after deploy to verify the pipeline without waiting overnight.
 //   curl "https://us-central1-darallc.cloudfunctions.net/pullDealsNow?secret=XXXX"
+// -- RentCast proxy for the app --------------------------------------------------
+// Signed-in users (Firebase ID token) can query a small allowlist of RentCast
+// endpoints through the server key — no client-side API key ever. Per-user
+// daily cap protects the RentCast bill from a misbehaving client.
+const RC_ALLOWED = [
+  /^\/properties\?/,
+  /^\/avm\/value\?/,
+  /^\/avm\/rent\/long-term\?/,
+  /^\/listings\/rental\/long-term\?/,
+  /^\/listings\/sale\?/,
+];
+const RC_DAILY_CAP = 150;
+
+exports.rcProxy = onRequest(
+  {secrets: [RENTCAST_API_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      const authz = String(req.headers.authorization || "");
+      const tok = authz.startsWith("Bearer ") ? authz.slice(7) : null;
+      if (!tok) { res.status(401).json({error: "auth"}); return; }
+      const decoded = await admin.auth().verifyIdToken(tok).catch(() => null);
+      if (!decoded) { res.status(401).json({error: "auth"}); return; }
+
+      const path = String(req.query.path || "");
+      if (!RC_ALLOWED.some(rx => rx.test(path))) { res.status(400).json({error: "path"}); return; }
+
+      const day = new Date().toISOString().slice(0, 10);
+      const ref = admin.database().ref(`rcUsage/${decoded.uid}/${day}`);
+      const tx  = await ref.transaction(v => (v || 0) + 1);
+      if ((tx.snapshot.val() || 0) > RC_DAILY_CAP) { res.status(429).json({error: "cap"}); return; }
+
+      const r = await fetch("https://api.rentcast.io/v1" + path, {
+        headers: {"X-Api-Key": RENTCAST_API_KEY.value()},
+      });
+      const body = await r.text();
+      res.status(r.status).set("Content-Type", "application/json").send(body);
+    } catch (e) {
+      logger.error("rcProxy", e);
+      res.status(500).json({error: "proxy"});
+    }
+  });
+
 exports.pullDealsNow = onRequest({
   timeoutSeconds: 540,
   memory:         "512MiB",
