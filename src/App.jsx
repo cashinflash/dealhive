@@ -1515,15 +1515,21 @@ function DealSummaryBlock({p, m, exit}) {
     ];
   } else if (exit === "brrrr") {
     const refiCash = cash ? m.brrrCashOut : m.brrrNetCash;
+    const leftIn   = Math.max(m.chosenOOP - Math.max(refiCash, 0), 0);
+    const cocAfter = leftIn > 0 ? pct((m.brrrCF*12/leftIn)*100) : (m.brrrCF > 0 ? "All Cash Back" : "—");
     rows = [
       ["Out of Pocket", $(m.chosenOOP), C.text],
       [cash ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
+      ["Cash Left In Deal", $(leftIn), leftIn === 0 ? cfC(1) : C.text],
       ["Cash Flow / mo (After Refi)", $mo(m.brrrCF), cfC(m.brrrCF)],
+      ["Cash-on-Cash (After Refi)", cocAfter, cfC(m.brrrCF)],
     ];
   } else {
     rows = [
       ["Out of Pocket",      $(m.chosenOOP),   C.text],
+      ...(cash ? [] : [["Loan Payments / mo", $mo(m.mtg), C.text]]),
       ["Net Cash Flow / mo", $mo(m.chosenCF),  cfC(m.chosenCF)],
+      ["NOI / yr",           $(m.noi*12),      C.text],
       ["Cash-on-Cash",       pct(m.chosenCoC), cfC(m.chosenCoC)],
       ["Cap Rate",           pct(m.chosenCap), C.text],
     ];
@@ -1832,10 +1838,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </div>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
-          {[["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent]) => {
-            const active = xtra===id;
+          {[["buyhold","Buy & Hold",C.cashPos],["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent]) => {
+            const active = (xtra || "buyhold") === id;
             return (
-              <button key={id} onClick={()=>setXtra(active ? null : id)}
+              <button key={id} onClick={()=>setXtra(id === "buyhold" || active ? null : id)}
                 style={{
                   flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
                   background: active ? accent : "transparent",
@@ -1850,6 +1856,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             );
           })}
         </div>
+
+        {(xtra || "buyhold") === "buyhold" && (
+          <SectionBlock title="Buy & Hold" color={C.cashPos}>
+            <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} />
+            {s === "finance" && <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />}
+            <DataRow label="Operating Expenses / mo" value={$(m.exp)} />
+            <DataRow label="Net Cash Flow / mo" value={$mo(s === "cash" ? m.cashCF : m.finCF)} color={cfC(s === "cash" ? m.cashCF : m.finCF)} />
+            <DataRow label="NOI / yr" value={$(m.noi*12)} />
+            <DataRow label="Cash-on-Cash" value={pct(s === "cash" ? m.cashCoC : m.finCoC)} color={cfC(s === "cash" ? m.cashCoC : m.finCoC)} />
+            <DataRow label="Cap Rate" value={pct(s === "cash" ? m.cashCap : m.finCap)} />
+          </SectionBlock>
+        )}
 
         {xtra === "brrrr" && (
           <SectionBlock title="BRRRR Estimate" color={C.purple}>
