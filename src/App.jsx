@@ -1301,12 +1301,16 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, exit, onExitChange}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
   const [itemize, setItemize] = useState(null); // null | "brrrr"-less: "closing" | "repair"
-  const [xtra, setXtra]       = useState(null); // null | "brrrr" | "flip" — exit-strategy toggle
+  // Exit-strategy toggle can be driven from outside (the analyzer lifts it so
+  // the Save button can say what it's saving as); falls back to local state.
+  const [localXtra, setLocalXtra] = useState(null); // null | "brrrr" | "flip"
+  const xtra    = exit !== undefined ? exit : localXtra;
+  const setXtra = onExitChange ?? setLocalXtra;
   const [avmBusy, setAvmBusy] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
 
@@ -5070,15 +5074,17 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 // Save picker: choose which scenario a deal is saved under (Rentals, BRRRR,
 // Fix & Flip, Wholesale) and whether you'd run it cash or financed. Renders
 // above DealDetailModal (zIndex 600 vs 500) since Save also lives inside it.
-function SaveDealSheet({deal, onCancel, onConfirm, mobile}) {
+function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
   const c = classifyDeal(deal);
-  const suggested = isWholesaleDeal(deal) ? "wholesale"
+  // The analyzer passes an explicit suggestion (whatever section the user had
+  // open); market saves fall back to the automatic classification.
+  const suggested = suggestedOverride || (isWholesaleDeal(deal) ? "wholesale"
     : c.tags.includes("buyhold") ? "buyhold"
     : c.tags.includes("flip")    ? "flip"
     : c.tags.includes("brrrr")   ? "brrrr"
-    : "buyhold";
+    : "buyhold");
   const [scenario,  setScenario]  = useState(suggested);
-  const [financing, setFinancing] = useState("finance");
+  const [financing, setFinancing] = useState(deal.chosenStrategy === "cash" ? "cash" : "finance");
   // null | "dupe" | "saved" — saved shows a confirmation panel, then closes.
   const [result, setResult] = useState(null);
   useEffect(() => {
@@ -5679,6 +5685,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // show the "Back to deals" button — after onConsumeInitial fires, `initial`
   // becomes null and we'd lose the signal otherwise.
   const [fromDeals]     = useState(() => !!initial);
+  // Which exit-strategy section is open (BRRRR / Fix & Flip / neither). Lifted
+  // from the Calculator so the Save button and save sheet can follow it.
+  const [exitStrategy, setExitStrategy] = useState(null);
   const u = (f,v) => setD(prev => ({...prev, [f]:v}));
 
   useEffect(() => {
@@ -5705,7 +5714,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     if (!d.address) { setErr("Enter an address first."); return; }
     // Member accounts: file it on the home watchlist (opens the scenario +
     // financing picker). The form stays put so they can keep tweaking.
-    if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d); return; }
+    if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
     onSave([...deals.filter(x => x.id !== d.id), {...d, savedAt:new Date().toISOString()}]);
     setD(newDeal()); setErr("");
   };
@@ -5794,7 +5803,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       )}
 
       {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
+        exit={exitStrategy} onExitChange={setExitStrategy}
+        stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
       {/* Recommendation — Cash tab compares exit strategies (Buy & Hold vs
           BRRRR vs Fix & Flip); Finance tab keeps the cash-vs-finance call. */}
@@ -5946,7 +5957,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* Save */}
       <button onClick={saveDeal}
         {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-        Save as {(d.chosenStrategy||"finance")==="cash"?"all-cash":"financed"} deal
+        <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR" : exitStrategy === "flip" ? "Fix & Flip" : "Buy & Hold"}
       </button>
 
       {/* Saved Deals */}
@@ -7102,7 +7113,7 @@ export default function App() {
   // everyone else picks a scenario + financing in the save sheet first.
   const saveDealFromMarket = deal => {
     if (isAdmin) saveDealToPortfolio(deal);
-    else         setSavePicker(deal);
+    else         setSavePicker({deal, suggested: null});
   };
   // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
   // can use Pro features. When checkout lands this will redirect to Stripe and
@@ -7141,7 +7152,8 @@ export default function App() {
     onSave: saveDeals,
     // Members file analyses onto their home watchlist (via the save sheet);
     // the admin account keeps its private analyzer list + portfolio flow.
-    onSaveToWatchlist: isAdmin ? null : pf => setSavePicker(proFormaToFeedDeal(pf)),
+    onSaveToWatchlist: isAdmin ? null : (pf, suggested) =>
+      setSavePicker({deal: {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy}, suggested: suggested || null}),
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
@@ -7195,9 +7207,9 @@ export default function App() {
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
       {showAdd && <AddPropertyModal llcs={data.llcs||[]} onAdd={addProp} onClose={()=>setShowAdd(false)} {...sharedProps} />}
       {savePicker && (
-        <SaveDealSheet deal={savePicker} mobile={mobile}
+        <SaveDealSheet deal={savePicker.deal} suggestedOverride={savePicker.suggested} mobile={mobile}
           onCancel={()=>setSavePicker(null)}
-          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker, scenario, financing)} />
+          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker.deal, scenario, financing)} />
       )}
     </div>
   );
@@ -7238,9 +7250,9 @@ export default function App() {
       </div>
       {showAdd && <AddPropertyModal llcs={data.llcs||[]} onAdd={addProp} onClose={()=>setShowAdd(false)} {...sharedProps} />}
       {savePicker && (
-        <SaveDealSheet deal={savePicker} mobile={mobile}
+        <SaveDealSheet deal={savePicker.deal} suggestedOverride={savePicker.suggested} mobile={mobile}
           onCancel={()=>setSavePicker(null)}
-          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker, scenario, financing)} />
+          onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker.deal, scenario, financing)} />
       )}
     </div>
   );
