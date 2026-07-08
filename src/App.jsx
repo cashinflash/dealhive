@@ -1607,19 +1607,14 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {xtra === "brrrr" && (
           <SectionBlock title="BRRRR Estimate" color={C.purple}>
-            <div style={{fontSize:12, color:C.textSub, background:C.bgSubtle, padding:"8px 12px",
-              borderRadius:C.r2, marginBottom:14, fontFamily:F, lineHeight:1.5}}>
-              Buy → rehab → cash-out refi at your ARV → keep as rental.
-            </div>
             {!(p.homeValueHigh > 0) && (
               <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
                 Enter an After Repair Value above to size the refinance.
               </div>
             )}
-            <InputField label="Cash-Out Refi Amount" val={p.brrrCashOut ?? Math.round((p.homeValueHigh||0)*0.8)}
+            <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.8)}
               set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
-            <DataRow label="80% of ARV" value={$(Math.round((p.homeValueHigh||0)*0.8))} color={C.textMuted} />
             <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
             <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
             <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
