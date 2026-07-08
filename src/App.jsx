@@ -750,7 +750,7 @@ function DataRow({label, value, color}) {
 }
 
 // FIXED: clear field on focus so typing replaces 0
-function InputField({label, val, set, type="number", suf, pre, note, mobile=false}) {
+function InputField({label, val, set, type="number", suf, pre, note, mobile=false, plain=false}) {
   const isNum = type === "number";
   const [focused, setFocused] = useState(false);
   const [draft, setDraft] = useState("");
@@ -761,6 +761,7 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
   const sanitize = v => v.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
   // Thousands commas on the integer part, decimals left as typed.
   const addCommas = raw => {
+    if (plain) return raw;
     if (raw === "") return "";
     const dot = raw.indexOf(".");
     const int = dot === -1 ? raw : raw.slice(0, dot);
@@ -775,7 +776,7 @@ function InputField({label, val, set, type="number", suf, pre, note, mobile=fals
     ? (val ?? "")
     : focused
       ? draft
-      : (val === "" || val == null ? "" : Number(val).toLocaleString());
+      : (val === "" || val == null ? "" : plain ? String(val) : Number(val).toLocaleString());
 
   useLayoutEffect(() => {
     if (caretRef.current == null || !inputRef.current) return;
@@ -4961,7 +4962,11 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             padding:"3px 8px", borderRadius:C.r1, fontSize:11, fontWeight:600,
             fontVariantNumeric:"tabular-nums", flexShrink:0, letterSpacing:"-0.005em",
           }}>
-            {deal.beds}bd · {deal.baths}ba · {(deal.sqft/1000).toFixed(1)}k
+            {[
+              deal.beds ? `${deal.beds}bd` : null,
+              deal.baths ? `${deal.baths}ba` : null,
+              deal.sqft ? `${(deal.sqft/1000).toFixed(1)}k sqft` : null,
+            ].filter(Boolean).join(" · ") || "Details inside"}
           </span>
         </div>
       </div>
@@ -6102,6 +6107,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const u = (f,v) => setD(prev => ({...prev, [f]:v}));
 
   useEffect(() => {
+    window.scrollTo(0, 0);
     if (initial && onConsumeInitial) onConsumeInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -6422,17 +6428,16 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         )}
       </SectionBlock>
 
-      {/* Property snapshot */}
-      {d.beds > 0 && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat("+(mobile?2:4)+",1fr)",gap:10,marginBottom:18}}>
-          {[["Beds",d.beds],["Baths",d.baths],["Sqft",(d.sqft||0).toLocaleString()],["Built",d.yearBuilt]].map(([l,v]) => (
-            <Card key={l} style={{padding:"12px 14px"}}>
-              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
-              <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v||"—"}</div>
-            </Card>
-          ))}
+      {/* Property basics — editable. A data pull fills them automatically;
+          otherwise type them so cards and comps have real numbers. */}
+      <Card style={{padding:"14px 16px 2px", marginBottom:18}}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)", gap:10}}>
+          <InputField label="Beds" val={d.beds || ""} set={v=>u("beds",v)} mobile={mobile} />
+          <InputField label="Baths" val={d.baths || ""} set={v=>u("baths",v)} mobile={mobile} />
+          <InputField label="Sqft" val={d.sqft || ""} set={v=>u("sqft",v)} mobile={mobile} />
+          <InputField label="Year Built" val={d.yearBuilt || ""} set={v=>u("yearBuilt",v)} plain mobile={mobile} />
         </div>
-      )}
+      </Card>
 
       {/* Calculator */}
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
@@ -7377,6 +7382,7 @@ export default function App() {
       input::placeholder,textarea::placeholder{color:${C.textMuted};}
       input,select,textarea{transition:border-color .15s,box-shadow .15s;}
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
+      input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
       input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
       input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
@@ -7666,7 +7672,7 @@ export default function App() {
     onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
       const mm = calc(pf);
       const isCash = pf.chosenStrategy === "cash";
-      saveDealToWatchlist(
+      const res = saveDealToWatchlist(
         {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy,
           // Snapshot of the analyzer's own numbers so the home card shows
           // exactly what the user saw at save time — not the feed
@@ -7686,6 +7692,8 @@ export default function App() {
           }},
         suggested || "buyhold",
         isCash ? "cash" : "finance");
+      // A professional save takes you to where the deal now lives.
+      if (res) setPage("dashboard");
     },
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
