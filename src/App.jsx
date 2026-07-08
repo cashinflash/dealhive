@@ -6143,6 +6143,39 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // show the "Back to deals" button — after onConsumeInitial fires, `initial`
   // becomes null and we'd lose the signal otherwise.
   const [fromDeals]     = useState(() => !!initial);
+  const [basicsLoading, setBasicsLoading] = useState(false);
+
+  // Choosing an address auto-fills beds/baths/sqft/year from the property
+  // records (light endpoint, cached, not counted against the monthly cap —
+  // the full "Pull property data" button remains the counted deep fetch).
+  const handleAddressSelect = loc => {
+    setD(prev => ({...prev, ...loc, fullAddress: loc.fullAddress}));
+    if (!rentcastKey || !apiLookup || !loc.address || !loc.city) return;
+    setBasicsLoading(true);
+    (async () => {
+      try {
+        const q = encodeURIComponent(`${loc.address}, ${loc.city}, ${loc.state} ${loc.zip||""}`.trim());
+        const rec = await apiLookup(lookupKey("rc-props", loc.address, loc.city, loc.state, loc.zip), async () => {
+          const r = await fetch(`${RC_BASE}/properties?address=${q}`, {headers:{"X-Api-Key": rentcastKey}});
+          if (!r.ok) throw new Error("props " + r.status);
+          const arr = await r.json();
+          return Array.isArray(arr) ? arr[0] || null : arr || null;
+        }, {count:false});
+        if (rec) {
+          setD(prev => ({...prev,
+            beds:      rec.bedrooms      || prev.beds,
+            baths:     rec.bathrooms     || prev.baths,
+            sqft:      rec.squareFootage || prev.sqft,
+            yearBuilt: rec.yearBuilt     || prev.yearBuilt,
+            type:      rec.propertyType  || prev.type,
+            lat:       prev.lat || rec.latitude  || null,
+            lng:       prev.lng || rec.longitude || null,
+          }));
+        }
+      } catch { /* silent — the card simply stays hidden */ }
+      setBasicsLoading(false);
+    })();
+  };
   // Which exit-strategy section is open (BRRRR / Fix & Flip / neither). Lifted
   // from the Calculator so the Save button and save sheet can follow it.
   // Saved deals open on their saved scenario; the auto-follow below stays
@@ -6438,7 +6471,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             Address
           </label>
           <AddressInput value={d.address} onChange={v=>u("address",v)}
-            onSelect={loc=>setD(prev=>({...prev,...loc,fullAddress:loc.fullAddress}))}
+            onSelect={handleAddressSelect}
             placeholder="Start typing an address…"
             mobile={mobile} />
         </div>
@@ -6474,16 +6507,35 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         )}
       </SectionBlock>
 
-      {/* Property basics — editable. A data pull fills them automatically;
-          otherwise type them so cards and comps have real numbers. */}
-      <Card style={{padding:"14px 16px 2px", marginBottom:18}}>
-        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)", gap:10}}>
-          <InputField label="Beds" val={d.beds || ""} set={v=>u("beds",v)} mobile={mobile} />
-          <InputField label="Baths" val={d.baths || ""} set={v=>u("baths",v)} mobile={mobile} />
-          <InputField label="Sqft" val={d.sqft || ""} set={v=>u("sqft",v)} mobile={mobile} />
-          <InputField label="Year Built" val={d.yearBuilt || ""} set={v=>u("yearBuilt",v)} plain mobile={mobile} />
+      {/* Property basics — auto-filled from records when an address is chosen */}
+      {basicsLoading && !(d.beds || d.baths || d.sqft || d.yearBuilt) && (
+        <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:18,
+          fontSize:12.5, color:C.textSub, fontFamily:F}}>
+          <span style={{width:14, height:14, borderRadius:"50%", border:"2px solid "+C.border,
+            borderTopColor:C.green, animation:"dhSpin .8s linear infinite", display:"inline-block"}}/>
+          Pulling property details…
         </div>
-      </Card>
+      )}
+      {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
+        <Card style={{padding:0, marginBottom:18, overflow:"hidden",
+          background:`linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 55%)`}}>
+          <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)"}}>
+            {[["Beds", d.beds || "—"],
+              ["Baths", d.baths || "—"],
+              ["Sqft", d.sqft ? d.sqft.toLocaleString() : "—"],
+              ["Built", d.yearBuilt || "—"]].map(([l, v], i) => (
+              <div key={l} style={{padding:"14px 16px",
+                borderLeft: i > 0 && !(mobile && i % 2 === 0) ? "1px solid "+C.border : "none",
+                borderTop: mobile && i > 1 ? "1px solid "+C.border : "none"}}>
+                <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontWeight:700,
+                  letterSpacing:".05em", textTransform:"uppercase"}}>{l}</div>
+                <div style={{fontSize:20, fontWeight:700, color:C.text, fontFamily:F, marginTop:3,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Calculator */}
       <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey}
@@ -7429,6 +7481,7 @@ export default function App() {
       input,select,textarea{transition:border-color .15s,box-shadow .15s;}
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
       input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
+      @keyframes dhSpin{to{transform:rotate(360deg)}}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
       input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
       input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
