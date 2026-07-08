@@ -6145,17 +6145,20 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const [fromDeals]     = useState(() => !!initial);
   const [basicsLoading, setBasicsLoading] = useState(false);
 
-  // Choosing an address auto-fills beds/baths/sqft/year from the property
-  // records (light endpoint, cached, not counted against the monthly cap —
-  // the full "Pull property data" button remains the counted deep fetch).
-  const handleAddressSelect = loc => {
-    setD(prev => ({...prev, ...loc, fullAddress: loc.fullAddress}));
+  // Auto-fill beds/baths/sqft/year/type from property records (light endpoint,
+  // cached, not counted against the monthly cap — the full "Pull property
+  // data" button remains the counted deep fetch).
+  const basicsKeyRef = useRef("");
+  const fetchBasics = loc => {
     if (!rentcastKey || !apiLookup || !loc.address || !loc.city) return;
+    const key = lookupKey("rc-props", loc.address, loc.city, loc.state, loc.zip);
+    if (basicsKeyRef.current === key) return;
+    basicsKeyRef.current = key;
     setBasicsLoading(true);
     (async () => {
       try {
         const q = encodeURIComponent(`${loc.address}, ${loc.city}, ${loc.state} ${loc.zip||""}`.trim());
-        const rec = await apiLookup(lookupKey("rc-props", loc.address, loc.city, loc.state, loc.zip), async () => {
+        const rec = await apiLookup(key, async () => {
           const r = await fetch(`${RC_BASE}/properties?address=${q}`, {headers:{"X-Api-Key": rentcastKey}});
           if (!r.ok) throw new Error("props " + r.status);
           const arr = await r.json();
@@ -6176,6 +6179,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       setBasicsLoading(false);
     })();
   };
+  const handleAddressSelect = loc => {
+    setD(prev => ({...prev, ...loc, fullAddress: loc.fullAddress}));
+    fetchBasics(loc);
+  };
+  // Safety net: whenever a full address exists but the basics don't (manual
+  // typing, prefills without specs), fetch them after a short pause.
+  useEffect(() => {
+    if (d.beds || d.sqft) return;
+    if (!d.address || !d.city || !d.state) return;
+    const t = setTimeout(() => fetchBasics({address:d.address, city:d.city, state:d.state, zip:d.zip}), 700);
+    return () => clearTimeout(t);
+  }, [d.address, d.city, d.state, d.zip, d.beds, d.sqft]); // eslint-disable-line react-hooks/exhaustive-deps
   // Which exit-strategy section is open (BRRRR / Fix & Flip / neither). Lifted
   // from the Calculator so the Save button and save sheet can follow it.
   // Saved deals open on their saved scenario; the auto-follow below stays
@@ -6517,20 +6532,21 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </div>
       )}
       {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
-        <Card style={{padding:0, marginBottom:18, overflow:"hidden",
-          background:`linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 55%)`}}>
-          <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)"}}>
-            {[["Beds", d.beds || "—"],
+        <Card style={{padding: mobile ? "12px 16px" : "14px 18px", marginBottom:18}}>
+          <div style={{display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(5, 1fr)", gap:14}}>
+            {[
+              ["Beds",  d.beds || "—"],
               ["Baths", d.baths || "—"],
-              ["Sqft", d.sqft ? d.sqft.toLocaleString() : "—"],
-              ["Built", d.yearBuilt || "—"]].map(([l, v], i) => (
-              <div key={l} style={{padding:"14px 16px",
-                borderLeft: i > 0 && !(mobile && i % 2 === 0) ? "1px solid "+C.border : "none",
-                borderTop: mobile && i > 1 ? "1px solid "+C.border : "none"}}>
-                <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontWeight:700,
-                  letterSpacing:".05em", textTransform:"uppercase"}}>{l}</div>
-                <div style={{fontSize:20, fontWeight:700, color:C.text, fontFamily:F, marginTop:3,
-                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{v}</div>
+              ["Sqft",  d.sqft ? d.sqft.toLocaleString() : "—"],
+              ["Year",  d.yearBuilt || "—"],
+              ["Type",  d.type || "—"],
+            ].map(([l, v]) => (
+              <div key={l}>
+                <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                  letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
+                <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", marginTop:2,
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
               </div>
             ))}
           </div>
