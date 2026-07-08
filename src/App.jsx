@@ -202,7 +202,10 @@ const calc = (p) => {
   const cashOOP  = (p.purchasePrice||0)+(p.repairCosts||0);
   const cashCF   = effectiveRent - exp;
   const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
-  const cashCap  = cashOOP>0 ? (noi*12/cashOOP)*100 : 0;
+  // Cap rate is NOI over purchase price (property metric); CoC is cash flow
+  // over cash invested (investor metric). Dividing cap by OOP made the two
+  // identical on cash deals.
+  const cashCap  = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
 
   // Cash purchases default to $0 closing costs; financed deals to the
   // standard default. An explicit value always wins on both tabs.
@@ -241,7 +244,7 @@ const calc = (p) => {
   const finCap   = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
   const payoff   = (finCF>0 && finOOP>0) ? finOOP/(finCF*12) : 0;
   const brrrCashOut = p.brrrCashOut || Math.round(((p.homeValueHigh || p.homeValueMedian || 0))*0.8);
-  const brrrMtg  = monthlyPI(brrrCashOut, p.interestRate||7.5);
+  const brrrMtg  = monthlyPI(brrrCashOut, p.brrrRate||7.5, p.brrrTermYears||30);
   const brrrCF   = effectiveRent - exp - brrrMtg;
 
   // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
@@ -316,7 +319,7 @@ const newDeal = () => ({
   closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
-  brrrCashOut:0, flipSalePrice:0, agentFeePct:6,
+  brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, flipSalePrice:0, agentFeePct:6,
   chosenStrategy:"finance", notes:"", savedAt:""
 });
 
@@ -1345,17 +1348,166 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
   );
 }
 
+// -- Rent comps sheet ------------------------------------------------------------
+// RentCast rent AVM + nearby active rental listings for the entered address,
+// so Monthly Rent can be sanity-checked without leaving the analyzer.
+function RentCompsSheet({p, apiLookup, rentcastKey, onUseRent, onClose, mobile}) {
+  const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
+
+  useEffect(() => {
+    const handler = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [onClose]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const q    = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
+        const beds = p.beds || 3;
+        const h    = {"X-Api-Key": rentcastKey};
+        const avm  = await apiLookup(lookupKey("rc-rentavm", p.address, p.city, p.state, p.zip, beds), async () => {
+          const r = await fetch(`${RC_BASE}/avm/rent/long-term?address=${q}&bedrooms=${beds}`, {headers:h});
+          if (!r.ok) throw new Error("rent avm " + r.status);
+          return r.json();
+        });
+        let comps = [];
+        try {
+          const listings = await apiLookup(lookupKey("rc-rentcomps", p.address, p.city, p.state, p.zip, beds), async () => {
+            const r = await fetch(`${RC_BASE}/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=1&limit=12&status=Active`, {headers:h});
+            if (!r.ok) throw new Error("listings " + r.status);
+            return r.json();
+          });
+          comps = Array.isArray(listings) ? listings : [];
+        } catch { /* comps are a bonus — the estimate alone is still useful */ }
+        if (!alive) return;
+        const rent = avm?.rent || 0;
+        setSt({
+          loading:false,
+          err: rent ? null : "No rent estimate found for that address.",
+          rent,
+          low:  avm?.rentRangeLow  || (rent ? Math.round(rent*0.9) : 0),
+          high: avm?.rentRangeHigh || (rent ? Math.round(rent*1.1) : 0),
+          comps,
+        });
+      } catch (e) {
+        if (!alive) return;
+        setSt(x => ({...x, loading:false,
+          err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Rent lookup failed. Check the address and try again."}));
+      }
+    })();
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:600,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:600,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"90dvh",
+       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:520, maxHeight:"88dvh",
+       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:14}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>Rental Comps</div>
+            <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:2,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {p.address}{p.city ? `, ${p.city}` : ""}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            style={{width:32, height:32, borderRadius:"50%", background:C.bgSubtle, border:"none",
+              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+            <I.x size={15}/>
+          </button>
+        </div>
+
+        {st.loading ? (
+          <div style={{padding:"36px 0", textAlign:"center", color:C.textSub, fontSize:13.5, fontFamily:F}}>
+            Pulling market rents…
+          </div>
+        ) : st.err ? (
+          <div style={{display:"flex", gap:8, alignItems:"flex-start", background:C.redSubtle,
+            border:"1px solid "+C.redBorder, borderRadius:C.r2, padding:"12px 14px",
+            fontSize:13, color:C.redDark, fontFamily:F, lineHeight:1.55}}>
+            <I.alert size={15} style={{flexShrink:0, marginTop:1}}/> {st.err}
+          </div>
+        ) : (
+          <>
+            <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
+              padding:"14px 16px", textAlign:"center"}}>
+              <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
+                letterSpacing:".05em", textTransform:"uppercase"}}>Market Rent Estimate</div>
+              <div style={{fontSize:28, fontWeight:700, color:C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:2}}>
+                {$(st.rent)}<span style={{fontSize:14, color:C.textSub, fontWeight:500}}>/mo</span>
+              </div>
+              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums"}}>
+                Range {$(st.low)} – {$(st.high)}
+              </div>
+              <button onClick={()=>onUseRent(st.rent, st.low, st.high)}
+                {...btnStyle("primary","md", {marginTop:12, justifyContent:"center"})}>
+                <I.check size={13}/> Use {$(st.rent)}/mo as Monthly Rent
+              </button>
+            </div>
+
+            {st.comps.length > 0 && (
+              <>
+                <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+                  letterSpacing:".06em", textTransform:"uppercase", margin:"18px 0 8px"}}>
+                  Active Rentals Nearby ({st.comps.length})
+                </div>
+                <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                  {st.comps.map((l, i) => (
+                    <div key={l.id || i} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                      gap:10, border:"1px solid "+C.border, borderRadius:C.r2, padding:"10px 12px"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                          {l.formattedAddress || l.addressLine1 || "Nearby rental"}
+                        </div>
+                        <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
+                          {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
+                        </div>
+                      </div>
+                      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F,
+                        fontVariantNumeric:"tabular-nums", flexShrink:0}}>
+                        {$(l.price || l.rent || 0)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Shared Summary block — rendered in the calculator grid normally, but the
 // analyzer relocates it to sit right above Notes on the Cash tab.
-function DealSummaryBlock({p, m}) {
+function DealSummaryBlock({p, m, exit}) {
+  const exitLabel = exit === "brrrr" ? "BRRRR"
+    : exit === "flip" ? "Fix & Flip"
+    : (p.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold";
   return (
     <SectionBlock title="Summary" color={C.text}>
-      <DataRow label="Strategy" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
+      <DataRow label="Purchase Method" value={(p.chosenStrategy||"finance")==="cash"?"Cash":"Finance"} />
+      <DataRow label="Exit Strategy" value={exitLabel} />
       <DataRow label="Out of Pocket" value={$(m.chosenOOP)} />
       <DataRow label="Net Cash Flow / mo" value={$mo(m.chosenCF)} color={cfC(m.chosenCF)} />
       <DataRow label="Cash-on-Cash" value={pct(m.chosenCoC)} color={cfC(m.chosenCoC)} />
       <DataRow label="Cap Rate" value={pct(m.chosenCap)} />
-      <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
     </SectionBlock>
   );
 }
@@ -1373,6 +1525,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const setXtra = onExitChange ?? setLocalXtra;
   const [avmBusy, setAvmBusy] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
+  const [compsOpen, setCompsOpen] = useState(false);
 
   // "Check Home Value" — RentCast value AVM for the entered address. Fills the
   // ARV field (high end of the range) and keeps the median for reference.
@@ -1419,6 +1572,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   return (
     <div>
       {/* Strategy tabs — sticky on mobile so the cash/finance switch stays in view */}
+      <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+        letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
+        Purchase Method
+      </div>
       <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
         background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
         ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
@@ -1440,33 +1597,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           );
         })}
       </div>
-
-      {/* Rent estimate banner */}
-      {p.rentEstimate > 0 && (
-        <Card style={{padding:16, marginBottom:16, borderColor:C.greenBorder, background:C.greenSubtle}}>
-          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
-            <div>
-              <div style={{fontSize:11, fontWeight:600, color:C.greenDark, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
-                Market Rent Estimate
-              </div>
-              <div style={{fontSize:24, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>
-                {$(p.rentEstimate)}<span style={{fontSize:14, color:C.textSub, fontWeight:500}}>/mo</span>
-              </div>
-              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums"}}>
-                Range {$(p.rentEstLow)} – {$(p.rentEstHigh)}
-              </div>
-            </div>
-            <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>
-              Use Estimate
-            </button>
-          </div>
-          {p.rentAmount > 0 && (
-            <div style={{fontSize:12, marginTop:10, color:p.rentAmount>=p.rentEstimate?C.greenDark:C.amberDark, fontFamily:F, lineHeight:1.5}}>
-              Your rent <b style={{fontWeight:600}}>{$(p.rentAmount)}/mo</b> · {p.rentAmount>=p.rentEstimate?"at or above market":"below market"}
-            </div>
-          )}
-        </Card>
-      )}
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
@@ -1495,7 +1625,32 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Income — shared by both tabs (this used to hide on Finance) */}
         <SectionBlock title="Income" color={C.green}>
+          {p.rentEstimate > 0 && (
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
+              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
+              padding:"10px 12px", marginBottom:12}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
+                  Market Rent Estimate
+                </div>
+                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                  {$(p.rentEstimate)}/mo
+                  <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
+                </div>
+              </div>
+              {p.rentAmount !== p.rentEstimate && (
+                <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>Use</button>
+              )}
+            </div>
+          )}
           <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
+          {(rentcastKey && apiLookup) && (
+            <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
+              title={p.address ? undefined : "Enter the property address first"}
+              {...btnStyle("secondary","sm", {marginBottom:12, opacity: p.address ? 1 : .55})}>
+              <I.search size={12}/> Check Rental Comps
+            </button>
+          )}
           <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
           {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
           <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
@@ -1635,7 +1790,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
 
         {/* Summary — the analyzer relocates this to sit right above Notes */}
-        {!externalSummary && <DealSummaryBlock p={p} m={m}/>}
+        {!externalSummary && <DealSummaryBlock p={p} m={m} exit={xtra}/>}
 
       </div>
 
@@ -1681,6 +1836,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             )}
             <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.8)}
               set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+              <InputField label="Refi Interest Rate" val={p.brrrRate ?? 7.5} set={v=>u("brrrRate",v)} suf="%" mobile={mobile} />
+              <InputField label="Refi Loan Term (Years)" val={p.brrrTermYears ?? 30} set={v=>u("brrrTermYears",v)} mobile={mobile} />
+            </div>
             {s === "finance" && <DataRow label="Pays Off Existing Loans" value={$(m.loan)} />}
             {s === "finance" && (
               <DataRow label="Net Cash at Refi" value={$(m.brrrNetCash)} color={cfC(m.brrrNetCash)} />
@@ -1740,6 +1899,14 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           loanAmt={Array.isArray(p.loans) && p.loans.length ? p.loans.reduce((sum,l)=>sum+loanAmount(l,p),0) : m.loan}
           onApply={(items, totals)=>{ set({...p, closingItems:items, closingCosts:totals.total}); setItemize(null); }}
           onClose={()=>setItemize(null)} mobile={mobile} />
+      )}
+      {compsOpen && (
+        <RentCompsSheet p={p} apiLookup={apiLookup} rentcastKey={rentcastKey} mobile={mobile}
+          onUseRent={(rent, lo, hi) => {
+            set({...p, rentAmount: rent, rentEstimate: rent, rentEstLow: lo, rentEstHigh: hi});
+            setCompsOpen(false);
+          }}
+          onClose={()=>setCompsOpen(false)} />
       )}
       {itemize === "repair" && (
         <ItemizeSheet title="Itemized Repair Costs"
@@ -6080,7 +6247,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
       {/* Summary — always right above Notes */}
-      <DealSummaryBlock p={d} m={m}/>
+      <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>
 
       {/* Deal Notes */}
       <SectionBlock title="Notes" color={C.text}>
