@@ -5819,12 +5819,20 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           flip:    "Highest annualized return on your cash for this deal.",
         };
         const cards = [
-          {id:"buyhold", label:"Buy & Hold", big:$mo(m.cashCF), bigColor:cfC(m.cashCF),
-           l1:["CoC", pct(m.cashCoC)], l2:["OOP", $(m.cashOOP)]},
-          {id:"brrrr", label:"BRRRR", big:$mo(m.brrrCF), bigColor:cfC(m.brrrCF),
-           l1:["Recovered", $(m.brrrCashOut - m.cashOOP)], l2:["Left In", $(leftIn)]},
-          {id:"flip", label:"Fix & Flip", big:$(m.flipProfit), bigColor:cfC(m.flipProfit),
-           l1:["ROI", pct(m.flipROI)], l2:["Hold", (m.holdMonths||6) + " mo"]},
+          {id:"buyhold", label:"Buy & Hold", rows:[
+            ["Total Out of Pocket", $(m.cashOOP), C.text],
+            ["Cash Flow / mo", $mo(m.cashCF), cfC(m.cashCF)],
+            ["Cap Rate", pct(m.cashCap), C.text],
+          ]},
+          {id:"brrrr", label:"BRRRR", rows:[
+            ["Total Out of Pocket", $(m.cashOOP), C.text],
+            ["Total Cash Out", $(m.brrrCashOut), C.text],
+            ["Cash Flow / mo", $mo(m.brrrCF), cfC(m.brrrCF)],
+          ]},
+          {id:"flip", label:"Fix & Flip", rows:[
+            ["Total Out of Pocket", $(m.cashOOP), C.text],
+            ["Net Profit", $(m.flipProfit), cfC(m.flipProfit)],
+          ]},
         ];
         return (
           <Card style={{padding:20, marginBottom:16}}>
@@ -5860,10 +5868,14 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
                       <span style={{fontSize:12, fontWeight:600, color:win?C.greenDark:C.textSub, fontFamily:F, letterSpacing:".02em", textTransform:"uppercase"}}>{sv.label}</span>
                       {win && <Badge label="Recommended" bg={C.green} c="#fff"/>}
                     </div>
-                    <div style={{fontSize:22, fontWeight:700, color:sv.bigColor, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em"}}>{sv.big}</div>
-                    <div style={{display:"flex", gap:14, marginTop:6, fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                      <span>{sv.l1[0]} <b style={{color:C.text, fontWeight:600}}>{sv.l1[1]}</b></span>
-                      <span>{sv.l2[0]} <b style={{color:C.text, fontWeight:600}}>{sv.l2[1]}</b></span>
+                    <div style={{display:"flex", flexDirection:"column", gap:6, marginTop:2}}>
+                      {sv.rows.map(([l, v, color]) => (
+                        <div key={l} style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
+                          <span style={{fontSize:12, color:C.textSub, fontFamily:F}}>{l}</span>
+                          <span style={{fontSize:14, fontWeight:700, color, fontFamily:F,
+                            fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
