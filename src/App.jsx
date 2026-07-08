@@ -1124,7 +1124,52 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
   const [items, setItems] = useState(() =>
     Array.isArray(initialItems) && initialItems.length ? initialItems.map(x => ({...x})) : prefill());
   const [editingId, setEditingId] = useState(null);
-  const dragFrom = useRef(null);
+  // Pointer-based drag & drop: works for touch and mouse alike. The grip
+  // starts a drag; as the pointer crosses other rows' midpoints the list
+  // reorders live under the finger.
+  const [dragId, setDragId] = useState(null);
+  const dragIdRef = useRef(null);
+
+  const dragMove = e => {
+    const id = dragIdRef.current;
+    if (!id) return;
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const rowEl = els.find(el => el.dataset && el.dataset.dhItem && el.dataset.dhItem !== id);
+    if (!rowEl) return;
+    const overId = rowEl.dataset.dhItem;
+    const rect = rowEl.getBoundingClientRect();
+    const after = e.clientY > rect.top + rect.height / 2;
+    setItems(list => {
+      const from = list.findIndex(x => x.id === id);
+      let to = list.findIndex(x => x.id === overId);
+      if (from < 0 || to < 0) return list;
+      if (after) to += 1;
+      if (to > from) to -= 1;            // account for removal shift
+      if (to === from) return list;
+      const next = [...list];
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
+  };
+  const dragEnd = () => {
+    dragIdRef.current = null;
+    setDragId(null);
+    document.body.style.userSelect = "";
+    window.removeEventListener("pointermove", dragMove);
+    window.removeEventListener("pointerup", dragEnd);
+    window.removeEventListener("pointercancel", dragEnd);
+  };
+  const dragStart = (e, id) => {
+    e.preventDefault();
+    dragIdRef.current = id;
+    setDragId(id);
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", dragMove);
+    window.addEventListener("pointerup", dragEnd);
+    window.addEventListener("pointercancel", dragEnd);
+  };
+  useEffect(() => () => dragEnd(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
@@ -1135,31 +1180,12 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
   const totals = itemTotals(items, price, loanAmt);
   const update = (id, patch) => setItems(list => list.map(x => x.id === id ? {...x, ...patch} : x));
   const remove = id => { setItems(list => list.filter(x => x.id !== id)); if (editingId === id) setEditingId(null); };
-  const move = (id, dir) => setItems(list => {
-    const i = list.findIndex(x => x.id === id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= list.length) return list;
-    const next = [...list];
-    [next[i], next[j]] = [next[j], next[i]];
-    return next;
-  });
   const addItem = () => {
     const it = {id:"c"+Date.now(), name:"New Item", type:"amount", value:0, rollIn:false};
     setItems(list => [...list, it]);
     setEditingId(it.id);
   };
-  const onDrop = id => {
-    const from = dragFrom.current; dragFrom.current = null;
-    if (!from || from === id) return;
-    setItems(list => {
-      const next = [...list];
-      const fi = next.findIndex(x => x.id === from);
-      const ti = next.findIndex(x => x.id === id);
-      const [row] = next.splice(fi, 1);
-      next.splice(ti, 0, row);
-      return next;
-    });
-  };
+
 
   const outerStyle = mobile
     ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:600,
@@ -1190,17 +1216,26 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
             const v = itemValue(it, price, loanAmt);
             const editing = editingId === it.id;
             return (
-              <div key={it.id}
-                draggable={!editing}
-                onDragStart={()=>{ dragFrom.current = it.id; }}
-                onDragOver={e=>e.preventDefault()}
-                onDrop={()=>onDrop(it.id)}
-                style={{border:"1px solid "+(editing ? C.greenBorder : C.border), borderRadius:C.r3,
-                  background: editing ? C.greenSubtle : C.card, overflow:"hidden"}}>
+              <div key={it.id} data-dh-item={it.id}
+                style={{border:"1.5px solid "+(dragId === it.id ? C.green : editing ? C.greenBorder : C.border),
+                  borderRadius:C.r3,
+                  background: dragId === it.id ? "#fff" : editing ? C.greenSubtle : C.card,
+                  overflow:"hidden",
+                  boxShadow: dragId === it.id ? C.sh4 : "none",
+                  transform: dragId === it.id ? "scale(1.015)" : "none",
+                  opacity: dragId && dragId !== it.id ? .75 : 1,
+                  position: dragId === it.id ? "relative" : "static",
+                  zIndex: dragId === it.id ? 2 : "auto",
+                  transition:"box-shadow .15s, transform .15s, border-color .15s, opacity .15s"}}>
                 <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px"}}>
-                  <span title="Drag to re-arrange"
-                    style={{color:C.textMuted, cursor:"grab", flexShrink:0, display:"inline-flex"}}>
-                    <I.menu size={15}/>
+                  <span title="Drag to re-arrange" aria-label="Drag to re-arrange"
+                    onPointerDown={editing ? undefined : e => dragStart(e, it.id)}
+                    style={{color: dragId === it.id ? C.greenDark : C.textMuted,
+                      cursor: dragId === it.id ? "grabbing" : "grab", flexShrink:0,
+                      display:"inline-flex", alignItems:"center", justifyContent:"center",
+                      width:32, height:32, margin:"-6px -4px -6px -8px", borderRadius:C.r1,
+                      touchAction:"none"}}>
+                    <I.menu size={16}/>
                   </span>
                   <div style={{minWidth:0, flex:1}}>
                     <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:F,
@@ -1260,9 +1295,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
                         </div>
                       </div>
                     </div>
-                    <div style={{display:"flex", gap:8, marginTop:12}}>
-                      <button onClick={()=>move(it.id, -1)} {...btnStyle("secondary","sm")}>↑ Move Up</button>
-                      <button onClick={()=>move(it.id, 1)} {...btnStyle("secondary","sm")}>↓ Move Down</button>
+                    <div style={{display:"flex", marginTop:12}}>
                       <button onClick={()=>setEditingId(null)} {...btnStyle("primary","sm", {marginLeft:"auto"})}>Done</button>
                     </div>
                   </div>
@@ -1365,7 +1398,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
           const active = s===id;
           return (
-            <button key={id} onClick={()=>u("chosenStrategy",id)}
+            <button key={id} onClick={()=>{ u("chosenStrategy",id); if (id==="finance") setXtra(null); }}
               style={{
                 flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
                 background: active ? accent : "transparent",
@@ -1427,9 +1460,11 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <button onClick={()=>setItemize("repair")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Repairs" : "Itemize"}
           </button>
-          <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
-            note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
-            mobile={mobile} />
+          {s==="cash" && (
+            <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
+              note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
+              mobile={mobile} />
+          )}
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
@@ -1549,7 +1584,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
 
-        {/* After Repair Value */}
+        {/* After Repair Value — cash tab only (drives BRRRR / flip exits) */}
+        {s==="cash" && (
         <SectionBlock title="After Repair Value (ARV)" color={C.blue}>
           <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
@@ -1573,6 +1609,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {p.homeValueMedian > 0 && <DataRow label="Current Value (Est.)" value={$(p.homeValueMedian)} />}
           {p.taxValue > 0 && <DataRow label="Tax Value" value={$(p.taxValue)} />}
         </SectionBlock>
+        )}
 
         {/* Summary */}
         <SectionBlock title="Summary" color={C.text}>
@@ -1586,7 +1623,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
       </div>
 
-      {/* Exit strategies — BRRRR / Fix & Flip toggle, driven by the ARV above */}
+      {/* Exit strategies — BRRRR / Fix & Flip toggle, cash tab only */}
+      {s==="cash" && (
       <div style={{marginTop:14}}>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
@@ -1644,6 +1682,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           </SectionBlock>
         )}
       </div>
+      )}
 
       {/* Itemize sheets */}
       {itemize === "closing" && (
@@ -5957,7 +5996,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* Save */}
       <button onClick={saveDeal}
         {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-        <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR" : exitStrategy === "flip" ? "Fix & Flip" : "Buy & Hold"}
+        <I.star size={15}/> Save as {(d.chosenStrategy||"finance") === "finance" ? "Rental"
+          : exitStrategy === "brrrr" ? "BRRRR" : exitStrategy === "flip" ? "Fix & Flip" : "Buy & Hold"}
       </button>
 
       {/* Saved Deals */}
