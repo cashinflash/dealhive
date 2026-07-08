@@ -4621,6 +4621,13 @@ const dealToProForma = (deal) => {
     // Keep the source deal's id so re-saving from the analyzer updates the
     // existing watchlist entry instead of duplicating it.
     ...(deal.id ? {id: deal.id} : {}),
+    // A saved deal reopens exactly as it was saved: same purchase method
+    // (Cash/Finance tab) and same exit scenario. Fresh feed deals without a
+    // choice keep the newDeal default.
+    ...(deal.chosenStrategy ? {chosenStrategy: deal.chosenStrategy}
+      : deal.financing === "cash" ? {chosenStrategy: "cash"}
+      : deal.financing === "finance" ? {chosenStrategy: "finance"} : {}),
+    savedScenario: deal.scenario || null,
     address:      addressForAnalyzer,
     city:         deal.city,
     state:        deal.state,
@@ -6013,7 +6020,11 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const [fromDeals]     = useState(() => !!initial);
   // Which exit-strategy section is open (BRRRR / Fix & Flip / neither). Lifted
   // from the Calculator so the Save button and save sheet can follow it.
-  const [exitStrategy, setExitStrategy] = useState(null);
+  // Saved deals open on their saved scenario; the auto-follow below stays
+  // hands-off when the user made an explicit choice at save time.
+  const [exitStrategy, setExitStrategy] = useState(() =>
+    initial && (initial.savedScenario === "brrrr" || initial.savedScenario === "flip")
+      ? initial.savedScenario : null);
   const u = (f,v) => setD(prev => ({...prev, [f]:v}));
 
   useEffect(() => {
@@ -6076,8 +6087,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     return win === "base" ? null : win;
   })();
 
-  // Follow the recommendation until the user taps the toggle themselves.
-  const exitTouched = useRef(false);
+  // Follow the recommendation until the user taps the toggle themselves —
+  // or, for reopened saved deals, not at all: the saved scenario wins.
+  const exitTouched = useRef(!!(initial && initial.savedScenario));
   useEffect(() => {
     if (exitTouched.current) return;
     setExitStrategy(prev => prev === recWinner ? prev : recWinner);
