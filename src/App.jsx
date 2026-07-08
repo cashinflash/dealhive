@@ -1617,7 +1617,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
             <DataRow label="Est. Mortgage / mo" value={$mo(m.brrrMtg)} />
             <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-            <DataRow label="Cash Recovered" value={$(m.brrrCashOut - m.cashOOP)} color={cfC(m.brrrCashOut - m.cashOOP)} />
+            <DataRow label="Cash Received at Refi" value={$(m.brrrCashOut)} color={cfC(m.brrrCashOut)} />
           </SectionBlock>
         )}
 
