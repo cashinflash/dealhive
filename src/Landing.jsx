@@ -178,6 +178,15 @@ const HEX_SETS = {
     { size: 104, color: C.orangeBorder, opacity: 0.38, outline: true, float: 1, style: { bottom: "8%", right: "4%" } },
     { size: 48,  color: C.orange, opacity: 0.14, float: 3, style: { top: "30%", right: "12%" } },
   ],
+  // Richer spread for sections whose big white cards swallow the subtle sets.
+  how: [
+    { size: 260, color: C.orangeLight,  opacity: 0.55, blur: 34, float: 1, style: { top: -80, left: -70 } },
+    { size: 120, color: C.orangeBorder, opacity: 0.4,  outline: true, float: 2, style: { top: "6%", right: "8%" } },
+    { size: 56,  color: C.orange,       opacity: 0.16, float: 3, style: { top: "38%", left: "31%" } },
+    { size: 90,  color: C.orangeBorder, opacity: 0.35, outline: true, float: 1, style: { bottom: "10%", left: "4%" } },
+    { size: 220, color: C.orangeLight,  opacity: 0.5,  blur: 30, float: 2, style: { bottom: -70, right: -50 } },
+    { size: 48,  color: C.orange,       opacity: 0.15, float: 1, style: { bottom: "30%", right: "30%" } },
+  ],
 };
 
 function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
@@ -245,7 +254,7 @@ function PageHero({ eyebrow, title, subtitle }) {
 // `photo` is the gradient fallback (shown if `imgUrl` fails or while loading);
 // `imgUrl` is the real photo (Unsplash, hosted, whatever). Swap imgUrls in
 // HeroVisual below to change which photos appear in the hero.
-function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, beds, baths, sqft, badge }) {
+function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, beds, baths, sqft, badge, stats }) {
   const [imgFailed, setImgFailed] = useState(false);
   return (
     <div style={{
@@ -294,9 +303,13 @@ function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, 
           marginTop: 12, paddingTop: 12, borderTop: "1px solid " + C.borderSoft,
           display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8,
         }}>
-          <Stat label="Rent" value={"$" + rent} />
-          <Stat label="Cap rate" value={capRate + "%"} accent />
-          <Stat label="Cash flow" value={"$" + cashflow + "/mo"} accent />
+          {(stats || [
+            { label: "Rent", value: "$" + rent },
+            { label: "Cap rate", value: capRate + "%", accent: true },
+            { label: "Cash flow", value: "$" + cashflow + "/mo", accent: true },
+          ]).map(st => (
+            <Stat key={st.label} label={st.label} value={st.value} accent={st.accent} />
+          ))}
         </div>
       </div>
     </div>
@@ -341,19 +354,29 @@ function HeroVisual() {
             photo={["#dbeafe", "#bfdbfe"]}
             imgUrl="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80"
             address="Detroit, MI 48227"
-            price={62000} rent={1350} capRate={16.8} cashflow={744}
+            price={62000}
             beds={3} baths={2} sqft={1380}
             badge="BRRRR"
+            stats={[
+              { label: "Rent", value: "$1,350" },
+              { label: "Cash-Out Refi", value: "$99,200", accent: true },
+              { label: "Cash flow", value: "$744/mo", accent: true },
+            ]}
           />
         </div>
         <div className="dh-hv-c" style={{ transform: "translateX(-30px)" }}>
           <MockDealCard
             photo={["#e0e7ff", "#c7d2fe"]}
-            imgUrl="https://images.unsplash.com/photo-1570129477492-45c003edd2be?auto=format&fit=crop&w=720&h=400&q=80"
+            imgUrl="https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80"
             address="Memphis, TN 38106"
-            price={75000} rent={1200} capRate={12.4} cashflow={485}
+            price={75000}
             beds={3} baths={1} sqft={1180}
             badge="Fix & Flip"
+            stats={[
+              { label: "Purchase", value: "$75,000" },
+              { label: "Repairs", value: "$22,000" },
+              { label: "Total Profit", value: "$34,500", accent: true },
+            ]}
           />
         </div>
       </div>
@@ -430,19 +453,51 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
       </div>
 
       {mobileOpen && (
-        <div style={{
-          borderTop: "1px solid " + C.border, background: "#fff",
-          padding: "12px 24px 20px", display: "flex", flexDirection: "column", gap: 4,
-        }}>
-          {NAV_LINKS.map(([label, path]) => (
-            <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
-              style={{
-                padding: "12px 4px", fontFamily: F, fontSize: 15,
-                fontWeight: 500, color: C.text, textDecoration: "none",
-              }}>
-              {label}
-            </a>
-          ))}
+        <div onClick={e => e.target === e.currentTarget && setMobileOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 90,
+            background: "rgba(15,23,42,.45)",
+            backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+            animation: "dhMenuFade .18s ease",
+          }}>
+          <div style={{
+            background: "#fff", borderRadius: "0 0 22px 22px",
+            boxShadow: "0 30px 60px -20px rgba(15,23,42,.35)",
+            padding: "14px 20px 24px",
+            animation: "dhMenuSlide .22s cubic-bezier(.2,.9,.3,1)",
+          }}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+              <img src="/logo.png" alt="DealHive" style={{ height: 32, width: "auto" }}/>
+              <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
+                style={{width:38, height:38, borderRadius:12, background:C.bgSoft,
+                  border:"1px solid "+C.border, cursor:"pointer", color:C.text,
+                  display:"flex", alignItems:"center", justifyContent:"center"}}>
+                {I.close}
+              </button>
+            </div>
+            {NAV_LINKS.map(([label, path], i) => (
+              <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "15px 4px", fontFamily: F, fontSize: 17, fontWeight: 600,
+                  color: C.text, textDecoration: "none", letterSpacing: "-0.01em",
+                  borderBottom: i < NAV_LINKS.length - 1 ? "1px solid " + C.borderSoft : "none",
+                }}>
+                {label}
+                <span style={{color: C.orange, display:"inline-flex"}}>{I.arrow}</span>
+              </a>
+            ))}
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:18}}>
+              <Button onClick={() => { setMobileOpen(false); onSignIn(); }} variant="secondary" size="lg"
+                style={{justifyContent:"center"}}>Log in</Button>
+              <Button onClick={() => { setMobileOpen(false); onSignUp(); }} size="lg"
+                style={{justifyContent:"center"}}>Get started</Button>
+            </div>
+          </div>
+          <style>{`
+            @keyframes dhMenuFade { from { opacity: 0 } to { opacity: 1 } }
+            @keyframes dhMenuSlide { from { transform: translateY(-14px); opacity: .4 } to { transform: translateY(0); opacity: 1 } }
+          `}</style>
         </div>
       )}
 
@@ -517,7 +572,7 @@ function Hero({ onSignUp }) {
             fontSize: "clamp(16px, 1.7vw, 19px)", color: C.textSub, fontFamily: F,
             lineHeight: 1.55, margin: "0 0 32px", maxWidth: 540,
           }}>
-            Enter an address and DealHive pulls the property details, runs the Buy & Hold, BRRRR, and Fix & Flip numbers, and tells you which play wins. Cash or financed, new purchase or a property you already own.
+            Enter an address. DealHive pulls the data, runs Buy & Hold, BRRRR, and Fix & Flip, and tells you which one wins.
           </p>
           <div className="dh-hero-ctas" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
             <Button onClick={onSignUp} size="lg">
@@ -582,18 +637,36 @@ function TrustBar() {
         }}>
           Built for real estate investors, coast to coast
         </div>
-        <div style={{
-          display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "12px 32px",
+        <div className="dh-trust-grid" style={{
+          display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12,
+          maxWidth: 980, margin: "0 auto",
         }}>
           {chips.map(c => (
             <div key={c.label} style={{
-              display: "flex", alignItems: "center", gap: 8,
-              fontSize: 14, fontWeight: 600, color: C.navy, fontFamily: F,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              padding: "13px 14px", background: "#fff",
+              border: "1px solid " + C.border, borderRadius: 12,
+              boxShadow: "0 1px 2px rgba(15,23,42,.05)",
+              fontSize: 13.5, fontWeight: 600, color: C.navy, fontFamily: F,
+              textAlign: "center",
             }}>
-              <span style={{ color: C.orange }}>{c.icon}</span> {c.label}
+              <span style={{
+                width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                background: C.orangeSubtle, border: "1px solid " + C.orangeBorder, color: C.orangeDark,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+              }}>{c.icon}</span>
+              <span>{c.label}</span>
             </div>
           ))}
         </div>
+        <style>{`
+          @media (max-width: 860px) {
+            .dh-trust-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          }
+          @media (max-width: 420px) {
+            .dh-trust-grid { grid-template-columns: 1fr !important; }
+          }
+        `}</style>
       </div>
     </section>
   );
@@ -619,7 +692,7 @@ function HowItWorks() {
     },
   ];
   return (
-    <Section id="how" hexes={HEX_SETS.a}>
+    <Section id="how" hexes={HEX_SETS.how}>
       <SectionHeader
         eyebrow="How it works"
         title="From address to answer in three steps."
@@ -770,7 +843,7 @@ function Pricing({ onSignUp }) {
     period: "forever",
     blurb: "The full analyzer with the essentials. Great for kicking the tires.",
     features: [
-      "Full deal analyzer",
+      "Full deal analyzer with live data auto-fill",
       "Buy & Hold, BRRRR, and Fix & Flip models",
       "Save up to 5 analyses",
       "Deal feed preview",
@@ -783,11 +856,11 @@ function Pricing({ onSignUp }) {
     period: "per month",
     blurb: "Analysis without limits, with live data doing the typing.",
     features: [
-      "Unlimited analyses and saved deals",
-      "Live property data auto-fill",
-      "Home value and rent estimates",
-      "Rental and sale comps for any address",
+      "Everything in Free",
+      "Unlimited saved analyses",
       "Full deal feed access",
+      "Rental and sale comps for any address",
+      "Priority data limits",
       "Cancel anytime",
     ],
     cta: "Start free, upgrade anytime",
@@ -883,7 +956,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Can I try it before paying?",
-    a: "Yes. The Free plan includes the full analyzer and up to 5 saved analyses, with no credit card required. When you want unlimited analyses, live data auto-fill, comps, and the full deal feed, Pro is $29.99/mo, cancel anytime.",
+    a: "Yes. The Free plan includes the full analyzer with live data auto-fill and up to 5 saved analyses, no credit card required. When you want unlimited saved analyses and the full deal feed, Pro is $29.99/mo, cancel anytime.",
   },
   {
     q: "Do you guarantee an analysis is right?",
@@ -1000,20 +1073,21 @@ function Footer({ navigate, onSignIn, onSignUp }) {
               The investment property analyzer that does the research for you. Any address, any strategy, in seconds.
             </p>
           </div>
-          <FooterCol title="Product">
+          <FooterCol title="Platform">
             {link("Features", "/features")}
             {link("Pricing", "/pricing")}
             {link("FAQ", "/faq")}
-            {link("About", "/about")}
           </FooterCol>
-          <FooterCol title="Account">
+          <FooterCol title="Use Cases">
+            {link("Rental Property Analysis", "/use-cases/rental-property-analysis")}
+            {link("BRRRR Analysis", "/use-cases/brrrr-analysis")}
+            {link("Fix & Flip Analysis", "/use-cases/fix-and-flip-analysis")}
+          </FooterCol>
+          <FooterCol title="Company">
+            {link("About", "/about")}
+            {link("Contact", "/contact")}
             <button onClick={onSignIn} style={footerBtnStyle}>Sign in</button>
             <button onClick={onSignUp} style={footerBtnStyle}>Get started</button>
-          </FooterCol>
-          <FooterCol title="Legal & Support">
-            {link("Privacy Policy", "/privacy")}
-            {link("Terms of Use", "/terms")}
-            {link("Contact", "/contact")}
           </FooterCol>
         </div>
         <div style={{
@@ -1023,8 +1097,15 @@ function Footer({ navigate, onSignIn, onSignUp }) {
           <div style={{ fontSize: 12, color: C.textMuted, fontFamily: F }}>
             © {year} DealHive. All rights reserved.
           </div>
-          <div style={{ fontSize: 12, color: C.textMuted, fontFamily: F }}>
-            Made for investors who'd rather close deals than scroll Zillow.
+          <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
+            <a href="/privacy" onClick={e => { e.preventDefault(); navigate("/privacy"); }}
+              style={{ fontSize: 12, color: C.textMuted, fontFamily: F, textDecoration: "none" }}>
+              Privacy Policy
+            </a>
+            <a href="/terms" onClick={e => { e.preventDefault(); navigate("/terms"); }}
+              style={{ fontSize: 12, color: C.textMuted, fontFamily: F, textDecoration: "none" }}>
+              Terms of Use
+            </a>
           </div>
         </div>
       </div>
@@ -1404,6 +1485,96 @@ function AboutPage({ onSignUp }) {
   );
 }
 
+// -- Use-case pages (linked from the footer only) --------------------------------
+const USE_CASES = {
+  "/use-cases/rental-property-analysis": {
+    mock: "rental", eyebrow: "Rental Property Analysis",
+    title: "Underwrite rentals like you've done a hundred of them.",
+    sub: "Cash flow, cap rate, cash-on-cash, and operating expenses computed the moment you enter an address.",
+    intro: "A rental lives or dies on the numbers: what it really rents for, what it really costs to hold, and what's left after the mortgage. DealHive pulls the property's tax bill and market rent from live records, models your exact financing, and shows the monthly cash flow before you've finished your coffee.",
+    rows: [
+      ["Live rent estimates", "Market rent with a range, plus nearby active rentals to sanity-check it against, right inside the analyzer."],
+      ["State-accurate taxes", "Property tax auto-fills from real records or your state's effective rate, not a national average."],
+      ["Real financing", "Down payment or full loan modeling, interest-only or amortizing, and vacancy baked into effective rent."],
+      ["The verdict", "Net cash flow, cap rate, and cash-on-cash side by side, with a clear recommendation against BRRRR and flip exits."],
+    ],
+  },
+  "/use-cases/brrrr-analysis": {
+    mock: "brrrr", eyebrow: "BRRRR Analysis",
+    title: "Model the whole BRRRR before you buy the drill.",
+    sub: "Buy, rehab, rent, refinance: sized against your ARV with the refi math investors actually use.",
+    intro: "The BRRRR question is simple: how much of my money comes back at the refinance, and does the property still cash flow on the new loan? DealHive sizes the cash-out at your ARV, nets it against any loans it has to pay off, and shows the cash that actually lands in your pocket.",
+    rows: [
+      ["Cash-out sized from ARV", "The refinance pre-fills at 80% of your after-repair value, with your own refi rate and term."],
+      ["Loan payoffs handled", "Financed purchases net the refi against existing loans, so Net Cash at Refi is the real number."],
+      ["Post-refi cash flow", "Rent minus expenses minus the new payment, so you know the hold still works after the cash-out."],
+      ["Cash in Pocket", "The headline BRRRR number: what the refinance returns beyond your total investment."],
+    ],
+  },
+  "/use-cases/fix-and-flip-analysis": {
+    mock: "flip", eyebrow: "Fix & Flip Analysis",
+    title: "Know your flip profit before the first demo day.",
+    sub: "ARV, rehab, holding costs, loan payoff, and ROI on your actual cash, not the purchase price.",
+    intro: "Flips fail in the carrying costs and the payoff line, not the paint budget. DealHive accrues holding costs over your real timeline, includes the debt service when you're financed, pays off the loan at sale, and measures ROI against the cash you actually put in — the number that makes leveraged flips make sense.",
+    rows: [
+      ["Hold period that costs money", "Set the months to rehab and sell; taxes, insurance, and loan payments accrue for every one of them."],
+      ["Itemized rehab budgets", "Break repairs into line items, roll costs into the loan, drag to reorder, and the totals follow."],
+      ["Hard-money friendly", "Interest-only loans, rehab financing, and points rolled into the balance, modeled like the real thing."],
+      ["ROI on cash", "Profit measured against your cash in the deal. Leverage shows up honestly, both directions."],
+    ],
+  },
+};
+
+function UseCasePage({ path, onSignUp }) {
+  const uc = USE_CASES[path];
+  if (!uc) return null;
+  return (
+    <>
+      <PageHero eyebrow={uc.eyebrow} title={uc.title} subtitle={uc.sub}/>
+      <Section style={{ padding: "16px 24px 72px" }}>
+        <div style={{
+          display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 56, alignItems: "center",
+        }} className="dh-strat-grid">
+          <div>
+            <p style={{ fontSize: 16, color: C.textSub, fontFamily: F, lineHeight: 1.7, marginTop: 0 }}>
+              {uc.intro}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 22 }}>
+              {uc.rows.map(([t, b]) => (
+                <div key={t} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <span style={{
+                    width: 22, height: 22, borderRadius: 9999, background: C.orangeSubtle,
+                    border: "1px solid " + C.orangeBorder, color: C.orangeDark, flexShrink: 0,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center", marginTop: 2,
+                  }}>
+                    <Icon d={<path d="M5 12l5 5L20 7"/>} size={12} stroke={2.6}/>
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: F, letterSpacing: "-0.01em" }}>{t}</div>
+                    <div style={{ fontSize: 13.5, color: C.textSub, fontFamily: F, lineHeight: 1.55, marginTop: 2 }}>{b}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ position: "relative" }}>
+            <div aria-hidden="true" style={{
+              position: "absolute", inset: -30,
+              background: `radial-gradient(closest-side, ${C.orangeSubtle}, transparent 72%)`,
+              filter: "blur(18px)", zIndex: 0,
+            }}/>
+            <div style={{ position: "relative", zIndex: 1, transform: "perspective(1200px) rotateY(-5deg)" }}>
+              <StrategyMock id={uc.mock}/>
+            </div>
+          </div>
+        </div>
+      </Section>
+      <NumbersStrip/>
+      <FinalCTA onSignUp={onSignUp} title="Run your next one through DealHive."/>
+    </>
+  );
+}
+
 function ContactPage() {
   return (
     <>
@@ -1689,6 +1860,9 @@ const PAGE_TITLES = {
   "/faq":       "DealHive FAQ",
   "/about":     "About DealHive",
   "/contact":   "Contact DealHive",
+  "/use-cases/rental-property-analysis": "Rental Property Analysis | DealHive",
+  "/use-cases/brrrr-analysis":           "BRRRR Analysis | DealHive",
+  "/use-cases/fix-and-flip-analysis":    "Fix & Flip Analysis | DealHive",
   "/privacy":   "DealHive Privacy Policy",
   "/terms":     "DealHive Terms of Use",
 };
@@ -1705,6 +1879,7 @@ export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
     page === "/faq"      ? <FAQPage onSignUp={onSignUp}/> :
     page === "/about"    ? <AboutPage onSignUp={onSignUp}/> :
     page === "/contact"  ? <ContactPage/> :
+    page.startsWith("/use-cases/") && USE_CASES[page] ? <UseCasePage path={page} onSignUp={onSignUp}/> :
     page === "/privacy"  ? <PrivacyPage/> :
     page === "/terms"    ? <TermsPage/> :
     <HomePage onSignUp={onSignUp}/>;
