@@ -334,7 +334,7 @@ function HeroVisual() {
           address="Cleveland, OH 44109"
           price={84500} rent={1450} capRate={14.2} cashflow={612}
           beds={3} baths={1} sqft={1240}
-          badge="New today"
+          badge="Buy & Hold"
         />
         <div className="dh-hv-b" style={{ transform: "translateX(40px)" }}>
           <MockDealCard
@@ -343,7 +343,7 @@ function HeroVisual() {
             address="Detroit, MI 48227"
             price={62000} rent={1350} capRate={16.8} cashflow={744}
             beds={3} baths={2} sqft={1380}
-            badge="Off-market"
+            badge="BRRRR"
           />
         </div>
         <div className="dh-hv-c" style={{ transform: "translateX(-30px)" }}>
@@ -353,7 +353,7 @@ function HeroVisual() {
             address="Memphis, TN 38106"
             price={75000} rent={1200} capRate={12.4} cashflow={485}
             beds={3} baths={1} sqft={1180}
-            badge="Wholesale"
+            badge="Fix & Flip"
           />
         </div>
       </div>
@@ -497,27 +497,27 @@ function Hero({ onSignUp }) {
       }} className="dh-hero-grid">
         <div>
           <div style={{ marginBottom: 24 }}>
-            <Eyebrow>Fresh deals every day, nationwide</Eyebrow>
+            <Eyebrow>Any address, any strategy, in seconds</Eyebrow>
           </div>
           <h1 style={{
             fontSize: "clamp(36px, 5.6vw, 64px)", fontWeight: 700, fontFamily: F,
             letterSpacing: "-0.035em", lineHeight: 1.02, margin: "0 0 22px",
             color: C.text,
           }}>
-            Off-market deals.<br/>
+            Analyze any investment{" "}
             <span style={{
               background: `linear-gradient(135deg, ${C.orange} 0%, ${C.orangeDark} 100%)`,
               WebkitBackgroundClip: "text", backgroundClip: "text",
               WebkitTextFillColor: "transparent", color: "transparent",
             }}>
-              Pre-analyzed. <span style={{ whiteSpace: "nowrap" }}>Every day.</span>
+              <span style={{ whiteSpace: "nowrap" }}>in seconds.</span>
             </span>
           </h1>
           <p style={{
             fontSize: "clamp(16px, 1.7vw, 19px)", color: C.textSub, fontFamily: F,
             lineHeight: 1.55, margin: "0 0 32px", maxWidth: 540,
           }}>
-            DealHive scans hundreds of wholesale and off-market listings across the country, every single day. The deals that actually pencil land in your feed, already analyzed.
+            Enter an address and DealHive pulls the property details, runs the Buy & Hold, BRRRR, and Fix & Flip numbers, and tells you which play wins. Cash or financed, new purchase or a property you already own.
           </p>
           <div className="dh-hero-ctas" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
             <Button onClick={onSignUp} size="lg">
@@ -561,10 +561,10 @@ function Hero({ onSignUp }) {
 // -- Trust bar (markets covered) ----------------------------------------------
 function TrustBar() {
   const chips = [
-    { icon: I.bolt,   label: "Wholesale assignments" },
-    { icon: I.home,   label: "Off-market properties" },
-    { icon: I.search, label: "Investor-friendly listings" },
-    { icon: I.chart,  label: "Analyzed before you see them" },
+    { icon: I.home,   label: "Buy & Hold analysis" },
+    { icon: I.brrrr,  label: "BRRRR & refi modeling" },
+    { icon: I.chart,  label: "Fix & Flip profits" },
+    { icon: I.bolt,   label: "Live property data built in" },
   ];
   return (
     <section style={{
@@ -600,26 +600,26 @@ function HowItWorks() {
   const steps = [
     {
       n: "01",
-      title: "We scan the market",
-      body: "Our pipeline pulls fresh wholesale assignments, off-market properties, and investor-friendly listings from markets across the country. Hundreds of properties, filtered down to the ones that actually pencil.",
+      title: "Enter any address",
+      body: "Beds, baths, square footage, taxes, home value, and market rent fill in automatically from live property records. No spreadsheet setup, no manual research.",
     },
     {
       n: "02",
-      title: "Every deal comes pre-analyzed",
-      body: "Cap rate, cash flow, BRRRR potential, fix-and-flip numbers, all calculated automatically against the pro forma. No spreadsheet required.",
+      title: "Pick your strategy",
+      body: "Cash or financed. Buy & Hold, BRRRR, or Fix & Flip. Real financing options too: multiple loans, interest-only, rehab loans, even properties you already own.",
     },
     {
       n: "03",
-      title: "Save, analyze, act",
-      body: "Tap to save deals you like. Open them in the analyzer to tweak numbers, run comps, and underwrite. All from your phone, all in one place.",
+      title: "Get the verdict",
+      body: "Cash flow, cap rate, refi proceeds, flip profit, and a clear recommendation on which exit wins. Save the analysis and it's waiting on your dashboard.",
     },
   ];
   return (
     <Section id="how" hexes={HEX_SETS.a}>
       <SectionHeader
         eyebrow="How it works"
-        title="The deal-finding loop, automated."
-        subtitle="DealHive does the boring scrolling for you. Open the app to a feed of deals that already make sense."
+        title="From address to answer in three steps."
+        subtitle="DealHive does the research and the math. You make the decision."
       />
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24,
@@ -653,18 +653,18 @@ function HowItWorks() {
 
 // -- Features grid ------------------------------------------------------------
 const FEATURES = [
-  { icon: I.bolt,   title: "Off-market deal feed",
-    body: "Wholesale assignments, off-market listings, and cash-flow rentals in one feed that refreshes every day, from markets across the country." },
-  { icon: I.chart,  title: "Built-in deal analyzer",
-    body: "Tap any deal to open it in the analyzer pre-filled with the numbers. Adjust your purchase price, rent, or repairs and it recalculates instantly." },
-  { icon: I.brrrr,  title: "Buy-and-hold, BRRRR, or flip",
-    body: "Every deal scored against three strategies. See which model wins before you make an offer." },
-  { icon: I.search, title: "Comps that actually match",
-    body: "Pull rental and sale comps for any address. See what the market really pays, not what Zillow guesses." },
-  { icon: I.star,   title: "Saved deals & alerts",
-    body: "Watchlist your favorites, get notified when new deals hit your target markets. Never miss the one that prices right." },
-  { icon: I.device, title: "Mobile-first",
-    body: "Designed for driving for dollars and quick decisions. Underwrite on your phone in the parking lot with full power, no compromise." },
+  { icon: I.bolt,   title: "Analysis in seconds",
+    body: "Type an address and the property details, taxes, and market rent fill themselves in. Change any number and everything recalculates instantly." },
+  { icon: I.brrrr,  title: "Three strategies, one verdict",
+    body: "Every property scored as a Buy & Hold, a BRRRR, and a Fix & Flip, with a clear recommendation on which exit wins and why." },
+  { icon: I.search, title: "Live property data built in",
+    body: "Records on 140M+ U.S. properties: beds, baths, square footage, tax bills, home values, and rent estimates. No API keys, no tab-hopping." },
+  { icon: I.chart,  title: "Comps that actually match",
+    body: "Rental and sale comps for any address, right inside the analyzer. See what the market really pays, not what Zillow guesses." },
+  { icon: I.home,   title: "Financing modeled like real life",
+    body: "Multiple loans, interest-only, rehab financing, itemized closing costs rolled into the loan, and equity analysis for properties you already own." },
+  { icon: I.star,   title: "A deal feed, included",
+    body: "Want inspiration? A feed of investor-friendly and off-market listings is one tap away, each one pre-scored by the same engine." },
 ];
 
 function Features() {
@@ -672,8 +672,8 @@ function Features() {
     <Section id="features" style={{ background: C.bgSoft }} hexes={HEX_SETS.b}>
       <SectionHeader
         eyebrow="Features"
-        title="Everything you need to find your next deal."
-        subtitle="Not a CRM. Not a course. A deal-flow tool built by investors for investors."
+        title="Everything you need to underwrite with confidence."
+        subtitle="Not a CRM. Not a course. An analysis tool built by investors for investors."
       />
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
@@ -720,10 +720,10 @@ function Features() {
 // -- Big "by the numbers" strip ----------------------------------------------
 function NumbersStrip() {
   const stats = [
-    { v: "900+", l: "Properties scanned daily" },
-    { v: "30+",  l: "Markets and growing" },
-    { v: "3",    l: "Strategies scored per deal" },
-    { v: "$0",   l: "To get started" },
+    { v: "<10s",  l: "From address to analysis" },
+    { v: "3",     l: "Strategies on every run" },
+    { v: "140M+", l: "U.S. property records" },
+    { v: "$0",    l: "To get started" },
   ];
   return (
     <Section dark style={{ padding: "64px 24px" }} hexes={HEX_SETS.dark}>
@@ -761,12 +761,12 @@ function Pricing({ onSignUp }) {
     name: "Free",
     price: "$0",
     period: "forever",
-    blurb: "Browse a preview of the feed and analyze deals manually. Great for kicking the tires.",
+    blurb: "The full analyzer with the essentials. Great for kicking the tires.",
     features: [
-      "Preview of the deal feed",
-      "Built-in deal analyzer",
-      "Buy-and-hold, BRRRR, and flip models",
-      "Save up to 5 deals to your watchlist",
+      "Full deal analyzer",
+      "Buy & Hold, BRRRR, and Fix & Flip models",
+      "Save up to 5 analyses",
+      "Deal feed preview",
     ],
     cta: "Get started",
   };
@@ -774,13 +774,13 @@ function Pricing({ onSignUp }) {
     name: "Pro",
     price: "$29.99",
     period: "per month",
-    blurb: "The full picture. Every deal, every market, every day, no limits.",
+    blurb: "Analysis without limits, with live data doing the typing.",
     features: [
-      "Full deal feed with all markets and all deals",
-      "Exact addresses (not just neighborhoods)",
-      "Pre-filled analyzer on every deal",
-      "Unlimited saved deals",
-      "Rent and sale comps for any address",
+      "Unlimited analyses and saved deals",
+      "Live property data auto-fill",
+      "Home value and rent estimates",
+      "Rental and sale comps for any address",
+      "Full deal feed access",
       "Cancel anytime",
     ],
     cta: "Start free, upgrade anytime",
@@ -860,27 +860,27 @@ function Pricing({ onSignUp }) {
 const FAQ_ITEMS = [
   {
     q: "What is DealHive?",
-    a: "DealHive is a deal-finding tool for real estate investors. We scan the off-market wholesale market across the country and surface deals that pencil out, already analyzed against buy-and-hold, BRRRR, and fix-and-flip models. You browse, save the ones you like, and underwrite further in the built-in analyzer.",
+    a: "DealHive is an investment property analyzer. Enter any U.S. address and it pulls the property details, taxes, home value, and market rent, then runs the numbers as a Buy & Hold, a BRRRR, and a Fix & Flip, cash or financed, and recommends the strategy that wins. There's also a feed of investor-friendly deals when you want inspiration, each pre-scored by the same engine.",
   },
   {
-    q: "Where do the deals come from?",
-    a: "Off-market wholesale assignment lists, investor-friendly listings, and public records, aggregated daily by our pipeline. We focus on properties that already make sense at list price, not flips that depend on hot markets.",
+    q: "Where does the property data come from?",
+    a: "Public records and live listing data covering 140M+ U.S. properties in all 50 states: beds, baths, square footage, tax bills, assessed values, home value estimates, and market rents. It's built in, so there are no API keys to manage and no tab-hopping between sites.",
   },
   {
-    q: "Which markets do you cover?",
-    a: "We source from cash-flow markets across the country and add new ones constantly. The market filter in the app always shows exactly which markets are live right now, so you never have to guess.",
+    q: "Can I analyze a property I already own?",
+    a: "Yes. Flip on \"I Already Own This Property\" and DealHive works from your current loan balance and payment instead of a hypothetical purchase, shows your estimated equity, and models a cash-out refinance or sale against it.",
   },
   {
-    q: "How fresh are the deals?",
-    a: "The pipeline runs every day and each deal shows when it was sourced. Wholesale deals move fast, which is why every deal comes pre-analyzed, so you can make a call in minutes instead of hours.",
+    q: "How real is the financing math?",
+    a: "As real as your deal. Multiple loans on one property, interest-only or amortizing, financing the purchase, the rehab, or both, itemized closing costs that can roll into the loan, and hold periods that actually accrue carrying costs.",
   },
   {
     q: "Can I try it before paying?",
-    a: "Yes. The Free plan lets you preview deals, use the analyzer, and save up to 5 deals to your watchlist, with no credit card required. When you want the full feed and exact addresses, Pro is $29.99/mo, cancel anytime.",
+    a: "Yes. The Free plan includes the full analyzer and up to 5 saved analyses, with no credit card required. When you want unlimited analyses, live data auto-fill, comps, and the full deal feed, Pro is $29.99/mo, cancel anytime.",
   },
   {
-    q: "Do you guarantee these deals make money?",
-    a: "No tool can guarantee that, and we wouldn't trust one that did. DealHive does the work of finding and pre-analyzing deals so you can underwrite faster, but you're still the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
+    q: "Do you guarantee an analysis is right?",
+    a: "No tool can guarantee that, and we wouldn't trust one that did. DealHive does the research and the math so you can underwrite faster, but estimates are estimates and you're the one making the buy decision. Always verify numbers, walk the property, and run your own comps.",
   },
   {
     q: "Do I need an MLS license or realtor access?",
@@ -939,7 +939,7 @@ function FAQ({ items = FAQ_ITEMS.slice(0, 6) }) {
 }
 
 // -- Final CTA strip ----------------------------------------------------------
-function FinalCTA({ onSignUp, title = "Stop scrolling Zillow at 6am." }) {
+function FinalCTA({ onSignUp, title = "Stop guessing at the numbers." }) {
   return (
     <Section dark hexes={HEX_SETS.dark} style={{
       padding: "80px 24px",
@@ -956,7 +956,7 @@ function FinalCTA({ onSignUp, title = "Stop scrolling Zillow at 6am." }) {
           fontSize: "clamp(15px, 1.8vw, 18px)", color: "rgba(255,255,255,.7)",
           fontFamily: F, margin: "0 0 32px", lineHeight: 1.55,
         }}>
-          DealHive does the hunting for you. Open the app to deals worth your time. Get started for free with no card and no commitment.
+          Run any address through a real underwriting engine before you write the offer. Get started for free with no card and no commitment.
         </p>
         <Button onClick={onSignUp} size="lg" style={{ padding: "16px 28px", fontSize: 16 }}>
           Get started free {I.arrow}
@@ -990,7 +990,7 @@ function Footer({ navigate, onSignIn, onSignUp }) {
           <div>
             <img src="/logo.png" alt="DealHive" style={{ height: 36, width: "auto", marginBottom: 14 }}/>
             <p style={{ fontSize: 13, color: C.textSub, lineHeight: 1.55, margin: 0, maxWidth: 320 }}>
-              The off-market deal feed for real estate investors. Fresh deals from markets across the country, every day.
+              The investment property analyzer that does the research for you. Any address, any strategy, in seconds.
             </p>
           </div>
           <FooterCol title="Product">
@@ -1258,16 +1258,17 @@ function AboutPage({ onSignUp }) {
       <Section style={{ padding: "24px 24px 64px" }} hexes={HEX_SETS.b}>
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
-            Every real estate investor knows the routine: coffee, laptop, and an hour of scrolling
-            listings that stopped making sense three price cuts ago. The deals that actually work, the wholesale assignments, off-market
-            properties, and mispriced rentals in cash-flow markets, never sit on page one of
-            Zillow.
+            Every real estate investor knows the routine: a promising address, six open tabs, a
+            spreadsheet from 2019, and an hour of copying numbers between them just to find out
+            the deal never penciled in the first place. The math was never the hard part. The
+            gathering was.
           </p>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
-            DealHive flips that routine. Our pipeline watches the wholesale and off-market space
-            across the country and pre-analyzes everything it finds against buy-and-hold, BRRRR,
-            and fix-and-flip models. What lands in your feed is the short list: the properties
-            worth your next hour, not your next month.
+            DealHive collapses that routine into seconds. Type an address and the property data
+            fills itself in from live records. The engine runs Buy & Hold, BRRRR, and Fix & Flip,
+            cash or financed, and tells you which exit wins. When you want inspiration, a feed of
+            pre-scored deals is a tap away. But the analyzer is the product: your underwriting,
+            faster and sharper.
           </p>
           <p style={{ fontSize: 17, color: C.textSub, fontFamily: F, lineHeight: 1.75 }}>
             We're independent, investor-run, and built for people who close. No venture pressure to
@@ -1576,7 +1577,7 @@ export function MarketingChrome({ navigate, onSignIn, onSignUp, children }) {
 // Top-level export — routes to the right page
 // ==============================================================================
 const PAGE_TITLES = {
-  "/":          "DealHive: Off-Market Deals, Pre-Analyzed, Every Day",
+  "/":          "DealHive: Analyze Any Investment Property in Seconds",
   "/features":  "DealHive Features",
   "/pricing":   "DealHive Pricing",
   "/faq":       "DealHive FAQ",
