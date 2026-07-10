@@ -495,12 +495,12 @@ function Hero({ onSignUp }) {
         display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 64, alignItems: "center",
         position: "relative", zIndex: 1,
       }} className="dh-hero-grid">
-        <div>
+        <div className="dh-hero-copy">
           <div style={{ marginBottom: 24 }}>
             <Eyebrow>Any address, any strategy, in seconds</Eyebrow>
           </div>
           <h1 style={{
-            fontSize: "clamp(36px, 5.6vw, 64px)", fontWeight: 700, fontFamily: F,
+            fontSize: "clamp(44px, 6.4vw, 70px)", fontWeight: 700, fontFamily: F,
             letterSpacing: "-0.035em", lineHeight: 1.02, margin: "0 0 22px",
             color: C.text,
           }}>
@@ -552,6 +552,10 @@ function Hero({ onSignUp }) {
         @media (max-width: 920px) {
           .dh-hero-grid { grid-template-columns: 1fr !important; gap: 48px !important; }
           .dh-hero-visual { max-width: 380px; margin: 0 auto; width: 100%; }
+          .dh-hero-copy { text-align: center; }
+          .dh-hero-copy p { margin-left: auto !important; margin-right: auto !important; }
+          .dh-hero-ctas { justify-content: center; }
+          .dh-hero-checks { justify-content: center !important; }
         }
       `}</style>
     </section>
@@ -576,7 +580,7 @@ function TrustBar() {
           fontSize: 11, fontWeight: 600, color: C.textMuted, fontFamily: F,
           letterSpacing: "0.12em", textTransform: "uppercase", textAlign: "center", marginBottom: 16,
         }}>
-          Built for cash-flow investors, coast to coast
+          Built for real estate investors, coast to coast
         </div>
         <div style={{
           display: "flex", justifyContent: "center", flexWrap: "wrap", gap: "12px 32px",
@@ -631,7 +635,10 @@ function HowItWorks() {
           }}>
             <div style={{
               fontSize: 56, fontWeight: 800, fontFamily: F, letterSpacing: "-0.04em",
-              color: C.orangeSubtle, lineHeight: 1, marginBottom: 14,
+              lineHeight: 1, marginBottom: 14,
+              background: `linear-gradient(135deg, ${C.orange} 0%, ${C.orangeBorder} 100%)`,
+              WebkitBackgroundClip: "text", backgroundClip: "text",
+              WebkitTextFillColor: "transparent", color: "transparent", opacity: .9,
             }}>
               {s.n}
             </div>
@@ -1123,6 +1130,102 @@ const STRATEGIES = [
   },
 ];
 
+// "Screenshot" panels: hand-built mock UI in the app's exact visual language,
+// framed in a window chrome. Crisper than PNGs and always on-brand; swap for
+// real captures anytime.
+function AppFrame({ label, children }) {
+  return (
+    <div style={{
+      borderRadius: 18, border: "1px solid " + C.border, background: "#fff",
+      boxShadow: "0 28px 56px -20px rgba(15,23,42,.22), 0 8px 20px -12px rgba(15,23,42,.10)",
+      overflow: "hidden",
+    }}>
+      <div style={{display:"flex", alignItems:"center", gap:6, padding:"10px 14px",
+        background:C.bgSoft, borderBottom:"1px solid "+C.border}}>
+        {["#fca5a5","#fcd34d","#86efac"].map(c => (
+          <span key={c} style={{width:9, height:9, borderRadius:"50%", background:c, display:"inline-block"}}/>
+        ))}
+        <span style={{marginLeft:8, fontSize:11.5, fontWeight:600, color:C.textSub, fontFamily:F}}>{label}</span>
+      </div>
+      <div style={{padding:16}}>{children}</div>
+    </div>
+  );
+}
+const MockHeader = ({ color, label }) => (
+  <div style={{display:"flex", alignItems:"center", gap:9, padding:"9px 12px", marginBottom:10,
+    background:`${color}12`, borderLeft:"3px solid "+color, borderRadius:8}}>
+    <span style={{width:22, height:22, borderRadius:6, background:`${color}22`, color,
+      display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, fontFamily:F}}>
+      ▮
+    </span>
+    <span style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>{label}</span>
+  </div>
+);
+const MockRow = ({ l, v, color = C.text, hr }) => hr ? (
+  <div style={{height:1, background:C.border, margin:"7px 0"}}/>
+) : (
+  <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10,
+    padding:"6.5px 2px", borderBottom:"1px solid "+C.borderSoft, fontFamily:F}}>
+    <span style={{fontSize:12.5, color:C.textSub}}>{l}</span>
+    <span style={{fontSize:13.5, fontWeight:700, color, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</span>
+  </div>
+);
+const MockBadge = ({ children, bg = C.cashPos }) => (
+  <span style={{display:"inline-flex", alignItems:"center", gap:5, background:bg, color:"#fff",
+    padding:"3px 10px", borderRadius:9999, fontSize:10.5, fontWeight:800, fontFamily:F,
+    letterSpacing:".04em", textTransform:"uppercase"}}>{children}</span>
+);
+
+function StrategyMock({ id }) {
+  if (id === "rental") return (
+    <AppFrame label="DealHive · Deal Analyzer">
+      <MockHeader color="#059669" label="Summary"/>
+      <MockRow l="Purchase Method" v="Cash"/>
+      <MockRow l="Exit Strategy" v="Buy & Hold"/>
+      <MockRow l="Out of Pocket" v="$96,500"/>
+      <MockRow l="Net Cash Flow / mo" v="$612" color={C.cashPos}/>
+      <MockRow l="Cash-on-Cash" v="7.6%" color={C.cashPos}/>
+      <MockRow l="Cap Rate" v="9.1%"/>
+      <div style={{marginTop:12}}><MockBadge>Recommended · Buy & Hold</MockBadge></div>
+    </AppFrame>
+  );
+  if (id === "brrrr") return (
+    <AppFrame label="DealHive · Deal Analyzer">
+      <MockHeader color="#7c3aed" label="BRRRR Estimate"/>
+      <MockRow l="Cash Out Amount" v="$113,600"/>
+      <MockRow l="Refi Interest Rate" v="7.5%"/>
+      <MockRow hr/>
+      <MockRow l="Cash Received at Refi" v="$113,600" color={C.cashPos}/>
+      <MockRow l="Cash Flow / mo (After Refi)" v="$241" color={C.cashPos}/>
+      <MockRow l="Cash in Pocket" v="$9,450" color={C.cashPos}/>
+      <div style={{marginTop:12}}><MockBadge bg="#7c3aed">Best Exit · BRRRR</MockBadge></div>
+    </AppFrame>
+  );
+  if (id === "flip") return (
+    <AppFrame label="DealHive · Deal Analyzer">
+      <MockHeader color="#d97706" label="Fix & Flip"/>
+      <MockRow l="Sale Price (ARV)" v="$189,000"/>
+      <MockRow l="Holding Costs (6 mo)" v="$4,320"/>
+      <MockRow l="Loan Payoff at Sale" v="$98,400"/>
+      <MockRow hr/>
+      <MockRow l="Total Cash In" v="$31,600"/>
+      <MockRow l="Net Profit" v="$42,830" color={C.cashPos}/>
+      <MockRow l="ROI on Cash" v="135.5%" color={C.cashPos}/>
+      <div style={{marginTop:12}}><MockBadge bg="#d97706">Best Exit · Fix & Flip</MockBadge></div>
+    </AppFrame>
+  );
+  return (
+    <MockDealCard
+      photo={["#fef3c7", "#fde68a"]}
+      imgUrl="https://images.unsplash.com/photo-1568605114967-8130f3a36994?auto=format&fit=crop&w=720&h=400&q=80"
+      address="Cleveland, OH 44109"
+      price={84500} rent={1450} capRate={14.2} cashflow={612}
+      beds={3} baths={1} sqft={1240}
+      badge="Buy & Hold"
+    />
+  );
+}
+
 function FeaturesPage({ onSignUp }) {
   return (
     <>
@@ -1148,27 +1251,30 @@ function FeaturesPage({ onSignUp }) {
               <p style={{ fontSize: 15.5, color: C.textSub, fontFamily: F, lineHeight: 1.65, margin: 0 }}>
                 {s.body}
               </p>
-            </div>
-            <div style={{ order: i % 2 ? 1 : 2 }}>
-              <div style={{
-                background: "#fff", border: "1px solid " + C.border, borderRadius: 16,
-                padding: 24, boxShadow: "0 12px 32px -12px rgba(15,23,42,.10)",
-              }}>
+              <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10 }}>
                 {s.points.map(p => (
-                  <div key={p} style={{
-                    display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 0",
-                    borderBottom: "1px solid " + C.borderSoft, fontFamily: F,
-                  }}>
+                  <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontFamily: F }}>
                     <span style={{
-                      width: 22, height: 22, borderRadius: 9999, background: C.orangeSubtle,
+                      width: 19, height: 19, borderRadius: 9999, background: C.orangeSubtle,
                       border: "1px solid " + C.orangeBorder, color: C.orangeDark, flexShrink: 0,
-                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", marginTop: 1,
                     }}>
-                      <Icon d={<path d="M5 12l5 5L20 7"/>} size={12} stroke={2.4}/>
+                      <Icon d={<path d="M5 12l5 5L20 7"/>} size={11} stroke={2.6}/>
                     </span>
-                    <span style={{ fontSize: 14.5, color: C.text, lineHeight: 1.5 }}>{p}</span>
+                    <span style={{ fontSize: 14, color: C.text, lineHeight: 1.5 }}>{p}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+            <div style={{ order: i % 2 ? 1 : 2, position: "relative" }}>
+              <div aria-hidden="true" style={{
+                position: "absolute", inset: -30,
+                background: `radial-gradient(closest-side, ${C.orangeSubtle}, transparent 72%)`,
+                filter: "blur(18px)", zIndex: 0,
+              }}/>
+              <div style={{ position: "relative", zIndex: 1,
+                transform: `perspective(1200px) rotateY(${i % 2 ? "5deg" : "-5deg"})` }}>
+                <StrategyMock id={s.id}/>
               </div>
             </div>
           </div>
