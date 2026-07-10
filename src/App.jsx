@@ -84,6 +84,20 @@ const fbSignIn = async (email, password) => {
   });
   const d = await r.json(); if(d.error) throw new Error(d.error.message); return d;
 };
+// Google OAuth Web client ID (Firebase console -> Authentication -> Google ->
+// Web SDK configuration). Empty string = Google button shows a friendly
+// "finishing setup" note instead of a broken flow.
+const GOOGLE_OAUTH_CLIENT_ID = "";
+const fbSignInWithIdp = async (postBody) => {
+  const r = await fetch(`${FB_AUTH_URL}/accounts:signInWithIdp?key=${FB_API_KEY}`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({postBody, requestUri: window.location.origin,
+      returnIdpCredential: true, returnSecureToken: true}),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message || "IDP_ERROR");
+  return d;
+};
 const fbResetPassword = async (email) => {
   const r = await fetch(`${FB_AUTH_URL}/accounts:sendOobCode?key=${FB_API_KEY}`, {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -1052,28 +1066,110 @@ function AuthPage({onAuth}) {
     setL(false);
   };
 
+  // Social sign-in. Google runs a real OAuth flow once the client ID is
+  // configured; Apple and Facebook are visible but marked coming soon until
+  // their provider setups exist.
+  const googleSignIn = () => {
+    setErr(""); setMsg("");
+    if (!GOOGLE_OAUTH_CLIENT_ID) {
+      setMsg("Google sign-in is coming online shortly — use email for now.");
+      return;
+    }
+    const launch = () => {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_OAUTH_CLIENT_ID,
+        scope: "openid email profile",
+        callback: async (resp) => {
+          if (!resp || !resp.access_token) { setErr("Google sign-in was cancelled."); return; }
+          setL(true);
+          try {
+            const u = await fbSignInWithIdp(`access_token=${resp.access_token}&providerId=google.com`);
+            onAuth(u, !!u.isNewUser);
+          } catch { setErr("Google sign-in failed. Try email instead."); }
+          setL(false);
+        },
+      });
+      client.requestAccessToken();
+    };
+    if (window.google?.accounts?.oauth2) { launch(); return; }
+    const sc = document.createElement("script");
+    sc.src = "https://accounts.google.com/gsi/client";
+    sc.onload = launch;
+    sc.onerror = () => setErr("Couldn't reach Google. Try email instead.");
+    document.head.appendChild(sc);
+  };
+  const comingSoon = name => { setErr(""); setMsg(`${name} sign-in is coming soon — use email or Google for now.`); };
+
   const linkBtn = {
     background:"none", border:"none", padding:0, color:C.green, fontWeight:600,
     cursor:"pointer", fontFamily:F, fontSize:13, letterSpacing:"-0.005em",
   };
+  const socialBtn = {
+    display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+    padding:"11px 10px", borderRadius:C.r3, border:"1px solid "+C.border,
+    background:"#fff", cursor:"pointer", fontFamily:F, fontSize:13.5, fontWeight:600,
+    color:C.text, boxShadow:C.sh1, transition:"border-color .12s, box-shadow .12s",
+  };
+
+  const perks = [
+    "Live data on 140M+ U.S. properties",
+    "Buy & Hold, BRRRR & Fix & Flip verdicts",
+    "Real financing: multiple loans, interest-only",
+    "Free plan, no credit card",
+  ];
+
   return (
-    <div style={{
-      minHeight:"calc(100vh - 220px)", background:C.bg, padding:"48px 20px 72px",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      backgroundImage:`radial-gradient(circle at 100% 0%, ${C.greenSubtle} 0%, transparent 45%), radial-gradient(circle at 0% 100%, ${C.bgSubtle} 0%, transparent 50%)`,
-    }}>
-      <div style={{width:"100%", maxWidth:400}}>
-        <div style={{textAlign:"center", marginBottom:28}}>
-          <img src="/logo.png" alt="DealHive" style={{height:48, width:"auto", maxWidth:"82%", objectFit:"contain", marginBottom:10}} />
-          <div style={{fontSize:13, color:C.textSub, fontFamily:F}}>Real estate investing, organized.</div>
+    <div style={{padding:"40px 20px 72px", background:C.bg,
+      backgroundImage:`radial-gradient(circle at 85% 0%, ${C.greenSubtle} 0%, transparent 42%), radial-gradient(circle at 0% 100%, ${C.bgSubtle} 0%, transparent 50%)`}}>
+      <div className="dh-auth-grid" style={{
+        maxWidth:920, margin:"0 auto",
+        display:"grid", gridTemplateColumns:"1fr 1.1fr", gap:0,
+        borderRadius:22, overflow:"hidden",
+        boxShadow:"0 32px 64px -24px rgba(15,23,42,.28), 0 6px 18px -8px rgba(15,23,42,.12)",
+        border:"1px solid "+C.border, background:C.card,
+      }}>
+        {/* Brand panel */}
+        <div className="dh-auth-brand" style={{
+          background:`linear-gradient(160deg, ${C.sidebar} 0%, #16222f 100%)`,
+          padding:"44px 36px", position:"relative", overflow:"hidden",
+          display:"flex", flexDirection:"column", justifyContent:"center",
+        }}>
+          <div aria-hidden="true" style={{position:"absolute", top:-70, right:-60, width:220, height:250,
+            background:`radial-gradient(closest-side, ${C.green}33, transparent 70%)`, filter:"blur(8px)"}}/>
+          <div aria-hidden="true" style={{position:"absolute", bottom:-60, left:-40, width:190, height:210,
+            background:`radial-gradient(closest-side, ${C.green}22, transparent 70%)`, filter:"blur(6px)"}}/>
+          <img src="/logo.png" alt="DealHive"
+            style={{height:40, width:"auto", alignSelf:"flex-start", marginBottom:22,
+              filter:"brightness(0) invert(1)", opacity:.95}} />
+          <div style={{fontSize:26, fontWeight:700, color:"#fff", fontFamily:F,
+            letterSpacing:"-0.025em", lineHeight:1.15, marginBottom:10}}>
+            Know it's a deal<br/>before you offer.
+          </div>
+          <div style={{fontSize:13.5, color:"rgba(255,255,255,.66)", fontFamily:F, lineHeight:1.6, marginBottom:26}}>
+            The investment property analyzer that does the research for you.
+          </div>
+          <div style={{display:"flex", flexDirection:"column", gap:12}}>
+            {perks.map(perk => (
+              <div key={perk} style={{display:"flex", alignItems:"flex-start", gap:10}}>
+                <span style={{width:20, height:20, borderRadius:9999, background:`${C.green}2e`,
+                  border:`1px solid ${C.green}66`, color:C.green, flexShrink:0,
+                  display:"inline-flex", alignItems:"center", justifyContent:"center", marginTop:1}}>
+                  <I.check size={11} stroke={3}/>
+                </span>
+                <span style={{fontSize:13.5, color:"rgba(255,255,255,.88)", fontFamily:F, lineHeight:1.5}}>{perk}</span>
+              </div>
+            ))}
+          </div>
         </div>
-        <Card style={{padding:30}}>
-          <h2 style={{margin:"0 0 6px", fontSize:20, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-            {mode==="signin" ? "Welcome back" : mode==="signup" ? "Start your free trial" : "Reset password"}
+
+        {/* Form panel */}
+        <div style={{padding:"40px 36px", background:C.card}}>
+          <h2 style={{margin:"0 0 6px", fontSize:22, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            {mode==="signin" ? "Welcome back" : mode==="signup" ? "Create your free account" : "Reset password"}
           </h2>
-          <p style={{margin:"0 0 22px", fontSize:13, color:C.textSub, fontFamily:F}}>
+          <p style={{margin:"0 0 20px", fontSize:13.5, color:C.textSub, fontFamily:F}}>
             {mode==="signin"  ? "Sign in to your DealHive account" :
-             mode==="signup"  ? TRIAL_DAYS+" days free. No credit card required." :
+             mode==="signup"  ? "Free forever. No credit card required." :
              "Enter your email to get a reset link"}
           </p>
           {err && (
@@ -1090,6 +1186,31 @@ function AuthPage({onAuth}) {
               <I.check size={14} stroke={2.2}/><span>{msg}</span>
             </div>
           )}
+
+          {mode !== "reset" && (
+            <>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:16}}>
+                <button type="button" onClick={googleSignIn} style={socialBtn} aria-label="Continue with Google">
+                  <svg width="17" height="17" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.5 6.1 29.5 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.5 6.1 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.4 0 10.3-2.1 14-5.4l-6.5-5.5c-2.1 1.6-4.7 2.5-7.5 2.5-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.5 5.5C41.4 35.6 44 30.3 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
+                  <span className="dh-social-label">Google</span>
+                </button>
+                <button type="button" onClick={()=>comingSoon("Apple")} style={socialBtn} aria-label="Continue with Apple">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.9c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.7.9-.8 0-2-.9-3.3-.9-1.7 0-3.2 1-4.1 2.5-1.7 3-0.4 7.5 1.3 9.9.8 1.2 1.8 2.5 3.1 2.5 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.3.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.4-2.8-.1-.1-2.7-1.1-2.7-3.9zM13.9 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.6-2.8 1.5-.6.7-1.2 1.9-1 3 1 .1 2.1-.6 2.8-1.5z"/></svg>
+                  <span className="dh-social-label">Apple</span>
+                </button>
+                <button type="button" onClick={()=>comingSoon("Facebook")} style={socialBtn} aria-label="Continue with Facebook">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="#1877F2"><path d="M24 12a12 12 0 10-13.9 11.9v-8.4h-3V12h3V9.4c0-3 1.8-4.7 4.6-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-1.9.9-1.9 1.9V12h3.3l-.5 3.5h-2.8v8.4A12 12 0 0024 12z"/></svg>
+                  <span className="dh-social-label">Facebook</span>
+                </button>
+              </div>
+              <div style={{display:"flex", alignItems:"center", gap:12, margin:"0 0 16px"}}>
+                <span style={{flex:1, height:1, background:C.border}}/>
+                <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>or with email</span>
+                <span style={{flex:1, height:1, background:C.border}}/>
+              </div>
+            </>
+          )}
+
           <form onSubmit={submit}>
             <div style={{marginBottom:14}}>
               <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Email</label>
@@ -1118,10 +1239,10 @@ function AuthPage({onAuth}) {
               </div>
             )}
             <button type="submit" disabled={loading}
-              {...btnStyle("primary","lg", {width:"100%", marginTop:6, marginBottom:14})}>
+              {...btnStyle("primary","lg", {width:"100%", marginTop:6, marginBottom:14, justifyContent:"center"})}>
               {loading ? "Please wait..." :
                mode==="signin"  ? "Sign in" :
-               mode==="signup"  ? <>Start free trial <I.arrowRight size={14}/></> :
+               mode==="signup"  ? <>Create free account <I.arrowRight size={14}/></> :
                "Send reset email"}
             </button>
           </form>
@@ -1136,16 +1257,21 @@ function AuthPage({onAuth}) {
               </button>
             )}
           </div>
-        </Card>
-        <div style={{textAlign:"center", marginTop:18, fontSize:12, color:C.textMuted, fontFamily:F}}>
-          © 2025 DealHive · dealhive.io
         </div>
       </div>
+      <style>{`
+        @media (max-width: 860px) {
+          .dh-auth-grid { grid-template-columns: 1fr !important; max-width: 460px !important; }
+          .dh-auth-brand { padding: 30px 26px !important; }
+        }
+        @media (max-width: 420px) {
+          .dh-social-label { display: none; }
+        }
+      `}</style>
     </div>
   );
 }
 
-// -- Leaflet Map ---------------------------------------------------------------
 function MapView({properties, onSelect}) {
   const ref=useRef(null), inst=useRef(null), markers=useRef([]);
   useEffect(() => {
@@ -5718,7 +5844,15 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
             <I.alert size={14}/> This deal is already in your saved deals.
           </div>
         )}
-        <button onClick={()=>{ const r = onConfirm(scenario, financing); setResult(r === "updated" ? "updated" : r ? "saved" : "dupe"); }}
+        {result === "limit" && (
+          <div style={{display:"flex", alignItems:"flex-start", gap:8, marginTop:14,
+            background:C.amberSubtle, border:"1px solid "+C.amberBorder, borderRadius:C.r2,
+            padding:"10px 12px", fontSize:13, color:C.amberDark, fontFamily:F, lineHeight:1.5}}>
+            <I.alert size={14} style={{flexShrink:0, marginTop:1}}/>
+            <span>The Free plan holds 5 saved deals. Upgrade to Pro in Settings for unlimited saves.</span>
+          </div>
+        )}
+        <button onClick={()=>{ const r = onConfirm(scenario, financing); setResult(r === "updated" ? "updated" : r === "limit" ? "limit" : r ? "saved" : "dupe"); }}
           {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop: result === "dupe" ? 12 : 18})}>
           <I.star size={14}/> Save deal
         </button>
@@ -7727,6 +7861,11 @@ export default function App() {
     const fin = financing === "cash" ? "all cash" : "financed";
     const match = existing.find(x => x.id === deal.id ||
       (deal.address && x.address === deal.address && x.city === deal.city));
+    if (!match && (data.tier||"free") !== "pro" && existing.length >= 5) {
+      setToast("Free plan holds 5 saved deals — upgrade to Pro for unlimited");
+      setTimeout(()=>setToast(""), 2600);
+      return "limit";
+    }
     if (match) {
       const updated = {...match, ...deal, id: match.id,
         savedAt: match.savedAt || new Date().toISOString(),
@@ -7819,7 +7958,7 @@ export default function App() {
         suggested || "buyhold",
         isCash ? "cash" : "finance");
       // A professional save takes you to where the deal now lives.
-      if (res) setPage("dashboard");
+      if (res === "created" || res === "updated") setPage("dashboard");
     },
     onMoveToPortfolio: moveDealToPortfolio,
     initial: prefilledDeal,
