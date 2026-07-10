@@ -645,6 +645,11 @@ const I = {
   arrowRight:  p => <IconSvg {...p} d={<g><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></g>}/>,
   chevronRight:p => <IconSvg {...p} d="M9 18l6-6-6-6"/>,
   cycle:       p => <IconSvg {...p} d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/>,
+  dollar:      p => <IconSvg {...p} d={<g><path d="M12 2v20"/><path d="M17 6c0-1.7-2.2-3-5-3S7 4.3 7 6s1.6 2.7 5 3.3S17 11 17 13s-2.2 3-5 3-5-1.3-5-3"/></g>}/>,
+  tag:         p => <IconSvg {...p} d={<g><path d="M20.6 13.4L11 3.8A2 2 0 009.6 3H5a2 2 0 00-2 2v4.6c0 .5.2 1 .6 1.4l9.6 9.6a2 2 0 002.8 0l4.6-4.6a2 2 0 000-2.6z"/><circle cx="7.5" cy="7.5" r="1"/></g>}/>,
+  receipt:     p => <IconSvg {...p} d={<g><path d="M5 3h14v18l-2.3-1.5L14 21l-2-1.5L10 21l-2.7-1.5L5 21z"/><path d="M9 8h6"/><path d="M9 12h6"/></g>}/>,
+  trendingUp:  p => <IconSvg {...p} d={<g><path d="M3 17l6-6 4 4 7-8"/><path d="M14 7h6v6"/></g>}/>,
+  hammer:      p => <IconSvg {...p} d={<g><path d="M14 4l6 6-2.2 2.2-6-6z"/><path d="M12.8 6.2L4 15a2.8 2.8 0 104 4l8.8-8.8"/></g>}/>,
   chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
   lock:        p => <IconSvg {...p} d={<g><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></g>}/>,
   star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
@@ -770,19 +775,31 @@ function StatCard({label, value, sub, color, icon}) {
   );
 }
 
-function SectionBlock({title, color=C.green, children, right, collapsible=false, defaultOpen=true}) {
+function SectionBlock({title, color=C.green, icon=null, children, right, collapsible=false, defaultOpen=true}) {
   const [open, setOpen] = useState(defaultOpen);
+  const Icon = icon;
   return (
-    <Card style={{marginBottom:14, padding:0}}>
-      <div style={{padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center",
+    <Card style={{marginBottom:14, padding:0, boxShadow:C.sh2, overflow:"hidden"}}>
+      <div style={{
+        padding:"13px 16px",
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        background:`linear-gradient(90deg, ${color}14 0%, ${C.card} 62%)`,
         borderBottom: open ? "1px solid "+C.border : "none",
+        borderLeft: "3px solid "+color,
         cursor: collapsible ? "pointer" : "default"}}
         onClick={collapsible ? ()=>setOpen(o=>!o) : undefined}>
-        <div style={{display:"flex", alignItems:"center", gap:10}}>
-          <div style={{width:3, height:14, background:color, borderRadius:2}} />
-          <span style={{color:C.text, fontWeight:600, fontSize:14, fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
+        <div style={{display:"flex", alignItems:"center", gap:11, minWidth:0}}>
+          <div style={{
+            width:30, height:30, borderRadius:8, flexShrink:0,
+            background:`${color}1f`, color,
+            display:"flex", alignItems:"center", justifyContent:"center",
+          }}>
+            {Icon ? <Icon size={16} stroke={2.2}/> : <span style={{width:10, height:10, borderRadius:3, background:color}}/>}
+          </div>
+          <span style={{color:C.text, fontWeight:700, fontSize:16, fontFamily:F, letterSpacing:"-0.02em",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{title}</span>
         </div>
-        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+        <div style={{display:"flex", gap:8, alignItems:"center", flexShrink:0}}>
           {right}
           {collapsible && (
             <span style={{color:C.textMuted, transition:"transform .2s",
@@ -1639,7 +1656,7 @@ function DealSummaryBlock({p, m, exit}) {
     ];
   }
   return (
-    <SectionBlock title="Summary" color={C.text}>
+    <SectionBlock title="Summary" color={C.green} icon={I.clipboardCheck}>
       <DataRow label="Purchase Method" value={cash ? "Cash" : "Finance"} />
       <DataRow label="Exit Strategy" value={exitLabel} />
       {rows.map(([l, v, color], i) =>
@@ -1735,7 +1752,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
         {/* Purchase — shared by both tabs */}
-        <SectionBlock title="Purchase" color={C.green}>
+        <SectionBlock title="Purchase" color={C.green} icon={I.tag}>
           <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:12}}>
             <span style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>I Already Own This Property</span>
             <button onClick={()=>u("alreadyOwned", !p.alreadyOwned)} aria-pressed={!!p.alreadyOwned}
@@ -1793,7 +1810,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
 
         {/* Income — shared by both tabs (this used to hide on Finance) */}
-        <SectionBlock title="Income" color={C.green}>
+        <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
           {p.rentEstimate > 0 && (
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
               background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
@@ -1827,7 +1844,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Financing — Finance tab only */}
         {s==="finance" && (
-        <SectionBlock title="Financing" color={C.green}>
+        <SectionBlock title="Financing" color={C.blue} icon={I.building}>
           {p.alreadyOwned ? (
             <>
               <DataRow label="Existing Loan Balance" value={$(p.ownedLoanBalance||0)} />
@@ -1918,7 +1935,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Results — Finance tab only (cash results live in the Summary card) */}
         {s==="finance" && (
-          <SectionBlock title="Financed Results" color={C.green}>
+          <SectionBlock title="Financed Results" color={C.green} icon={I.chart}>
             <DataRow label="Total Loan Amount" value={$(m.loan)} />
             <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />
             <DataRow label="Cash Needed" value={$(m.finOOP)} />
@@ -1933,7 +1950,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         )}
 
         {/* Monthly expenses — shared */}
-        <SectionBlock title="Monthly Expenses" color={C.green}>
+        <SectionBlock title="Monthly Expenses" color={C.amber} icon={I.receipt}>
           <InputField label="Property Tax / mo" val={p.expPropTax}
             set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
           <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
@@ -1944,7 +1961,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
 
         {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
-        <SectionBlock title="After Repair Value (ARV)" color={C.blue}>
+        <SectionBlock title="After Repair Value (ARV)" color={C.blue} icon={I.trendingUp}>
           <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
             set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
             note="What the property will be worth after repairs. Drives BRRRR and Fix & Flip below."
@@ -2006,7 +2023,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </div>
 
         {xtra === "brrrr" && (
-          <SectionBlock title="BRRRR Estimate" color={C.purple}>
+          <SectionBlock title="BRRRR Estimate" color={C.purple} icon={I.cycle}>
             {!(p.homeValueHigh > 0) && (
               <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
@@ -2038,7 +2055,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         )}
 
         {xtra === "flip" && (
-          <SectionBlock title="Fix & Flip" color={C.amber}>
+          <SectionBlock title="Fix & Flip" color={C.amber} icon={I.hammer}>
             {!(p.homeValueHigh > 0) && (
               <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
@@ -2655,7 +2672,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
         {tab==="notes"      && (
-          <SectionBlock title="Notes" color={C.text}>
+          <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
             <textarea value={prop.notes||""} onChange={e=>u("notes",e.target.value)}
               placeholder="Lockbox codes, quit claim, lead safe, legal notes…"
               style={{...iS(mobile), minHeight:220, resize:"vertical", lineHeight:1.55}} />
@@ -6155,45 +6172,36 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // Auto-fill beds/baths/sqft/year/type from property records (light endpoint,
   // cached, not counted against the monthly cap — the full "Pull property
   // data" button remains the counted deep fetch).
-  const basicsKeyRef = useRef("");
-  const fetchBasics = loc => {
+  // Picking an address runs the FULL property pull automatically — details,
+  // tax records, home value, and market rent in one pass (no button). Cached
+  // per address; counts as one lookup like the old Pull button did.
+  const pulledKeyRef = useRef("");
+  const pullProperty = loc => {
     if (!rcOk(rcAuth) || !apiLookup || !loc.address || !loc.city) return;
-    const key = lookupKey("rc-props", loc.address, loc.city, loc.state, loc.zip);
-    if (basicsKeyRef.current === key) return;
-    basicsKeyRef.current = key;
-    setBasicsLoading(true);
+    const key = lookupKey("rc-detail", loc.address, loc.city, loc.state, loc.zip);
+    if (pulledKeyRef.current === key) return;
+    pulledKeyRef.current = key;
+    setBasicsLoading(true); setErr("");
     (async () => {
       try {
-        const q = encodeURIComponent(`${loc.address}, ${loc.city}, ${loc.state} ${loc.zip||""}`.trim());
-        const rec = await apiLookup(key, async () => {
-          const arr = await rcGet(`/properties?address=${q}`, rcAuth);
-          return Array.isArray(arr) ? arr[0] || null : arr || null;
-        }, {count:false});
-        if (rec) {
-          setD(prev => ({...prev,
-            beds:      rec.bedrooms      || prev.beds,
-            baths:     rec.bathrooms     || prev.baths,
-            sqft:      rec.squareFootage || prev.sqft,
-            yearBuilt: rec.yearBuilt     || prev.yearBuilt,
-            type:      rec.propertyType  || prev.type,
-            lat:       prev.lat || rec.latitude  || null,
-            lng:       prev.lng || rec.longitude || null,
-          }));
-        }
-      } catch { /* silent — the card simply stays hidden */ }
+        const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth));
+        if (rcHasData(data)) setD(prev => applyRentcast(prev, data, renoRates));
+      } catch (e) {
+        setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "");
+      }
       setBasicsLoading(false);
     })();
   };
   const handleAddressSelect = loc => {
     setD(prev => ({...prev, ...loc, fullAddress: loc.fullAddress}));
-    fetchBasics(loc);
+    pullProperty(loc);
   };
-  // Safety net: whenever a full address exists but the basics don't (manual
-  // typing, prefills without specs), fetch them after a short pause.
+  // Safety net: a full address without specs (manual typing, prefilled saves)
+  // pulls after a short pause.
   useEffect(() => {
     if (d.beds || d.sqft) return;
     if (!d.address || !d.city || !d.state) return;
-    const t = setTimeout(() => fetchBasics({address:d.address, city:d.city, state:d.state, zip:d.zip}), 700);
+    const t = setTimeout(() => pullProperty({address:d.address, city:d.city, state:d.state, zip:d.zip}), 700);
     return () => clearTimeout(t);
   }, [d.address, d.city, d.state, d.zip, d.beds, d.sqft]); // eslint-disable-line react-hooks/exhaustive-deps
   // Which exit-strategy section is open (BRRRR / Fix & Flip / neither). Lifted
@@ -6210,21 +6218,6 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     if (initial && onConsumeInitial) onConsumeInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const runSearch = async () => {
-    if (!d.address) { setErr("Enter an address first."); return; }
-    if (!rcOk(rcAuth)) { setErr("Live property data is currently unavailable."); return; }
-    setL(true); setErr("");
-    try {
-      const key = lookupKey("rc-detail", d.address, d.city, d.state, d.zip);
-      const data = await apiLookup(key, () => rentcastFetch(d.address, d.city, d.state, d.zip, rcAuth));
-      if (!rcHasData(data)) setErr("No property data found for that address. Try adding city, state and ZIP.");
-      else setD(prev => applyRentcast(prev, data, renoRates));
-    } catch (e) {
-      setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check the address and try again.");
-    }
-    setL(false);
-  };
 
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
@@ -6472,7 +6465,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
       {/* Property — photo up top, then the address fields together */}
-      <SectionBlock title="Property" color={C.green}>
+      <SectionBlock title="Property" color={C.green} icon={I.home}>
         {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
             show that deal's photo carousel. Otherwise (custom address search)
             fall back to a Street View image. */}
@@ -6504,12 +6497,6 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               </div>
             ))}
           </div>
-        )}
-        {rcOk(rcAuth) && (
-          <button onClick={runSearch} disabled={loading}
-            {...btnStyle("primary","md", {width:"100%", marginTop:14})}>
-            {loading ? "Searching…" : <><I.search size={14}/> Pull property data</>}
-          </button>
         )}
         {err && (
           <div style={{display:"flex", gap:8, alignItems:"center",
@@ -6568,7 +6555,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>
 
       {/* Deal Notes */}
-      <SectionBlock title="Notes" color={C.text}>
+      <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
         <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)}
           placeholder="Seller motivation, condition, neighborhood, rehab scope…"
           style={{...iS(mobile), minHeight:110, resize:"vertical", lineHeight:1.55}} />
