@@ -5237,23 +5237,33 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
           )}
         </div>
 
-        {/* Metrics — 2x2 grid, everything centered, nothing ever clips */}
-        <div style={{background:C.bgSubtle, borderRadius:C.r2, padding:"12px 10px",
-          display:"grid", gridTemplateColumns:"1fr 1fr", gap:"14px 8px"}}>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
-              letterSpacing:".04em", textTransform:"uppercase"}}>{heroNumber.label}</div>
-            <div style={{fontSize:18, fontWeight:700, color:heroNumber.color, fontFamily:F,
-              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em", marginTop:2}}>
-              {heroNumber.value}
-            </div>
-          </div>
-          {secondaryMetrics.map(([l, v, vColor, keepCase]) => (
-            <div key={l} style={{textAlign:"center"}}>
-              <div style={{fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
-                letterSpacing:".03em", textTransform: keepCase ? "none" : "uppercase"}}>{l}</div>
-              <div style={{fontSize:15, fontWeight:700, color: vColor || C.text, fontFamily:F,
-                fontVariantNumeric:"tabular-nums", marginTop:2}}>{v}</div>
+        {/* Metrics — quadrant grid: hairline-divided white cells, colored
+            indicator dots, everything centered. Same visual language as the
+            deal modal's numbers table. */}
+        <div style={{
+          display:"grid", gridTemplateColumns:"1fr 1fr", gap:1,
+          background:C.border, border:"1px solid "+C.border,
+          borderRadius:C.r3, overflow:"hidden",
+        }}>
+          {[[heroNumber.label, heroNumber.value, heroNumber.color, false, true],
+            ...secondaryMetrics.map(([l, v, vColor, keepCase]) => [l, v, vColor, keepCase, false])]
+            .map(([l, v, vColor, keepCase, isHero]) => (
+            <div key={l} style={{
+              background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+              padding:"11px 8px 12px", textAlign:"center",
+            }}>
+              <div style={{display:"inline-flex", alignItems:"center", gap:5,
+                fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
+                letterSpacing:".04em", textTransform: keepCase ? "none" : "uppercase"}}>
+                <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
+                  background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
+                {l}
+              </div>
+              <div style={{fontSize: isHero ? 18 : 15.5, fontWeight:700,
+                color: vColor || (isHero ? heroNumber.color : C.text), fontFamily:F,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.015em", marginTop:3}}>
+                {v}
+              </div>
             </div>
           ))}
         </div>
