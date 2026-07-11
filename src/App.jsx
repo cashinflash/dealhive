@@ -410,7 +410,7 @@ const newDeal = () => ({
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
   brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, flipSalePrice:0, agentFeePct:6,
-  chosenStrategy:"finance", notes:"", savedAt:""
+  chosenStrategy:null, notes:"", savedAt:""
 });
 
 // -- Responsive ----------------------------------------------------------------
@@ -620,10 +620,11 @@ const applyRentcast = (prev, data, rates) => {
     lat:       p.latitude  || val.latitude  || rent.latitude  || prev.lat,
     lng:       p.longitude || val.longitude || rent.longitude || prev.lng,
     type:      p.propertyType || prev.type,
-    // Actual recorded tax bill wins; else estimate from the state's effective
-    // rate on the assessed/market tax value. (The flat 2.4% fallback under-
-    // or over-shot most states badly.)
-    expPropTax: annual ? Math.round(annual / 12)
+    // Actual recorded tax bill wins — but only when it's plausible (some
+    // records carry partial/abated amounts like $120/yr that wreck the
+    // pro forma). Below 0.2% of value annually, fall back to the state rate.
+    expPropTax: (annual && annual >= Math.max(taxVal, prev.purchasePrice||0, 20000) * 0.002)
+                ? Math.round(annual / 12)
               : taxVal ? Math.round(taxVal * (STATE_TAX_RATES[(prev.state||"").toUpperCase()] || DEFAULT_TAX_RATE) / 12)
               : prev.expPropTax,
     expPropTaxAuto: (annual || taxVal) ? false : prev.expPropTaxAuto,
@@ -664,6 +665,10 @@ const I = {
   receipt:     p => <IconSvg {...p} d={<g><path d="M5 3h14v18l-2.3-1.5L14 21l-2-1.5L10 21l-2.7-1.5L5 21z"/><path d="M9 8h6"/><path d="M9 12h6"/></g>}/>,
   trendingUp:  p => <IconSvg {...p} d={<g><path d="M3 17l6-6 4 4 7-8"/><path d="M14 7h6v6"/></g>}/>,
   hammer:      p => <IconSvg {...p} d={<g><path d="M14 4l6 6-2.2 2.2-6-6z"/><path d="M12.8 6.2L4 15a2.8 2.8 0 104 4l8.8-8.8"/></g>}/>,
+  bed:         p => <IconSvg {...p} d={<g><path d="M3 7v11"/><path d="M3 16h18"/><path d="M21 16v-5a3 3 0 00-3-3h-7v8"/><circle cx="7" cy="10" r="2"/></g>}/>,
+  bath:        p => <IconSvg {...p} d={<g><path d="M4 12h16v2a5 5 0 01-5 5H9a5 5 0 01-5-5v-2z"/><path d="M6 12V5a2 2 0 012-2h1"/><path d="M7 19l-1 2M17 19l1 2"/></g>}/>,
+  ruler:       p => <IconSvg {...p} d={<g><rect x="2.5" y="9" width="19" height="6" rx="1.5" transform="rotate(-32 12 12)"/><path d="M8 12.5l1.2 2M11.5 10.5l1.2 2M15 8.5l1.2 2"/></g>}/>,
+  calendar:    p => <IconSvg {...p} d={<g><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></g>}/>,
   chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
   lock:        p => <IconSvg {...p} d={<g><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></g>}/>,
   star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
@@ -1621,7 +1626,8 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 // -- Rent comps sheet ------------------------------------------------------------
 // RentCast rent AVM + nearby active rental listings for the entered address,
 // so Monthly Rent can be sanity-checked without leaving the analyzer.
-function RentCompsSheet({p, apiLookup, rcAuth, onUseRent, onClose, mobile}) {
+function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}) {
+  const isPro = tier === "pro";
   const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
 
   useEffect(() => {
@@ -1705,51 +1711,102 @@ function RentCompsSheet({p, apiLookup, rcAuth, onUseRent, onClose, mobile}) {
           </div>
         ) : (
           <>
-            <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
-              padding:"14px 16px", textAlign:"center"}}>
+            <div style={{
+              background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
+              border:"1px solid "+C.greenBorder, borderRadius:C.r4,
+              padding:"18px 16px", textAlign:"center", boxShadow:C.sh2,
+            }}>
               <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
-                letterSpacing:".05em", textTransform:"uppercase"}}>Market Rent Estimate</div>
-              <div style={{fontSize:28, fontWeight:700, color:C.text, fontFamily:F,
-                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:2}}>
-                {$(st.rent)}<span style={{fontSize:14, color:C.textSub, fontWeight:500}}>/mo</span>
+                letterSpacing:".07em", textTransform:"uppercase"}}>Market Rent Estimate</div>
+              <div style={{fontSize:34, fontWeight:800, color:C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>
+                {$(st.rent)}<span style={{fontSize:15, color:C.textSub, fontWeight:500}}>/mo</span>
               </div>
-              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums"}}>
+              <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
+                background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
+                padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
                 Range {$(st.low)} – {$(st.high)}
               </div>
               <button onClick={()=>onUseRent(st.rent, st.low, st.high)}
-                {...btnStyle("primary","md", {marginTop:12, justifyContent:"center"})}>
-                <I.check size={13}/> Use {$(st.rent)}/mo as Monthly Rent
+                {...btnStyle("primary","lg", {marginTop:14, justifyContent:"center", width:"100%"})}>
+                <I.check size={14}/> Use {$(st.rent)}/mo as Monthly Rent
               </button>
             </div>
 
-            {st.comps.length > 0 && (
+            {st.comps.length > 0 && (() => {
+              const visible = isPro ? st.comps : st.comps.slice(0, 5);
+              const hidden = st.comps.length - visible.length;
+              return (
               <>
-                <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
-                  letterSpacing:".06em", textTransform:"uppercase", margin:"18px 0 8px"}}>
-                  Active Rentals Nearby ({st.comps.length})
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline",
+                  margin:"20px 0 10px"}}>
+                  <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+                    letterSpacing:".06em", textTransform:"uppercase"}}>
+                    Active Rentals Nearby
+                  </span>
+                  <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                    {isPro ? st.comps.length : `showing ${visible.length} of ${st.comps.length}`}
+                  </span>
                 </div>
                 <div style={{display:"flex", flexDirection:"column", gap:8}}>
-                  {st.comps.map((l, i) => (
-                    <div key={l.id || i} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-                      gap:10, border:"1px solid "+C.border, borderRadius:C.r2, padding:"10px 12px"}}>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
-                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-                          {l.formattedAddress || l.addressLine1 || "Nearby rental"}
+                  {visible.map((l, i) => {
+                    const rentV = l.price || l.rent || 0;
+                    const psf = l.squareFootage ? (rentV / l.squareFootage) : null;
+                    return (
+                      <div key={l.id || i} style={{
+                        display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
+                        border:"1px solid "+C.border, borderRadius:C.r3, padding:"11px 13px",
+                        background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
+                      }}>
+                        <div style={{display:"flex", alignItems:"center", gap:11, minWidth:0}}>
+                          <span style={{
+                            width:30, height:30, borderRadius:8, flexShrink:0,
+                            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                            display:"inline-flex", alignItems:"center", justifyContent:"center",
+                            fontSize:11.5, fontWeight:800, fontFamily:F,
+                          }}>{i+1}</span>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
+                              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                              {l.formattedAddress || l.addressLine1 || "Nearby rental"}
+                            </div>
+                            <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
+                              {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
-                          {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
+                        <div style={{textAlign:"right", flexShrink:0}}>
+                          <div style={{fontSize:14.5, fontWeight:700, color:C.text, fontFamily:F,
+                            fontVariantNumeric:"tabular-nums"}}>
+                            {$(rentV)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
+                          </div>
+                          {psf && (
+                            <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                              ${psf.toFixed(2)}/sqft
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F,
-                        fontVariantNumeric:"tabular-nums", flexShrink:0}}>
-                        {$(l.price || l.rent || 0)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+                {hidden > 0 && (
+                  <div style={{
+                    marginTop:10, padding:"13px 14px", borderRadius:C.r3, textAlign:"center",
+                    background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 70%)`,
+                    border:"1px dashed "+C.greenBorder,
+                  }}>
+                    <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:F}}>
+                      <I.lock size={12} stroke={2.4} style={{verticalAlign:"-1px"}}/> {hidden} more comp{hidden===1?"":"s"} with Pro
+                    </div>
+                    <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
+                      Upgrade in Settings for the full comp set on every address.
+                    </div>
+                  </div>
+                )}
               </>
-            )}
+              );
+            })()}
           </>
         )}
       </div>
@@ -1817,10 +1874,11 @@ function DealSummaryBlock({p, m, exit}) {
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, rcAuth, exit, onExitChange, externalSummary, midSlot}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, rcAuth, tier, exit, onExitChange, externalSummary, midSlot}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
+  const methodChosen = !!p.chosenStrategy;
   const [itemize, setItemize] = useState(null); // null | "brrrr"-less: "closing" | "repair"
   // Exit-strategy toggle can be driven from outside (the analyzer lifts it so
   // the Save button can say what it's saving as); falls back to local state.
@@ -1871,6 +1929,43 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
   return (
     <div>
+      {/* Purchase method — chosen explicitly before the calculator opens */}
+      {!methodChosen && (
+        <Card style={{padding: mobile ? "22px 18px" : "28px 24px", marginBottom:14, textAlign:"center"}}>
+          <div style={{fontSize:17, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            How are you buying this property?
+          </div>
+          <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:4, marginBottom:18}}>
+            Pick a purchase method and the calculator opens for it. You can switch anytime.
+          </div>
+          <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12, maxWidth:520, margin:"0 auto"}}>
+            {[["cash","Cash","All-cash purchase. Simple math, full equity from day one.",C.cashPos],
+              ["finance","Finance","Loans, down payments, leverage. Model it like real life.",C.green]].map(([id,label,line,accent]) => (
+              <button key={id} onClick={()=>u("chosenStrategy",id)}
+                style={{
+                  padding:"18px 16px", borderRadius:C.r4, cursor:"pointer", textAlign:"center",
+                  background:"#fff", border:"1.5px solid "+C.border,
+                  transition:"border-color .12s, box-shadow .12s, transform .12s",
+                }}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=accent; e.currentTarget.style.boxShadow=C.sh3; e.currentTarget.style.transform="translateY(-1px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none";}}>
+                <span style={{
+                  display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  width:40, height:40, borderRadius:11, marginBottom:9,
+                  background:`${accent}1a`, color:accent,
+                }}>
+                  {id === "cash" ? <I.dollar size={19} stroke={2.2}/> : <I.building size={19} stroke={2.2}/>}
+                </span>
+                <span style={{display:"block", fontSize:16, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{label}</span>
+                <span style={{display:"block", fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.45}}>{line}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {methodChosen && (
+      <>
       {/* Strategy tabs — sticky on mobile so the cash/finance switch stays in view */}
       <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
         letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
@@ -2246,7 +2341,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           onClose={()=>setItemize(null)} mobile={mobile} />
       )}
       {compsOpen && (
-        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth} mobile={mobile}
+        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth} tier={tier} mobile={mobile}
           onUseRent={(rent, lo, hi) => {
             set({...p, rentAmount: rent, rentEstimate: rent, rentEstLow: lo, rentEstHigh: hi});
             setCompsOpen(false);
@@ -2264,6 +2359,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
       {/* Appreciation Projector */}
       <AppreciationProjector homeValue={p.homeValueMedian || p.homeValueHigh} purchasePrice={p.purchasePrice} mobile={mobile} />
+      </>
+      )}
 
     </div>
   );
@@ -5048,6 +5145,7 @@ function StrategySegments({value, onChange, counts}) {
 }
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
+                    analyzeLabel = "Analyze", hideSource = false,
                     savedScenario = null, savedFinancing = null}) {
   const c = classifyDeal(deal);
   // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
@@ -5201,6 +5299,11 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {deal.address}
+              {mobile && (deal.city || deal.state) && (
+                <span style={{color:C.textSub, fontWeight:500}}>
+                  {", "}{[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                </span>
+              )}
             </div>
           ) : (
             <div style={{fontSize:13, color:C.textMuted, fontFamily:F,
@@ -5208,9 +5311,17 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               <I.lock size={12} stroke={2.2}/> Address unlocked with Pro
             </div>
           )}
-          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:2}}>
-            {deal.source} · {deal.sourcedAt ? new Date(deal.sourcedAt+"T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric"}) : ""}
-          </div>
+          {!mobile && isPro && (deal.city || deal.state) && (
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+            </div>
+          )}
+          {!hideSource && (
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:2}}>
+              {deal.source} · {deal.sourcedAt ? new Date(deal.sourcedAt+"T00:00:00").toLocaleDateString("en-US", {month:"short", day:"numeric"}) : ""}
+            </div>
+          )}
           {/* Seller contact — Pro only, only when present on the deal */}
           {isPro && deal.seller && (deal.seller.phone || deal.seller.email) && (
             <div style={{marginTop:8, display:"flex", flexWrap:"wrap", gap:8, alignItems:"center"}}>
@@ -5272,7 +5383,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
         <div style={{display:"flex", gap:8, marginTop:"auto"}}
           onClick={e => e.stopPropagation()}>
           <button onClick={onPrimaryClick} {...btnStyle("primary","md", {flex:1})}>
-            {isPro ? <><I.search size={13}/> Analyze</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
+            {isPro ? <><I.search size={13}/> {analyzeLabel}</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
           </button>
           {isPro && (
             <button onClick={onSecondaryClick} {...btnStyle("secondary","md")} aria-label={saveAriaLabel}>
@@ -5958,11 +6069,12 @@ function StrategyCards({active, counts, onSelect, mobile}) {
   );
 }
 
-function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, mobile}) {
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
   const [selectedId, setSelectedId] = useState(null);
   const [strat, setStrat] = useState("all"); // all | buyhold | flip | wholesale
+  const [confirmRemove, setConfirmRemove] = useState(null); // deal pending delete
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
@@ -5974,12 +6086,12 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         <StrategyCards active="all" counts={{}} mobile={mobile}
           onSelect={st => st !== "all" && onBrowseStrategy(st)}/>
         <EmptyState
-          icon={<I.star size={22}/>}
-          title="Your watchlist is empty"
-          body="Browse the Deals page, tap Save on any deal that looks good, and it'll show up here."
+          icon={<I.search size={22}/>}
+          title="No saved deals yet"
+          body="Analyze any address and save it — your deals will live here, organized by strategy."
           action={
-            <button onClick={onBrowse} {...btnStyle("primary","md")}>
-              <I.star size={13}/> Browse deals
+            <button onClick={onAnalyzeNew} {...btnStyle("primary","md")}>
+              <I.search size={13}/> Analyze a Deal
             </button>
           }
         />
@@ -6047,10 +6159,12 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         {shown.map(({d}) => (
           <DealCard key={d.id} deal={d} isPro={isPro}
             onAnalyze={() => onAnalyze(d)}
-            onSave={() => onRemove(d)}
+            onSave={() => setConfirmRemove(d)}
             saveLabel="Remove"
             saveIcon={<I.trash size={13}/>}
             saveAriaLabel="Remove from saved deals"
+            analyzeLabel="View Deal"
+            hideSource
             savedScenario={d.scenario || null}
             savedFinancing={d.financing || null}
             onUpgrade={onUpgrade}
@@ -6068,11 +6182,48 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
             deal={d} isPro={isPro}
             onClose={() => setSelectedId(null)}
             onAnalyze={onAnalyze}
-            onSave={() => { onRemove(d); setSelectedId(null); }}
+            onSave={() => { setSelectedId(null); setConfirmRemove(d); }}
             onUpgrade={onUpgrade}
             mobile={mobile} />
         );
       })()}
+
+      {confirmRemove && (
+        <div onClick={e => e.target === e.currentTarget && setConfirmRemove(null)}
+          style={{position:"fixed", inset:0, zIndex:650, background:"rgba(9,9,11,.55)",
+            backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)",
+            display:"flex", alignItems:"center", justifyContent:"center", padding:24}}>
+          <div style={{background:C.card, borderRadius:C.r5, width:"100%", maxWidth:380,
+            padding:"26px 24px", boxShadow:C.sh4, border:"1px solid "+C.border, textAlign:"center"}}>
+            <div style={{width:52, height:52, borderRadius:"50%", margin:"0 auto 14px",
+              background:C.redSubtle, border:"1px solid "+C.redBorder, color:C.redDark,
+              display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <I.trash size={22}/>
+            </div>
+            <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+              Remove this deal?
+            </div>
+            <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, marginTop:6, lineHeight:1.5,
+              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {confirmRemove.address}
+            </div>
+            <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F, marginTop:2}}>
+              This can't be undone.
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:20}}>
+              <button onClick={()=>setConfirmRemove(null)} {...btnStyle("secondary","lg", {justifyContent:"center"})}>
+                Cancel
+              </button>
+              <button onClick={()=>{ onRemove(confirmRemove); setConfirmRemove(null); }}
+                style={{padding:"13px 18px", borderRadius:10, border:"1px solid "+C.red,
+                  background:C.red, color:"#fff", fontWeight:700, fontSize:14, fontFamily:F,
+                  cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:7}}>
+                <I.trash size={14}/> Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6390,6 +6541,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
+    if (!d.chosenStrategy) { setErr("Choose a purchase method (Cash or Finance) first."); return; }
+    if (!(d.purchasePrice > 0)) { setErr("Enter a purchase price before saving — the analysis is meaningless without it."); return; }
     // Member accounts: file it on the home watchlist (opens the scenario +
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
@@ -6673,14 +6826,6 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             <I.alert size={14}/> {err}
           </div>
         )}
-        {d.taxValue > 0 && (
-          <div style={{marginTop:12, background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2, padding:"10px 12px", fontSize:13, fontFamily:F, color:C.greenDark, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
-            <I.check size={14}/> Found data:
-            <span><b style={{fontWeight:600}}>Tax {$(d.expPropTax)}/mo</b></span>
-            {d.homeValueMedian>0 && <span>· Market <b style={{fontWeight:600}}>{$(d.homeValueMedian)}</b></span>}
-            {d.rentEstimate>0 && <span>· Rent est. <b style={{fontWeight:600}}>{$(d.rentEstimate)}/mo</b></span>}
-          </div>
-        )}
       </SectionBlock>
 
       {/* Property basics — auto-filled from records when an address is chosen */}
@@ -6693,25 +6838,37 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </div>
       )}
       {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
-        <Card style={{padding: mobile ? "12px 16px" : "14px 18px", marginBottom:18}}>
-          <div style={{display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(5, 1fr)", gap:14}}>
-            {[
-              ["Beds",  d.beds || "—"],
-              ["Baths", d.baths || "—"],
-              ["Sqft",  d.sqft ? d.sqft.toLocaleString() : "—"],
-              ["Year",  d.yearBuilt || "—"],
-              ["Type",  d.type || "—"],
-            ].map(([l, v]) => (
-              <div key={l}>
-                <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
-                  letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
-                <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
-                  fontVariantNumeric:"tabular-nums", marginTop:2,
-                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+        <div style={{
+          display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(5, 1fr)",
+          gap:1, background:C.border, border:"1px solid "+C.border,
+          borderRadius:C.r4, overflow:"hidden", marginBottom:18, boxShadow:C.sh2,
+        }}>
+          {[
+            ["Beds",  d.beds || "—",  I.bed],
+            ["Baths", d.baths || "—", I.bath],
+            ["Sqft",  d.sqft ? d.sqft.toLocaleString() : "—", I.ruler],
+            ["Year",  d.yearBuilt || "—", I.calendar],
+            ["Type",  d.type || "—", I.home],
+          ].map(([l, v, Ic]) => (
+            <div key={l} style={{
+              background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+              padding:"13px 10px", textAlign:"center",
+            }}>
+              <div style={{
+                width:32, height:32, borderRadius:9, margin:"0 auto 7px",
+                background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                <Ic size={15} stroke={2}/>
               </div>
-            ))}
-          </div>
-        </Card>
+              <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.015em",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+              <div style={{fontSize:9.5, color:C.textMuted, fontFamily:F, fontWeight:700,
+                letterSpacing:".06em", textTransform:"uppercase", marginTop:2}}>{l}</div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Calculator */}
@@ -6720,8 +6877,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
 
-      {/* Summary — always right above Notes */}
-      <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>
+      {/* Summary — always right above Notes (once a method is chosen) */}
+      {d.chosenStrategy && <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>}
 
       {/* Deal Notes */}
       <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
@@ -6731,6 +6888,13 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       </SectionBlock>
 
       {/* Save */}
+      {err && (
+        <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark,
+          background:C.redSubtle, border:"1px solid "+C.redBorder, borderRadius:C.r2,
+          padding:"10px 12px", fontSize:13, marginBottom:12, fontFamily:F}}>
+          <I.alert size={14}/> {err}
+        </div>
+      )}
       <button onClick={saveDeal}
         {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
         <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
@@ -7960,6 +8124,7 @@ export default function App() {
     // Auth for property-data calls: personal key when present (legacy),
     // else the session token for the server proxy — every signed-in user.
     rcAuth: {key: data.rentcastKey || "", token: user.idToken},
+    tier: data.tier || "free",
   };
 
   const dealAnalyzerProps = {
@@ -8026,7 +8191,8 @@ export default function App() {
             : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
-                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
+                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
+                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -8051,7 +8217,8 @@ export default function App() {
             : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
-                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
+                onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
+                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
         )}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
@@ -8091,7 +8258,8 @@ export default function App() {
                 : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                     onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
-                    onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}} mobile={mobile} />
+                    onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
+                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
