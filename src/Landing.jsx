@@ -470,7 +470,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
           }}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
               background:"#fff", padding:"14px 20px"}}>
-              <img src="/logo.png" alt="DealHive" style={{ height: 32, width: "auto" }}/>
+              <img src="/logo.png" alt="DealHive" style={{ height: 40, width: "auto" }}/>
               <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
                 style={{width:38, height:38, borderRadius:12, background:C.bgSoft,
                   border:"1px solid "+C.border, cursor:"pointer", color:C.text,
@@ -759,20 +759,23 @@ const FEATURES = [
     body: "Want inspiration? A feed of investor-friendly and off-market listings is one tap away, each one pre-scored by the same engine." },
 ];
 
-function Features() {
+function Features({ eyebrow = "Features" }) {
   return (
     <Section id="features" style={{ background: C.bgSoft }} hexes={HEX_SETS.b}>
       <SectionHeader
-        eyebrow="Features"
+        eyebrow={eyebrow}
         title="Everything you need to underwrite with confidence."
         subtitle="Not a CRM. Not a course. An analysis tool built by investors for investors."
       />
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
+      <div className="dh-feat-grid" style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+        maxWidth: 860, margin: "0 auto",
       }}>
         {FEATURES.map(f => (
           <div key={f.title} style={{
-            padding: 26, background: "#fff", border: "1px solid " + C.border, borderRadius: 14,
+            display: "flex", alignItems: "center", gap: 14,
+            padding: "18px 20px", background: "#fff",
+            border: "1px solid " + C.border, borderRadius: 14,
             transition: "transform .15s ease, box-shadow .15s ease, border-color .15s ease",
           }}
           onMouseEnter={e => {
@@ -786,25 +789,26 @@ function Features() {
             e.currentTarget.style.borderColor = C.border;
           }}>
             <div style={{
-              width: 40, height: 40, borderRadius: 10,
+              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
               background: C.orangeSubtle, border: "1px solid " + C.orangeBorder, color: C.orangeDark,
               display: "flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 14,
             }}>
               {f.icon}
             </div>
             <h3 style={{
-              fontSize: 16, fontWeight: 700, fontFamily: F, letterSpacing: "-0.015em",
-              margin: "0 0 8px", color: C.text,
+              fontSize: 15.5, fontWeight: 700, fontFamily: F, letterSpacing: "-0.015em",
+              margin: 0, color: C.text, lineHeight: 1.3,
             }}>
               {f.title}
             </h3>
-            <p style={{ fontSize: 14, color: C.textSub, fontFamily: F, lineHeight: 1.55, margin: 0 }}>
-              {f.body}
-            </p>
           </div>
         ))}
       </div>
+      <style>{`
+        @media (max-width: 560px) {
+          .dh-feat-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </Section>
   );
 }
@@ -1327,7 +1331,7 @@ function FeaturesPage({ onSignUp }) {
         title="Built to find deals, not manage spreadsheets."
         subtitle="Everything DealHive does exists to answer one question fast: is this property worth your money?"
       />
-      <Features/>
+      <Features eyebrow={null}/>
       {STRATEGIES.map((s, i) => (
         <Section key={s.id} style={{ background: i % 2 ? C.bgSoft : C.bg, padding: "64px 24px" }} hexes={i % 2 ? HEX_SETS.a : HEX_SETS.b}>
           <div style={{

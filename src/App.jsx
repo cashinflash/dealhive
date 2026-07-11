@@ -87,7 +87,7 @@ const fbSignIn = async (email, password) => {
 // Google OAuth Web client ID (Firebase console -> Authentication -> Google ->
 // Web SDK configuration). Empty string = Google button shows a friendly
 // "finishing setup" note instead of a broken flow.
-const GOOGLE_OAUTH_CLIENT_ID = "";
+const GOOGLE_OAUTH_CLIENT_ID = "916047270875-hmhipksaj16hq618uefn00eed7u2c9qm.apps.googleusercontent.com";
 const fbSignInWithIdp = async (postBody) => {
   const r = await fetch(`${FB_AUTH_URL}/accounts:signInWithIdp?key=${FB_API_KEY}`, {
     method:"POST", headers:{"Content-Type":"application/json"},
