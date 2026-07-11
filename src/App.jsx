@@ -5237,10 +5237,10 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
           )}
         </div>
 
-        {/* Hero metric */}
-        <div style={{background:C.bgSubtle, borderRadius:C.r2, padding:"10px 12px",
-          display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
-          <div>
+        {/* Metrics — 2x2 grid, everything centered, nothing ever clips */}
+        <div style={{background:C.bgSubtle, borderRadius:C.r2, padding:"12px 10px",
+          display:"grid", gridTemplateColumns:"1fr 1fr", gap:"14px 8px"}}>
+          <div style={{textAlign:"center"}}>
             <div style={{fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
               letterSpacing:".04em", textTransform:"uppercase"}}>{heroNumber.label}</div>
             <div style={{fontSize:18, fontWeight:700, color:heroNumber.color, fontFamily:F,
@@ -5248,16 +5248,14 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               {heroNumber.value}
             </div>
           </div>
-          <div style={{display:"flex", gap:14, flexShrink:0, flexWrap:"wrap", justifyContent:"flex-end"}}>
-            {secondaryMetrics.map(([l, v, vColor, keepCase]) => (
-              <div key={l} style={{textAlign:"right"}}>
-                <div style={{fontSize:10, color:C.textMuted, fontWeight:500, fontFamily:F,
-                  letterSpacing:".03em", textTransform: keepCase ? "none" : "uppercase"}}>{l}</div>
-                <div style={{fontSize:13, fontWeight:600, color: vColor || C.text, fontFamily:F,
-                  fontVariantNumeric:"tabular-nums", marginTop:1}}>{v}</div>
-              </div>
-            ))}
-          </div>
+          {secondaryMetrics.map(([l, v, vColor, keepCase]) => (
+            <div key={l} style={{textAlign:"center"}}>
+              <div style={{fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
+                letterSpacing:".03em", textTransform: keepCase ? "none" : "uppercase"}}>{l}</div>
+              <div style={{fontSize:15, fontWeight:700, color: vColor || C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", marginTop:2}}>{v}</div>
+            </div>
+          ))}
         </div>
 
         {/* Actions — stopPropagation so the card-level onClick doesn't fire */}
