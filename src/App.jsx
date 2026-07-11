@@ -384,6 +384,7 @@ const newProp = (base={}) => ({
   llc:"", type:"", beds:0, baths:0, sqft:0, yearBuilt:0,
   purchasePrice:0, repairCosts:0, rentAmount:0, taxValue:0, parcelId:"",
   homeValueLow:0, homeValueMedian:0, homeValueHigh:0,
+  lotSize:0,
   repairLight:0, repairMedium:0, repairFull:0,
   downPaymentPct:20, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
@@ -400,6 +401,7 @@ const newDeal = () => ({
   id:"d"+Date.now(), address:"", city:"", state:"", zip:"", fullAddress:"", lat:null, lng:null,
   type:"Single Family", beds:0, baths:0, sqft:0, yearBuilt:0, taxValue:0, parcelId:"",
   homeValueLow:0, homeValueMedian:0, homeValueHigh:0,
+  lotSize:0,
   repairLight:0, repairMedium:0, repairFull:0,
   purchasePrice:0, repairCosts:0, rentAmount:0,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
@@ -614,6 +616,7 @@ const applyRentcast = (prev, data, rates) => {
     beds:      p.bedrooms     || prev.beds,
     baths:     p.bathrooms    || prev.baths,
     sqft,
+    lotSize:   p.lotSize      || prev.lotSize || 0,
     yearBuilt: p.yearBuilt    || prev.yearBuilt,
     taxValue:  taxVal,
     parcelId:  p.assessorID   || prev.parcelId,
@@ -669,6 +672,7 @@ const I = {
   bath:        p => <IconSvg {...p} d={<g><path d="M4 12h16v2a5 5 0 01-5 5H9a5 5 0 01-5-5v-2z"/><path d="M6 12V5a2 2 0 012-2h1"/><path d="M7 19l-1 2M17 19l1 2"/></g>}/>,
   ruler:       p => <IconSvg {...p} d={<g><rect x="2.5" y="9" width="19" height="6" rx="1.5" transform="rotate(-32 12 12)"/><path d="M8 12.5l1.2 2M11.5 10.5l1.2 2M15 8.5l1.2 2"/></g>}/>,
   calendar:    p => <IconSvg {...p} d={<g><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></g>}/>,
+  parcel:      p => <IconSvg {...p} d={<g><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/></g>}/>,
   chevronLeft: p => <IconSvg {...p} d="M15 18l-6-6 6-6"/>,
   lock:        p => <IconSvg {...p} d={<g><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></g>}/>,
   star:        p => <IconSvg {...p} d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>,
@@ -4973,6 +4977,7 @@ const proFormaToFeedDeal = pf => ({
   lat: pf.lat || null, lng: pf.lng || null,
   type: pf.type || "Single Family",
   beds: pf.beds || 0, baths: pf.baths || 0, sqft: pf.sqft || 0,
+  lotSize: pf.lotSize || 0,
   yearBuilt: pf.yearBuilt || 0,
   price:  pf.purchasePrice || 0,
   rent:   pf.rentAmount || pf.rentEstimate || 0,
@@ -5012,6 +5017,7 @@ const dealToProForma = (deal) => {
     beds:         deal.beds || 0,
     baths:        deal.baths || 0,
     sqft:         deal.sqft || 0,
+    lotSize:      deal.lotSize || 0,
     yearBuilt:    deal.yearBuilt || 0,
     purchasePrice: deal.price || 0,
     repairCosts:   deal.repair || 0,
@@ -6839,16 +6845,17 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       )}
       {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
         <div style={{
-          display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(5, 1fr)",
+          display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(6, 1fr)",
           gap:1, background:C.border, border:"1px solid "+C.border,
           borderRadius:C.r4, overflow:"hidden", marginBottom:18, boxShadow:C.sh2,
         }}>
           {[
-            ["Beds",  d.beds || "—",  I.bed],
-            ["Baths", d.baths || "—", I.bath],
-            ["Sqft",  d.sqft ? d.sqft.toLocaleString() : "—", I.ruler],
-            ["Year",  d.yearBuilt || "—", I.calendar],
-            ["Type",  d.type || "—", I.home],
+            ["Beds",     d.beds || "—",  I.bed],
+            ["Baths",    d.baths || "—", I.bath],
+            ["Sqft",     d.sqft ? d.sqft.toLocaleString() : "—", I.ruler],
+            ["Lot Size", d.lotSize ? d.lotSize.toLocaleString() : "—", I.parcel],
+            ["Year",     d.yearBuilt || "—", I.calendar],
+            ["Type",     d.type || "—", I.home],
           ].map(([l, v, Ic]) => (
             <div key={l} style={{
               background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
