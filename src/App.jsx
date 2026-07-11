@@ -5078,15 +5078,17 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   // the exact numbers the analyzer showed; the card displays those verbatim.
   // Feed deals (no snapshot) fall back to the classifier's estimates.
   const a = savedScenario ? deal.analysis : null;
-  const cashLabel = a?.method === "cash" ? "All cash" : "Cash in";
+  // Cash the refi puts in your pocket beyond everything you spent (never
+  // negative on the card — a shortfall just reads $0 in pocket).
+  const brrrrInPocket = a ? Math.max((a.brrrrNetCash || 0) - (a.oop || 0), 0) : 0;
 
   const heroNumber =
     primary === "flip"      ? (a
       ? {label:"Est. profit", value:$(a.flipProfit), color:cfC(a.flipProfit)}
       : {label:"Est. profit", value:$(c.flip.profit), color:cfC(c.flip.profit)})
   : primary === "brrrr"     ? (a
-      ? {label:"CF after refi", value:$mo(a.brrrrCF), color:cfC(a.brrrrCF)}
-      : {label:"CF after refi", value:$mo(c.brrrr.cashFlow), color:cfC(c.brrrr.cashFlow)})
+      ? {label:"Cash Flow", value:$mo(a.brrrrCF), color:cfC(a.brrrrCF)}
+      : {label:"Cash Flow", value:$mo(c.brrrr.cashFlow), color:cfC(c.brrrr.cashFlow)})
   : primary === "wholesale" ? {label:"Spread", value:$(c.flip.arv - c.flip.totalIn), color:cfC(c.flip.arv - c.flip.totalIn)}
   : (a
       ? {label:"Cash flow", value:$mo(a.cashFlow), color:cfC(a.cashFlow)}
@@ -5095,17 +5097,19 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
 
   const secondaryMetrics =
     primary === "flip"      ? (a
-      ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], [cashLabel, $(a.oop)]]
-      : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["All in", $(c.flip.totalIn)]])
+      ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], ["Total Spent", $(a.oop)]]
+      : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]])
   : primary === "brrrr"     ? (a
-      ? [["Cash out", $(a.brrrrCashOut)], ["Net at refi", $(a.brrrrNetCash)], [cashLabel, $(a.oop)]]
-      : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["All in", $(c.brrrr.allIn)]])
+      ? [["Out of Pocket", $(a.oop), C.red],
+         ["Cash Out Refi", $(a.brrrrNetCash), C.cashPos],
+         ["Cash in Pocket", $(brrrrInPocket), C.cashPos]]
+      : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn), C.red]])
   : primary === "wholesale" ? [["ARV", $(c.flip.arv)], ["All in", $(c.flip.totalIn)], ["ROI", pct(c.flip.roi)]]
   : (a
-      ? [["Cap rate", pct(a.capRate)], ["CoC", pct(a.coc)], [cashLabel, $(a.oop)]]
+      ? [["Cap rate", pct(a.capRate)], ["CoC", pct(a.coc), null, true], ["Total Spent", $(a.oop)]]
       : cashMode
-        ? [["Cap rate", pct(c.buyHold.cashCap)], ["CoC", pct(c.buyHold.cashCoC)], ["All cash", $(c.buyHold.cashOOP)]]
-        : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC)], ["Down", $(c.buyHold.down)]]);
+        ? [["Cap rate", pct(c.buyHold.cashCap)], ["CoC", pct(c.buyHold.cashCoC), null, true], ["Total Spent", $(c.buyHold.cashOOP)]]
+        : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC), null, true], ["Down", $(c.buyHold.down)]]);
 
   const photo = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
 
@@ -5245,11 +5249,11 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             </div>
           </div>
           <div style={{display:"flex", gap:14, flexShrink:0, flexWrap:"wrap", justifyContent:"flex-end"}}>
-            {secondaryMetrics.map(([l, v]) => (
+            {secondaryMetrics.map(([l, v, vColor, keepCase]) => (
               <div key={l} style={{textAlign:"right"}}>
                 <div style={{fontSize:10, color:C.textMuted, fontWeight:500, fontFamily:F,
-                  letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
-                <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
+                  letterSpacing:".03em", textTransform: keepCase ? "none" : "uppercase"}}>{l}</div>
+                <div style={{fontSize:13, fontWeight:600, color: vColor || C.text, fontFamily:F,
                   fontVariantNumeric:"tabular-nums", marginTop:1}}>{v}</div>
               </div>
             ))}
