@@ -254,8 +254,10 @@ function PageHero({ eyebrow, title, subtitle }) {
 // `photo` is the gradient fallback (shown if `imgUrl` fails or while loading);
 // `imgUrl` is the real photo (Unsplash, hosted, whatever). Swap imgUrls in
 // HeroVisual below to change which photos appear in the hero.
-function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, beds, baths, sqft, badge, stats }) {
+function MockDealCard({ photo, imgUrl, imgFallbackUrl, address, price, rent, capRate, cashflow, beds, baths, sqft, badge, stats }) {
   const [imgFailed, setImgFailed] = useState(false);
+  const [useFallbackImg, setUseFallbackImg] = useState(false);
+  const activeImg = useFallbackImg ? imgFallbackUrl : imgUrl;
   return (
     <div style={{
       background: "#fff", borderRadius: 14, overflow: "hidden",
@@ -267,10 +269,10 @@ function MockDealCard({ photo, imgUrl, address, price, rent, capRate, cashflow, 
         height: 160, background: `linear-gradient(135deg, ${photo[0]} 0%, ${photo[1]} 100%)`,
         position: "relative", overflow: "hidden",
       }}>
-        {imgUrl && !imgFailed && (
-          <img src={imgUrl} alt=""
+        {activeImg && !imgFailed && (
+          <img src={activeImg} alt=""
             loading="lazy" decoding="async"
-            onError={() => setImgFailed(true)}
+            onError={() => { if (!useFallbackImg && imgFallbackUrl) setUseFallbackImg(true); else setImgFailed(true); }}
             style={{
               position: "absolute", inset: 0, width: "100%", height: "100%",
               objectFit: "cover", display: "block",
@@ -367,7 +369,8 @@ function HeroVisual() {
         <div className="dh-hv-c" style={{ transform: "translateX(-30px)" }}>
           <MockDealCard
             photo={["#e0e7ff", "#c7d2fe"]}
-            imgUrl="https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80"
+            imgUrl="/flip-house.jpg"
+            imgFallbackUrl="https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80"
             address="Memphis, TN 38106"
             price={75000}
             beds={3} baths={1} sqft={1180}
@@ -461,12 +464,12 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
             animation: "dhMenuFade .18s ease",
           }}>
           <div style={{
-            background: "#fff", borderRadius: "0 0 22px 22px",
-            boxShadow: "0 30px 60px -20px rgba(15,23,42,.35)",
-            padding: "14px 20px 24px",
+            borderRadius: "0 0 22px 22px", overflow: "hidden",
+            boxShadow: "0 30px 60px -20px rgba(15,23,42,.5)",
             animation: "dhMenuSlide .22s cubic-bezier(.2,.9,.3,1)",
           }}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              background:"#fff", padding:"14px 20px"}}>
               <img src="/logo.png" alt="DealHive" style={{ height: 32, width: "auto" }}/>
               <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
                 style={{width:38, height:38, borderRadius:12, background:C.bgSoft,
@@ -475,23 +478,32 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
                 {I.close}
               </button>
             </div>
-            {NAV_LINKS.map(([label, path], i) => (
-              <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "15px 4px", fontFamily: F, fontSize: 17, fontWeight: 600,
-                  color: C.text, textDecoration: "none", letterSpacing: "-0.01em",
-                  borderBottom: i < NAV_LINKS.length - 1 ? "1px solid " + C.borderSoft : "none",
-                }}>
-                {label}
-                <span style={{color: C.orange, display:"inline-flex"}}>{I.arrow}</span>
-              </a>
-            ))}
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:18}}>
-              <Button onClick={() => { setMobileOpen(false); onSignIn(); }} variant="secondary" size="lg"
-                style={{justifyContent:"center"}}>Log in</Button>
-              <Button onClick={() => { setMobileOpen(false); onSignUp(); }} size="lg"
-                style={{justifyContent:"center"}}>Get started</Button>
+            <div style={{
+              background: `radial-gradient(ellipse at 50% 0%, ${C.navySoft} 0%, ${C.navyDeep} 75%)`,
+              padding: "8px 20px 24px",
+            }}>
+              {NAV_LINKS.map(([label, path], i) => (
+                <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "16px 4px", fontFamily: F, fontSize: 17, fontWeight: 600,
+                    color: "#fff", textDecoration: "none", letterSpacing: "-0.01em",
+                    borderBottom: i < NAV_LINKS.length - 1 ? "1px solid rgba(255,255,255,.14)" : "none",
+                  }}>
+                  {label}
+                  <span style={{color: C.orange, display:"inline-flex"}}>{I.arrow}</span>
+                </a>
+              ))}
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:20}}>
+                <button onClick={() => { setMobileOpen(false); onSignIn(); }}
+                  style={{
+                    padding:"13px 18px", borderRadius:10, fontFamily:F, fontSize:15, fontWeight:600,
+                    background:"rgba(255,255,255,.08)", color:"#fff",
+                    border:"1px solid rgba(255,255,255,.28)", cursor:"pointer",
+                  }}>Log in</button>
+                <Button onClick={() => { setMobileOpen(false); onSignUp(); }} size="lg"
+                  style={{justifyContent:"center"}}>Get started</Button>
+              </div>
             </div>
           </div>
           <style>{`
@@ -583,18 +595,18 @@ function Hero({ onSignUp }) {
               {I.play} See how it works
             </Button>
           </div>
-          <div className="dh-hero-checks" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 16px", fontSize: 13, color: C.textMuted, fontFamily: F }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: C.cashPos }}>{I.check}</span> No credit card
-            </div>
-            <div className="dh-check-divider" style={{ width: 1, height: 14, background: C.border }}/>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: C.cashPos }}>{I.check}</span> Free tier forever
-            </div>
-            <div className="dh-check-divider" style={{ width: 1, height: 14, background: C.border }}/>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: C.cashPos }}>{I.check}</span> Cancel anytime
-            </div>
+          <div className="dh-hero-checks" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            {["No credit card", "Free tier forever", "Cancel anytime"].map(t => (
+              <span key={t} style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "7px 13px", borderRadius: 9999,
+                background: "#fff", border: "1px solid " + C.border,
+                boxShadow: "0 1px 2px rgba(15,23,42,.05)",
+                fontSize: 12.5, fontWeight: 600, color: C.textSub, fontFamily: F,
+              }}>
+                <span style={{ color: C.cashPos, display: "inline-flex" }}>{I.check}</span> {t}
+              </span>
+            ))}
           </div>
         </div>
 
@@ -632,8 +644,8 @@ function TrustBar() {
     }}>
       <div style={{ maxWidth: 1180, margin: "0 auto" }}>
         <div style={{
-          fontSize: 11, fontWeight: 600, color: C.textMuted, fontFamily: F,
-          letterSpacing: "0.12em", textTransform: "uppercase", textAlign: "center", marginBottom: 16,
+          fontSize: "clamp(17px, 2.2vw, 22px)", fontWeight: 700, color: C.navy, fontFamily: F,
+          letterSpacing: "-0.015em", textAlign: "center", marginBottom: 20,
         }}>
           Built for real estate investors, coast to coast
         </div>
