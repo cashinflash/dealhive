@@ -253,6 +253,37 @@ const itemValue = (it, price, loanAmt) =>
   it.type === "pct_price" ? Math.round(price   * (it.value||0)/100)
 : it.type === "pct_loan"  ? Math.round(loanAmt * (it.value||0)/100)
 : Math.round(it.value||0);
+// Monthly value of an operating-expense item: $/mo, $/yr, or % of gross rent.
+const expenseMonthly = (it, rent) =>
+  it.type === "year"     ? (it.value||0) / 12
+: it.type === "pct_rent" ? rent * ((it.value||0) / 100)
+: (it.value||0);
+
+const INCOME_PREFILL = () => [
+  {id:"oi1", name:"Parking",        type:"amount", value:0, rollIn:false},
+  {id:"oi2", name:"Laundry",        type:"amount", value:0, rollIn:false},
+  {id:"oi3", name:"Storage Rental", type:"amount", value:0, rollIn:false},
+];
+// Seeded from whatever's already in the four quick fields so switching to
+// itemized never changes the numbers out from under the user.
+const EXPENSES_PREFILL = p => [
+  {id:"ex1", name:"Property Taxes",       type:"year",     value:(p.expPropTax||0)*12,   rollIn:false},
+  {id:"ex2", name:"Insurance",            type:"year",     value:(p.expInsurance||0)*12, rollIn:false},
+  {id:"ex3", name:"Property Management",  type:"pct_rent", value:(p.rentAmount||0)>0 ? Math.round(((p.expManagement||0)/(p.rentAmount||1))*100) : 8, rollIn:false},
+  {id:"ex4", name:"Maintenance",          type:"pct_rent", value:10, rollIn:false},
+  {id:"ex5", name:"Capital Expenditures", type:"pct_rent", value:5,  rollIn:false},
+  {id:"ex6", name:"HOA Fees",             type:"amount",   value:0,  rollIn:false},
+  {id:"ex7", name:"Utilities",            type:"amount",   value:p.expUtilities||0, rollIn:false},
+  {id:"ex8", name:"Landscaping",          type:"amount",   value:0,  rollIn:false},
+  {id:"ex9", name:"Accounting & Legal",   type:"amount",   value:0,  rollIn:false},
+];
+const EXPENSE_TYPES = [
+  {value:"amount",   label:"$ Per Month",  input:"$"},
+  {value:"year",     label:"$ Per Year",   input:"$"},
+  {value:"pct_rent", label:"% of Rent",    input:"%"},
+];
+const AMOUNT_ONLY_TYPES = [{value:"amount", label:"$ Per Month", input:"$"}];
+
 const itemTotals = (items, price, loanAmt) => {
   const list = Array.isArray(items) ? items : [];
   let upFront = 0, rolled = 0;
@@ -265,14 +296,14 @@ const itemTotals = (items, price, loanAmt) => {
 
 const calc = (p) => {
   const vacancyFactor = 1 - ((p.vacancyRate||0)/100);
-  const effectiveRent = (p.rentAmount||0) * vacancyFactor;
-  const exp  = (p.expPropTax||0)+(p.expUtilities||0)+(p.expManagement||0)+(p.expInsurance||0);
+  const effectiveRent = (p.rentAmount||0) * vacancyFactor + (p.otherIncome||0);
+  const expItemized = Array.isArray(p.expenseItems) && p.expenseItems.length
+    ? Math.round(p.expenseItems.reduce((t, it) => t + expenseMonthly(it, p.rentAmount||0), 0))
+    : null;
+  const exp  = expItemized != null ? expItemized
+    : (p.expPropTax||0)+(p.expUtilities||0)+(p.expManagement||0)+(p.expInsurance||0);
   const noi  = effectiveRent - exp;
-  // "I already own it" mode: the purchase is history, so out-of-pocket for
-  // any new plan is just repairs (+ closing); the existing loan balance is
-  // what refis and sales must pay off.
-  const owned    = !!p.alreadyOwned;
-  const cashOOP  = (owned ? 0 : (p.purchasePrice||0))+(p.repairCosts||0);
+  const cashOOP  = (p.purchasePrice||0)+(p.repairCosts||0);
   const cashCF   = effectiveRent - exp;
   const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
   // Cap rate is NOI over purchase price (property metric); CoC is cash flow
@@ -280,11 +311,15 @@ const calc = (p) => {
   // identical on cash deals.
   const cashCap  = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
 
-  // Cash purchases default to $0 closing costs; financed deals to the
-  // standard default. An explicit value always wins on both tabs.
-  const stratForCC = p.chosenStrategy || "finance";
-  const cc = p.closingCosts != null ? p.closingCosts : (stratForCC === "cash" ? 0 : DEFAULT_CLOSING);
-  const hasLoans = !owned && Array.isArray(p.loans) && p.loans.length > 0;
+  // Purchase costs: itemized breakdown wins; otherwise a % of price (default
+  // 3%); legacy saves that stored a flat $ amount keep honoring it.
+  const ccItemized = Array.isArray(p.closingItems) && p.closingItems.length > 0;
+  const cc = ccItemized && p.closingCosts != null
+    ? p.closingCosts
+    : (p.purchaseCostsPct != null || p.closingCosts == null)
+      ? Math.round((p.purchasePrice||0) * ((p.purchaseCostsPct ?? 3) / 100))
+      : p.closingCosts;
+  const hasLoans = Array.isArray(p.loans) && p.loans.length > 0;
 
   let down, loan, mtg, finOOP, rolledIn = 0, loanBreakdown = [];
   if (hasLoans) {
@@ -304,14 +339,6 @@ const calc = (p) => {
     }));
     finOOP = Math.max(0, (p.purchasePrice||0) + (p.repairCosts||0) + cc - loan);
     down   = Math.max(0, (p.purchasePrice||0) - loan);
-  } else if (owned) {
-    // Existing property: today's balance and payment, no acquisition cash.
-    // On the Cash tab "owned" means owned free and clear — no balance.
-    const ownedBal = stratForCC === "cash" ? 0 : (p.ownedLoanBalance || 0);
-    down   = 0;
-    loan   = ownedBal;
-    mtg    = stratForCC === "cash" ? 0 : (p.ownedMonthlyPI || 0);
-    finOOP = (p.repairCosts||0) + cc;
   } else {
     // Legacy single-loan model.
     down   = (p.purchasePrice||0) * (p.downPaymentPct||20)/100;
@@ -319,13 +346,6 @@ const calc = (p) => {
     mtg    = monthlyPI(loan, p.interestRate||7.5);
     finOOP = down + (p.repairCosts||0) + cc;
   }
-
-  // Equity in an owned property: current value (or ARV as fallback) minus
-  // what's owed. Zero-balance owners see their full value as equity.
-  const equity = owned
-    ? Math.round((p.homeValueMedian || p.homeValueHigh || p.purchasePrice || 0)
-        - (stratForCC === "cash" ? 0 : (p.ownedLoanBalance || 0)))
-    : 0;
 
   const finCF    = effectiveRent - exp - mtg;
   const finCoC   = finOOP>0 ? (finCF*12/finOOP)*100 : 0;
@@ -357,7 +377,6 @@ const calc = (p) => {
   return {
     exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
-    owned, equity,
     rolledIn, loanBreakdown, holdMonths, flipHolding,
     finFlipHolding, finFlipProfit, finFlipROI, brrrNetCash,
     brrrCashOut, brrrMtg, brrrCF, agentFee, flipProfit, flipROI,
@@ -406,8 +425,8 @@ const newDeal = () => ({
   purchasePrice:0, repairCosts:0, rentAmount:0,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
   downPaymentPct:20, interestRate:7.5, closingCosts:null,
-  loans:[], holdMonths:6,
-  alreadyOwned:false, ownedLoanBalance:0, ownedMonthlyPI:0,
+  loans:[], holdMonths:6, purchaseCostsPct:3,
+  otherIncome:0, incomeItems:null, expenseItems:null,
   closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
@@ -1414,7 +1433,8 @@ const ITEM_TYPE_LABELS = {
   pct_loan:  "% of Loan Amount",
 };
 
-function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, price = 0, loanAmt = 0, mobile}) {
+function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, price = 0, loanAmt = 0, mobile,
+                       typeOptions = null, computeValue = null, allowRollIn = true, perMonth = false}) {
   const [items, setItems] = useState(() =>
     Array.isArray(initialItems) && initialItems.length ? initialItems.map(x => ({...x})) : prefill());
   const [editingId, setEditingId] = useState(null);
@@ -1471,7 +1491,18 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
     return () => window.removeEventListener("keydown", handler, true);
   }, [onClose]);
 
-  const totals = itemTotals(items, price, loanAmt);
+  const types = typeOptions || [
+    {value:"amount",    label:"Set Amount",           input:"$"},
+    {value:"pct_price", label:"% of Purchase Price",  input:"%"},
+    {value:"pct_loan",  label:"% of Loan Amount",     input:"%"},
+  ];
+  const typeOf  = v => types.find(t => t.value === v) || types[0];
+  const calcVal = it => computeValue ? computeValue(it) : itemValue(it, price, loanAmt);
+  const totals = (() => {
+    let upFront = 0, rolled = 0;
+    items.forEach(it => { const v = calcVal(it); if (allowRollIn && it.rollIn) rolled += v; else upFront += v; });
+    return {upFront, rolled, total: upFront + rolled};
+  })();
   const update = (id, patch) => setItems(list => list.map(x => x.id === id ? {...x, ...patch} : x));
   const remove = id => { setItems(list => list.filter(x => x.id !== id)); if (editingId === id) setEditingId(null); };
   const addItem = () => {
@@ -1507,7 +1538,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 
         <div style={{display:"flex", flexDirection:"column", gap:8}}>
           {items.map(it => {
-            const v = itemValue(it, price, loanAmt);
+            const v = calcVal(it);
             const editing = editingId === it.id;
             return (
               <div key={it.id} data-dh-item={it.id}
@@ -1535,13 +1566,13 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
                     <div style={{fontSize:13.5, fontWeight:600, color:C.text, fontFamily:F,
                       overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{it.name}</div>
                     <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
-                      {it.type === "amount" ? "$ Up Front" : ITEM_TYPE_LABELS[it.type]}
-                      {it.type !== "amount" && ` (${it.value || 0}%)`}
-                      {it.rollIn ? " · Rolled Into Loan" : ""}
+                      {typeOf(it.type).label}
+                      {typeOf(it.type).input === "%" && ` (${it.value || 0}%)`}
+                      {allowRollIn && it.rollIn ? " · Rolled Into Loan" : ""}
                     </div>
                   </div>
                   <span style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F,
-                    fontVariantNumeric:"tabular-nums", flexShrink:0}}>{$(v)}</span>
+                    fontVariantNumeric:"tabular-nums", flexShrink:0}}>{$(v)}{perMonth && <span style={{fontSize:10.5, color:C.textMuted, fontWeight:500}}>/mo</span>}</span>
                   <button onClick={()=>setEditingId(editing ? null : it.id)} aria-label="Edit item"
                     style={{width:30, height:30, borderRadius:C.r1, background:"transparent",
                       border:"1px solid "+C.border, cursor:"pointer", color:C.textSub,
@@ -1565,16 +1596,17 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
                       <div>
                         <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Type</label>
                         <select value={it.type} onChange={e=>update(it.id, {type:e.target.value})} style={iS(mobile)}>
-                          {Object.entries(ITEM_TYPE_LABELS).map(([k,l]) => <option key={k} value={k}>{l}</option>)}
+                          {types.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       </div>
                       <div>
                         <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>
-                          {it.type === "amount" ? "Amount ($)" : "Percent (%)"}
+                          {typeOf(it.type).input === "%" ? "Percent (%)" : "Amount ($)"}
                         </label>
                         <input type="number" value={it.value || ""} placeholder="0"
                           onChange={e=>update(it.id, {value: parseFloat(e.target.value) || 0})} style={iS(mobile)}/>
                       </div>
+                      {allowRollIn && (
                       <div>
                         <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Roll Into Loan?</label>
                         <div style={{display:"flex", padding:3, background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r2}}>
@@ -1588,6 +1620,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
                           ))}
                         </div>
                       </div>
+                      )}
                     </div>
                     <div style={{display:"flex", marginTop:12}}>
                       <button onClick={()=>setEditingId(null)} {...btnStyle("primary","sm", {marginLeft:"auto"})}>Done</button>
@@ -1604,22 +1637,26 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
         </button>
 
         <div style={{marginTop:16, border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 14px", background:C.bgSubtle}}>
-          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:4}}>
-            <span>Paid Up Front</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.upFront)}</span>
-          </div>
-          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:6}}>
-            <span>Rolled Into Loan</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.rolled)}</span>
-          </div>
+          {allowRollIn && (
+            <>
+              <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:4}}>
+                <span>Paid Up Front</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.upFront)}</span>
+              </div>
+              <div style={{display:"flex", justifyContent:"space-between", fontSize:13, fontFamily:F, color:C.textSub, marginBottom:6}}>
+                <span>Rolled Into Loan</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.rolled)}</span>
+              </div>
+            </>
+          )}
           <div style={{display:"flex", justifyContent:"space-between", fontSize:14.5, fontWeight:700, fontFamily:F, color:C.text,
-            paddingTop:8, borderTop:"1px solid "+C.border}}>
-            <span>Total</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.total)}</span>
+            paddingTop: allowRollIn ? 8 : 0, borderTop: allowRollIn ? "1px solid "+C.border : "none"}}>
+            <span>Total{perMonth ? " / mo" : ""}</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(totals.total)}{perMonth ? "/mo" : ""}</span>
           </div>
         </div>
 
         <div style={{display:"flex", gap:10, marginTop:16}}>
           <button onClick={onClose} {...btnStyle("secondary","lg", {flex:1, justifyContent:"center"})}>Cancel</button>
           <button onClick={()=>onApply(items, totals)} {...btnStyle("primary","lg", {flex:2, justifyContent:"center"})}>
-            <I.check size={14}/> Apply {$(totals.total)}
+            <I.check size={14}/> Apply {$(totals.total)}{perMonth ? "/mo" : ""}
           </button>
         </div>
       </div>
@@ -1923,6 +1960,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   // pull provided one, else the purchase price. A manual edit to the field
   // (expPropTaxAuto === false) or a pulled tax record turns the sync off.
   useEffect(() => {
+    if (Array.isArray(p.expenseItems) && p.expenseItems.length) return;
     if (p.expPropTaxAuto === false) return;
     const rate  = STATE_TAX_RATES[(p.state||"").toUpperCase()] || DEFAULT_TAX_RATE;
     const basis = (p.taxValue||0) > 0 ? p.taxValue : (p.purchasePrice||0);
@@ -2001,55 +2039,22 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Purchase — shared by both tabs */}
         <SectionBlock title="Purchase" color={C.green} icon={I.tag}>
-          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:12}}>
-            <span style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>I Already Own This Property</span>
-            <button onClick={()=>u("alreadyOwned", !p.alreadyOwned)} aria-pressed={!!p.alreadyOwned}
-              style={{
-                width:46, height:26, borderRadius:9999, border:"1px solid "+(p.alreadyOwned ? C.green : C.border),
-                background: p.alreadyOwned ? C.green : C.bgSubtle, cursor:"pointer", position:"relative",
-                transition:"background .15s, border-color .15s", flexShrink:0,
-              }}>
-              <span style={{
-                position:"absolute", top:2, left: p.alreadyOwned ? 22 : 2,
-                width:20, height:20, borderRadius:"50%", background:"#fff",
-                boxShadow:"0 1px 3px rgba(9,9,11,.25)", transition:"left .15s",
-              }}/>
-            </button>
-          </div>
-          <InputField label={p.alreadyOwned ? "Original Purchase Price" : "Purchase Price"}
-            val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$"
-            note={p.alreadyOwned ? "For your records — not counted in out-of-pocket" : undefined}
-            mobile={mobile} />
-          {p.alreadyOwned && (
-            <>
-              {s === "finance" && (
-                <>
-                  <InputField label="Current Loan Balance" val={p.ownedLoanBalance} set={v=>u("ownedLoanBalance",v)} pre="$"
-                    note="Today's payoff amount" mobile={mobile} />
-                  <InputField label="Current Monthly Payment (P&I)" val={p.ownedMonthlyPI} set={v=>u("ownedMonthlyPI",v)} pre="$" mobile={mobile} />
-                </>
-              )}
-              <DataRow label="Estimated Equity" value={$(m.equity)} color={cfC(m.equity)} />
-              {s === "cash" && (
-                <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:2, lineHeight:1.5}}>
-                  Owned free and clear — full value counts as equity.
-                </div>
-              )}
-            </>
-          )}
-          <InputField label="Closing Costs" val={p.closingCosts!=null?p.closingCosts:(s==="cash"?0:DEFAULT_CLOSING)}
-            set={v=>set({...p, closingCosts:v, closingItems:null})} pre="$"
-            note={Array.isArray(p.closingItems) && p.closingItems.length ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown` : undefined}
+          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+          <InputField label="Purchase Costs" val={p.purchaseCostsPct ?? 3}
+            set={v=>set({...p, purchaseCostsPct:v, closingItems:null, closingCosts:null})} suf="%"
+            note={Array.isArray(p.closingItems) && p.closingItems.length
+              ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown`
+              : `= ${$(m.cc)} (closing, lender, title…)`}
             mobile={mobile} />
           <button onClick={()=>setItemize("closing")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.closingItems) && p.closingItems.length ? "Edit Itemized Costs" : "Itemize"}
           </button>
-          <InputField label="Repair Costs" val={p.repairCosts}
+          <InputField label="Rehab Costs" val={p.repairCosts}
             set={v=>set({...p, repairCosts:v, repairItems:null})} pre="$"
             note={Array.isArray(p.repairItems) && p.repairItems.length ? `Itemized (${p.repairItems.length} items) — typing here clears the breakdown` : undefined}
             mobile={mobile} />
           <button onClick={()=>setItemize("repair")} {...btnStyle("secondary","sm", {marginBottom:12})}>
-            <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Repairs" : "Itemize"}
+            <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Rehab" : "Itemize"}
           </button>
           <InputField label="Hold Period (Months)" val={p.holdMonths ?? 6} set={v=>u("holdMonths",v)}
             note="Time to rehab (and for flips, to sell). Longer holds increase holding costs and reduce profit."
@@ -2078,6 +2083,13 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             </div>
           )}
           <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
+          <InputField label="Other Income / mo" val={p.otherIncome}
+            set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
+            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
+            mobile={mobile} />
+          <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+            <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
+          </button>
           {(rcOk(rcAuth) && apiLookup) && (
             <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
               title={p.address ? undefined : "Enter the property address first"}
@@ -2093,17 +2105,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {/* Financing — Finance tab only */}
         {s==="finance" && (
         <SectionBlock title="Financing" color={C.blue} icon={I.building}>
-          {p.alreadyOwned ? (
-            <>
-              <DataRow label="Existing Loan Balance" value={$(p.ownedLoanBalance||0)} />
-              <DataRow label="Current Payment / mo" value={$mo(p.ownedMonthlyPI||0)} />
-              <DataRow label="Estimated Equity" value={$(m.equity)} color={cfC(m.equity)} />
-              <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
-                Analyzing a property you own: your current loan carries the numbers here.
-                Use the BRRRR section to model a cash-out refinance against your equity.
-              </div>
-            </>
-          ) : (!Array.isArray(p.loans) || p.loans.length === 0) ? (
+          {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
             <>
               <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
               <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
@@ -2188,7 +2190,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <DataRow label="Loan Payments / mo" value={$mo(m.mtg)} />
             <DataRow label="Cash Needed" value={$(m.finOOP)} />
             <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"2px 0 6px"}}>
-              Purchase + repairs + closing costs, minus loan proceeds
+              Purchase + rehab + purchase costs, minus loan proceeds
             </div>
             <DataRow label="Cash Flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
             <DataRow label="Cash-on-Cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
@@ -2199,11 +2201,35 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {/* Monthly expenses — shared */}
         <SectionBlock title="Monthly Expenses" color={C.amber} icon={I.receipt}>
-          <InputField label="Property Tax / mo" val={p.expPropTax}
-            set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
-          <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
-          <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
-          <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
+          {Array.isArray(p.expenseItems) && p.expenseItems.length ? (
+            <>
+              {p.expenseItems.map(it => (
+                <DataRow key={it.id} label={it.name}
+                  value={$(Math.round(expenseMonthly(it, p.rentAmount||0))) + "/mo"} />
+              ))}
+              <div style={{display:"flex", gap:8, margin:"12px 0"}}>
+                <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {flex:1, justifyContent:"center"})}>
+                  <I.edit size={12}/> Edit Items
+                </button>
+                <button onClick={()=>u("expenseItems", null)}
+                  style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
+                    fontSize:12, fontFamily:F, padding:"4px 8px"}}>
+                  Switch to Simple
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <InputField label="Property Tax / mo" val={p.expPropTax}
+                set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
+              <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
+              <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
+              <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
+              <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+                <I.edit size={12}/> Itemize Expenses
+              </button>
+            </>
+          )}
           <DataRow label="Total Expenses / mo" value={$(m.exp)} />
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
@@ -2352,8 +2378,24 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           }}
           onClose={()=>setCompsOpen(false)} />
       )}
+      {itemize === "income" && (
+        <ItemizeSheet title="Itemized Other Income"
+          items={p.incomeItems} prefill={INCOME_PREFILL}
+          typeOptions={AMOUNT_ONLY_TYPES} allowRollIn={false} perMonth
+          computeValue={it => Math.round(it.value || 0)}
+          onApply={(items, totals)=>{ set({...p, incomeItems:items, otherIncome:totals.total}); setItemize(null); }}
+          onClose={()=>setItemize(null)} mobile={mobile} />
+      )}
+      {itemize === "expenses" && (
+        <ItemizeSheet title="Itemized Operating Expenses"
+          items={p.expenseItems} prefill={() => EXPENSES_PREFILL(p)}
+          typeOptions={EXPENSE_TYPES} allowRollIn={false} perMonth
+          computeValue={it => Math.round(expenseMonthly(it, p.rentAmount||0))}
+          onApply={(items)=>{ set({...p, expenseItems:items}); setItemize(null); }}
+          onClose={()=>setItemize(null)} mobile={mobile} />
+      )}
       {itemize === "repair" && (
-        <ItemizeSheet title="Itemized Repair Costs"
+        <ItemizeSheet title="Itemized Rehab Costs"
           items={p.repairItems} prefill={REPAIR_PREFILL}
           price={p.purchasePrice||0}
           loanAmt={Array.isArray(p.loans) && p.loans.length ? p.loans.reduce((sum,l)=>sum+loanAmount(l,p),0) : m.loan}
@@ -6127,21 +6169,6 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
 
   return (
     <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-        gap:16, flexWrap:"wrap", marginBottom:20}}>
-        <div style={{minWidth:0}}>
-          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-            My Saved Deals
-          </h1>
-          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
-            {ordered.length} deal{ordered.length===1?"":"s"} in your watchlist
-          </p>
-        </div>
-        <button onClick={onBrowse} {...btnStyle("secondary","md")}>
-          <I.star size={13}/> Browse more deals
-        </button>
-      </div>
-
       <StrategyCards active={strat} counts={counts} onSelect={setStrat} mobile={mobile}/>
 
       {shown.length === 0 ? (
@@ -7624,10 +7651,10 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
 function MobileNav({page, setPage, alertCount, isAdmin}) {
   const allTabs = [
     {id:"dashboard",  Icon:I.home,           label:"Home"},
-    {id:"deals",      Icon:I.star,           label:"Deals"},
+    {id:"deal",       Icon:I.search,         label:"Analyze"},
     {id:"properties", Icon:I.building,       label:"Props",   adminOnly:true},
     {id:"projects",   Icon:I.clipboardCheck, label:"Tasks",   adminOnly:true},
-    {id:"deal",       Icon:I.search,         label:"Analyze"},
+    {id:"deals",      Icon:I.star,           label:"Deals"},
     {id:"comps",      Icon:I.chart,          label:"Comps",   adminOnly:true},
     {id:"settings",   Icon:I.settings,       label:"More"},
   ];
@@ -7668,7 +7695,7 @@ function MobileNav({page, setPage, alertCount, isAdmin}) {
 }
 
 // -- Mobile Header -------------------------------------------------------------
-function MobileHeader({page, onBack, toast}) {
+function MobileHeader({page, onBack, toast, onAddProperty}) {
   const showBack = page==="property";
   const titles = {
     dashboard:"Portfolio", properties:"Properties", projects:"Projects",
@@ -7704,6 +7731,11 @@ function MobileHeader({page, onBack, toast}) {
           <img src="/logo.png" alt="DealHive" style={{height:36, width:"auto", maxWidth:"66%",
             objectFit:"contain", display:"block", flexShrink:0}} />
           <div style={{flex:1, minWidth:0}} />
+          {page === "dashboard" && onAddProperty && (
+            <button onClick={onAddProperty} {...btnStyle("primary","sm", {flexShrink:0})}>
+              <I.plus size={13} stroke={2.4}/> Add Property
+            </button>
+          )}
         </>
       )}
       {toast && (
@@ -7719,7 +7751,7 @@ function MobileHeader({page, onBack, toast}) {
 }
 
 // -- Desktop Top Bar -----------------------------------------------------------
-function DesktopTopBar({page, propAddress, toast}) {
+function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
   const titles = {
     dashboard:"Dashboard", properties:"Properties", projects:"Projects",
     deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
@@ -7732,6 +7764,11 @@ function DesktopTopBar({page, propAddress, toast}) {
       <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
         {titles[page]||"DealHive"}
       </div>
+      {page === "dashboard" && onAddProperty && !toast && (
+        <button onClick={onAddProperty} {...btnStyle("primary","sm")}>
+          <I.plus size={13} stroke={2.4}/> Add Property
+        </button>
+      )}
       {toast && (
         <span style={{display:"inline-flex", alignItems:"center", gap:6,
           fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
@@ -8179,7 +8216,8 @@ export default function App() {
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"clip"}}>
       <AppHexBg/>
       <div style={{position:"relative", zIndex:1}}>
-      <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft} />
+      <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft}
+        onAddProperty={()=>setPage("deal")} />
       <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
         <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
@@ -8245,7 +8283,8 @@ export default function App() {
       <AppHexBg/>
       <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} isAdmin={isAdmin} />
       <div style={{marginLeft:230, flex:1, minWidth:0, position:"relative", zIndex:1}}>
-        <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast} />
+        <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast}
+          onAddProperty={()=>setPage("deal")} />
         <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
         <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
