@@ -1929,6 +1929,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const [avmBusy, setAvmBusy] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
   const [compsOpen, setCompsOpen] = useState(false);
+  // One-time attention pulse on the exit toggle, fired just after the
+  // recommendation card lands. Never repeats within a session.
+  const [exitPulse, setExitPulse] = useState(false);
+  const pulsedRef = useRef(false);
+  useEffect(() => {
+    if (pulsedRef.current) return;
+    if (!methodChosen || !(p.purchasePrice > 0)) return;
+    pulsedRef.current = true;
+    const t1 = setTimeout(() => setExitPulse(true), 400);
+    const t2 = setTimeout(() => setExitPulse(false), 3400);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [methodChosen, p.purchasePrice]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Check Home Value" — RentCast value AVM for the entered address. Fills the
   // ARV field (high end of the range) and keeps the median for reference.
@@ -2277,10 +2289,11 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </div>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
-          {[["buyhold","Buy & Hold",C.cashPos],["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent]) => {
+          {[["buyhold","Buy & Hold",C.cashPos],["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent], i) => {
             const active = (xtra || "buyhold") === id;
             return (
               <button key={id} onClick={()=>setXtra(id === "buyhold" || active ? null : id)}
+                className={exitPulse ? "dh-exit-pulse" : undefined}
                 style={{
                   flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
                   background: active ? accent : "transparent",
@@ -2289,6 +2302,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                   letterSpacing:"-0.005em",
                   boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
                   transition:"background .15s, color .15s, box-shadow .15s",
+                  "--dh-pulse": `${accent}59`,
+                  animationDelay: exitPulse ? `${i * 0.18}s` : undefined,
                 }}>
                 {label}
               </button>
@@ -7867,6 +7882,9 @@ export default function App() {
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
       input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
       @keyframes dhSpin{to{transform:rotate(360deg)}}
+      @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+      .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
+      @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
       input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
       input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
