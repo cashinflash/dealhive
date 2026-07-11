@@ -469,7 +469,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
             animation: "dhMenuSlide .22s cubic-bezier(.2,.9,.3,1)",
           }}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-              background:"#fff", padding:"14px 20px"}}>
+              background:"#fff", padding:"14px 24px"}}>
               <img src="/logo.png" alt="DealHive" style={{ height: 40, width: "auto" }}/>
               <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
                 style={{width:38, height:38, borderRadius:12, background:C.bgSoft,
@@ -480,7 +480,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
             </div>
             <div style={{
               background: `radial-gradient(ellipse at 50% 0%, ${C.navySoft} 0%, ${C.navyDeep} 75%)`,
-              padding: "8px 20px 24px",
+              padding: "8px 24px 24px",
             }}>
               {NAV_LINKS.map(([label, path], i) => (
                 <a key={path} href={path} onClick={e => { e.preventDefault(); go(path); }}
