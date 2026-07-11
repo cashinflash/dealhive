@@ -967,6 +967,29 @@ function EmptyState({icon, title, body, action}) {
 // <img> that fails closed: if the src errors (dead CDN link, Street View
 // key/billing rejection, expired listing photo), render `fallback` instead
 // of the browser's broken-image icon. Resets when src changes.
+// Fixed, whisper-quiet hive backdrop behind every logged-in page. Content
+// sits in a zIndex:1 wrapper above it; opacities stay low so cards and text
+// keep full contrast.
+function AppHexBg() {
+  const Hexa = ({size, color, opacity, outline=false, blur=0, style}) => (
+    <svg width={size} height={size*1.15} viewBox="0 0 100 115" aria-hidden="true"
+      style={{position:"absolute", pointerEvents:"none", opacity,
+        filter: blur ? `blur(${blur}px)` : "none", ...style}}>
+      <polygon points="50,6 94,31 94,84 50,109 6,84 6,31"
+        fill={outline ? "none" : color} stroke={color} strokeWidth="11" strokeLinejoin="round"/>
+    </svg>
+  );
+  return (
+    <div aria-hidden="true" style={{position:"fixed", inset:0, zIndex:0, pointerEvents:"none", overflow:"hidden"}}>
+      <Hexa size={360} color={C.greenLight}  opacity={0.38} blur={48} style={{top:-110, right:-90}}/>
+      <Hexa size={120} color={C.greenBorder} opacity={0.16} outline style={{top:"24%", left:-44}}/>
+      <Hexa size={54}  color={C.green}       opacity={0.07} style={{top:"11%", right:"24%"}}/>
+      <Hexa size={280} color={C.greenLight}  opacity={0.32} blur={42} style={{bottom:-100, left:"16%"}}/>
+      <Hexa size={92}  color={C.greenBorder} opacity={0.14} outline style={{bottom:"20%", right:"5%"}}/>
+    </div>
+  );
+}
+
 function SafeImg({src, alt="", style, fallback=null, ...rest}) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [src]);
@@ -7792,7 +7815,7 @@ export default function App() {
   // Unknown unauth paths fall back to the landing home so stale bookmarks
   // still land somewhere sensible. Legal pages stay reachable even when
   // signed in (Settings links + App Store review both need that).
-  const navigate = p => { window.history.pushState({}, "", p); setPath(p); };
+  const navigate = p => { window.history.pushState({}, "", p); setPath(p); window.scrollTo(0, 0); };
   const marketingProps = {
     page: path,
     navigate,
@@ -7970,6 +7993,8 @@ export default function App() {
   // Mobile layout
   if (mobile) return (
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"clip"}}>
+      <AppHexBg/>
+      <div style={{position:"relative", zIndex:1}}>
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft} />
       <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
@@ -8024,14 +8049,16 @@ export default function App() {
           onCancel={()=>setSavePicker(null)}
           onConfirm={(scenario, financing)=>saveDealToWatchlist(savePicker.deal, scenario, financing)} />
       )}
+      </div>
     </div>
   );
 
   // Desktop layout
   return (
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", display:"flex"}}>
+      <AppHexBg/>
       <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} isAdmin={isAdmin} />
-      <div style={{marginLeft:230, flex:1, minWidth:0}}>
+      <div style={{marginLeft:230, flex:1, minWidth:0, position:"relative", zIndex:1}}>
         <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast} />
         <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (

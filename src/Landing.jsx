@@ -98,12 +98,15 @@ function Button({ children, onClick, variant = "primary", size = "md", style, ..
   );
 }
 
-function Eyebrow({ children }) {
+function Eyebrow({ children, tone }) {
+  const a = tone?.a, d = tone?.d;
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 8,
-      padding: "6px 12px", borderRadius: 9999, background: C.orangeSubtle,
-      border: "1px solid " + C.orangeBorder, color: C.orangeDark,
+      padding: "6px 12px", borderRadius: 9999,
+      background: a ? `${a}12` : C.orangeSubtle,
+      border: "1px solid " + (a ? `${a}55` : C.orangeBorder),
+      color: d || C.orangeDark,
       fontSize: 12, fontWeight: 600, fontFamily: F, letterSpacing: "0.02em",
       textTransform: "uppercase",
     }}>
@@ -369,7 +372,7 @@ function HeroVisual() {
         <div className="dh-hv-c" style={{ transform: "translateX(-30px)" }}>
           <MockDealCard
             photo={["#e0e7ff", "#c7d2fe"]}
-            imgUrl="/flip-house.jpg"
+            imgUrl="/flip-house.jpeg"
             imgFallbackUrl="https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80"
             address="Memphis, TN 38106"
             price={75000}
@@ -1179,6 +1182,7 @@ function HomePage({ onSignUp }) {
 const STRATEGIES = [
   {
     id: "rental",
+    tone: {a: "#059669", d: "#047857"},
     eyebrow: "Buy & hold",
     title: "Rental property analysis, done before you open the deal.",
     body: "Every deal in the feed is scored as a rental first: cap rate, monthly cash flow, cash-on-cash return, and operating expenses estimated from real tax rates for that state, not national averages. If a property doesn't pencil as a rental or a flip, it never reaches your feed.",
@@ -1191,6 +1195,7 @@ const STRATEGIES = [
   },
   {
     id: "brrrr",
+    tone: {a: "#7c3aed", d: "#6d28d9"},
     eyebrow: "BRRRR",
     title: "See the refinance math before you buy.",
     body: "For value-add deals, DealHive projects the BRRRR path: purchase, rehab budget, after-repair value, and what your capital position looks like after the refi. Know how much of your money comes back out before you commit it.",
@@ -1203,6 +1208,7 @@ const STRATEGIES = [
   },
   {
     id: "flip",
+    tone: {a: "#d97706", d: "#b45309"},
     eyebrow: "Fix & flip",
     title: "Flip numbers that include the costs everyone forgets.",
     body: "Flip scoring accounts for purchase, rehab, holding costs, and selling costs, then shows projected profit and ROI. Deals only earn the flip tag when the ROI clears a real threshold, so a \"flip deal\" in DealHive actually means something.",
@@ -1215,6 +1221,7 @@ const STRATEGIES = [
   },
   {
     id: "feed",
+    tone: {a: "#E8731C", d: "#C2410C"},
     eyebrow: "The deal feed",
     title: "Off-market deal flow without the 6am scroll.",
     body: "Wholesale assignment lists, off-market properties, and investor-friendly listings from markets across the country land in one feed, refreshed every day. Filter by market, price, and strategy. Save what you like, and it's waiting on your dashboard.",
@@ -1331,14 +1338,13 @@ function FeaturesPage({ onSignUp }) {
         title="Built to find deals, not manage spreadsheets."
         subtitle="Everything DealHive does exists to answer one question fast: is this property worth your money?"
       />
-      <Features eyebrow={null}/>
       {STRATEGIES.map((s, i) => (
-        <Section key={s.id} style={{ background: i % 2 ? C.bgSoft : C.bg, padding: "64px 24px" }} hexes={i % 2 ? HEX_SETS.a : HEX_SETS.b}>
+        <Section key={s.id} style={{ background: `linear-gradient(180deg, ${s.tone.a}0d 0%, ${s.tone.a}05 100%)`, padding: "64px 24px" }} hexes={i % 2 ? HEX_SETS.a : HEX_SETS.b}>
           <div style={{
             display: "grid", gridTemplateColumns: "1fr 1fr", gap: 56, alignItems: "center",
           }} className="dh-strat-grid">
             <div style={{ order: i % 2 ? 2 : 1 }}>
-              <div style={{ marginBottom: 14 }}><Eyebrow>{s.eyebrow}</Eyebrow></div>
+              <div style={{ marginBottom: 14 }}><Eyebrow tone={s.tone}>{s.eyebrow}</Eyebrow></div>
               <h2 style={{
                 fontSize: "clamp(24px, 3.2vw, 34px)", fontWeight: 700, fontFamily: F,
                 letterSpacing: "-0.025em", lineHeight: 1.15, margin: "0 0 14px", color: C.text,
@@ -1352,8 +1358,8 @@ function FeaturesPage({ onSignUp }) {
                 {s.points.map(p => (
                   <div key={p} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontFamily: F }}>
                     <span style={{
-                      width: 19, height: 19, borderRadius: 9999, background: C.orangeSubtle,
-                      border: "1px solid " + C.orangeBorder, color: C.orangeDark, flexShrink: 0,
+                      width: 19, height: 19, borderRadius: 9999, background: `${s.tone.a}14`,
+                      border: `1px solid ${s.tone.a}55`, color: s.tone.d, flexShrink: 0,
                       display: "inline-flex", alignItems: "center", justifyContent: "center", marginTop: 1,
                     }}>
                       <Icon d={<path d="M5 12l5 5L20 7"/>} size={11} stroke={2.6}/>
@@ -1366,7 +1372,7 @@ function FeaturesPage({ onSignUp }) {
             <div style={{ order: i % 2 ? 1 : 2, position: "relative" }}>
               <div aria-hidden="true" style={{
                 position: "absolute", inset: -30,
-                background: `radial-gradient(closest-side, ${C.orangeSubtle}, transparent 72%)`,
+                background: `radial-gradient(closest-side, ${s.tone.a}22, transparent 72%)`,
                 filter: "blur(18px)", zIndex: 0,
               }}/>
               <div style={{ position: "relative", zIndex: 1,
@@ -1383,6 +1389,7 @@ function FeaturesPage({ onSignUp }) {
           `}</style>
         </Section>
       ))}
+      <Features eyebrow={null}/>
       <NumbersStrip/>
       <FinalCTA onSignUp={onSignUp} title="See the feed for yourself."/>
     </>
