@@ -395,6 +395,33 @@ const calc = (p) => {
   };
 };
 
+// BRRRR earns the recommendation only when it does what BRRRR is for:
+// returning most of your capital. The refi must hand back at least 70% of the
+// cash in the deal (net of ~2% refi closing costs on the new loan) and the
+// property must still clear $100/mo after the new payment. Mirrors the deal
+// feed's BRRRR tag gate in classifyDeal. When the gate fails, BRRRR's card
+// stays visible but it can't win, and `reason` powers the "Why not BRRRR"
+// line under the recommendation.
+const BRRRR_MIN_RECOVERY = 0.7;
+const BRRRR_MIN_CF       = 100;
+const REFI_COST_PCT      = 0.02;
+const brrrrGate = (m, spent, backGross) => {
+  const refiCosts = Math.round((m.brrrCashOut || 0) * REFI_COST_PCT);
+  const back      = Math.max((backGross || 0) - refiCosts, 0);
+  const recovery  = spent > 0 ? back / spent : 0;
+  const leftIn    = Math.max(spent - back, 0);
+  const cfOk      = m.brrrCF >= BRRRR_MIN_CF;
+  const recOk     = recovery >= BRRRR_MIN_RECOVERY;
+  return {
+    eligible: cfOk && recOk,
+    score:    !(cfOk && recOk) ? 0 : leftIn > 0 ? (m.brrrCF * 12 / leftIn) * 100 : 999,
+    reason:   !recOk
+      ? `after refi closing costs it would only return ${Math.round(recovery * 100)}% of your cash, and a solid BRRRR returns at least 70%`
+      : `it wouldn't cash flow at least $${BRRRR_MIN_CF}/mo after the refinance`,
+    recovery, leftIn, refiCosts,
+  };
+};
+
 // -- Helpers -------------------------------------------------------------------
 const F   = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 const $   = n  => "$" + Math.round(n||0).toLocaleString();
@@ -667,8 +694,8 @@ const applyRentcast = (prev, data, rates) => {
     expInsurance: (prev.expInsurance||0) > 0 ? prev.expInsurance
       : Math.round(((med || taxVal || prev.purchasePrice || 0)
           * (INSURANCE_RATES[(prev.state||"").toUpperCase()] || DEFAULT_INS_RATE)) / 12),
-    homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
-    flipSalePrice: hi || prev.flipSalePrice,
+    homeValueMedian: med, homeValueLow: lo, homeValueHigh: med || hi,
+    flipSalePrice: med || hi || prev.flipSalePrice,
     brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
     repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
     repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
@@ -1993,8 +2020,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       const lo  = val?.priceRangeLow  || (med ? Math.round(med * 0.9) : 0);
       if (!med && !hi) { setAvmMsg({kind:"err", text:"No value estimate found for that address."}); }
       else {
-        set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
-          flipSalePrice: hi, brrrCashOut: Math.round(hi * 0.8)});
+        set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: med,
+          flipSalePrice: med, brrrCashOut: Math.round(med * 0.8)});
         setAvmMsg({kind:"ok", med, lo, hi});
       }
     } catch (e) {
@@ -2145,8 +2172,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         <SectionBlock title={m.owned ? "Your Property" : "Purchase"} color={C.green} icon={I.tag}>
           {m.owned ? (
             <>
-              <InputField label="Estimated Current Value" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$"
-                note="What it would sell for today, as-is. Prefilled from property records when available."
+              <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$"
+                note="Prefilled with today's estimated value from property records when available."
                 mobile={mobile} />
               <InputField label="Current Loan Balance" val={p.ownedLoanBalance} set={v=>u("ownedLoanBalance",v)} pre="$"
                 note="What you still owe. Enter 0 if you own it free and clear."
@@ -2401,7 +2428,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 Range {$(avmMsg.lo)} – {$(avmMsg.hi)}
               </div>
               <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:7, lineHeight:1.5}}>
-                ARV pre-filled at the high end — tune it for your rehab.
+                ARV pre-filled at the median estimate — adjust it up to match your rehab plan.
               </div>
             </div>
           ) : avmMsg && (
@@ -2436,7 +2463,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             const active = (xtra || "buyhold") === id;
             return (
               <button key={id} onClick={()=>setXtra(id === "buyhold" || active ? null : id)}
-                className={exitPulse ? "dh-exit-pulse" : undefined}
+                className={exitPulse && active ? "dh-exit-pulse" : undefined}
                 style={{
                   flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
                   background: active ? accent : "transparent",
@@ -2445,8 +2472,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                   letterSpacing:"-0.005em",
                   boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
                   transition:"background .15s, color .15s, box-shadow .15s",
-                  "--dh-pulse": `${accent}59`,
-                  animationDelay: exitPulse ? `${i * 0.18}s` : undefined,
+                  "--dh-pulse": `${accent}66`,
                 }}>
                 {label}
               </button>
@@ -5521,12 +5547,12 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
         {/* Address — gated */}
         <div>
           {isPro ? (
-            <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
-              textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            <div style={{fontSize:17.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
+              textAlign:"center", lineHeight:1.3}}>
               {deal.address}
               {mobile && (deal.city || deal.state) && (
                 <span>
-                  {", "}{[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                  {", "}{[deal.city, deal.state].filter(Boolean).join(", ")}
                 </span>
               )}
             </div>
@@ -5537,9 +5563,8 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             </div>
           )}
           {!mobile && isPro && (deal.city || deal.state) && (
-            <div style={{fontSize:16, color:C.text, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:700, letterSpacing:"-0.015em",
-              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-              {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+            <div style={{fontSize:17.5, color:C.text, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:700, letterSpacing:"-0.02em"}}>
+              {[deal.city, deal.state].filter(Boolean).join(", ")}
             </div>
           )}
           {!hideSource && (
@@ -5586,18 +5611,18 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             .map(([l, v, vColor, keepCase, isHero]) => (
             <div key={l} style={{
               background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
-              padding:"11px 8px 12px", textAlign:"center",
+              padding:"13px 10px 15px", textAlign:"center",
             }}>
               <div style={{display:"inline-flex", alignItems:"center", gap:5,
-                fontSize:11.5, color:C.text, fontWeight:800, fontFamily:F,
-                letterSpacing:".04em", textTransform: keepCase ? "none" : "uppercase"}}>
+                fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F,
+                letterSpacing:".07em", textTransform: keepCase ? "none" : "uppercase"}}>
                 <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
                   background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
                 {l}
               </div>
-              <div style={{fontSize: isHero ? 18 : 15.5, fontWeight:400,
+              <div style={{fontSize: isHero ? 21 : 18, fontWeight:500,
                 color: vColor || (isHero ? heroNumber.color : C.text), fontFamily:F,
-                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em", marginTop:3}}>
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4}}>
                 {v}
               </div>
             </div>
@@ -6939,9 +6964,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
     if (!d.chosenStrategy) { setErr("Choose a purchase method (Cash or Finance) first."); return; }
-    if (!(d.purchasePrice > 0)) { setErr(d.alreadyOwned
-      ? "Enter the property's current value before saving."
-      : "Enter a purchase price before saving — the analysis is meaningless without it."); return; }
+    if (!(d.purchasePrice > 0)) { setErr("Enter a purchase price before saving — the analysis is meaningless without it."); return; }
     // Member accounts: file it on the home watchlist (opens the scenario +
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
@@ -6966,18 +6989,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       const equity   = d.alreadyOwned ? Math.max((d.purchasePrice||0) - (d.ownedLoanBalance||0), 0) : 0;
       const spent    = d.alreadyOwned ? equity + (d.repairCosts||0) : m.cashOOP;
       const back     = d.alreadyOwned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
-      const leftIn   = Math.max(spent - back, 0);
       const flipGain = d.alreadyOwned ? m.flipProfit - equity : m.flipProfit;
+      const g        = brrrrGate(m, spent, back);
       scores = {
         base:  m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
-        brrrr: !arvW || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+        brrrr: !arvW ? 0 : g.score,
         flip:  !arvW || flipGain <= 0 ? 0 : spent > 0 ? (flipGain/spent)*100 / holdY : 0,
       };
     } else {
-      const leftIn = Math.max(m.finOOP - Math.max(m.brrrNetCash, 0), 0);
+      const g = brrrrGate(m, m.finOOP, Math.max(m.brrrNetCash, 0));
       scores = {
         base:  m.finCF > 0 ? m.finCoC : 0,
-        brrrr: !arvW || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+        brrrr: !arvW ? 0 : g.score,
         flip:  !arvW || m.finFlipProfit <= 0 ? 0 : m.finFlipROI / holdY,
       };
     }
@@ -6999,12 +7022,11 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // the exit toggle.
   const finRecommendation = d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
     const arv = d.homeValueHigh || 0;
-    const netAtRefi = Math.max(m.brrrNetCash, 0);
-    const leftIn    = Math.max(m.finOOP - netAtRefi, 0);
+    const g = brrrrGate(m, m.finOOP, Math.max(m.brrrNetCash, 0));
     const holdYears = Math.max((m.holdMonths || 6) / 12, 0.25);
     const scores = {
       rental: m.finCF > 0 ? m.finCoC : 0,
-      brrrr:  !arv || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+      brrrr:  !arv ? 0 : g.score,
       flip:   !arv || m.finFlipProfit <= 0 ? 0 : m.finFlipROI / holdYears,
     };
     const order = ["rental","brrrr","flip"];
@@ -7084,6 +7106,12 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
           {WHY[winId]}
         </div>
+        {!!arv && !g.eligible && winId !== "brrrr" && (
+          <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.6,
+            marginTop:10, paddingTop:10, borderTop:"1px solid "+C.border}}>
+            <span style={{fontWeight:700, color:C.purple}}>Why not BRRRR?</span> Because {g.reason}.
+          </div>
+        )}
       </Card>
     );
   })();
@@ -7098,12 +7126,12 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         const equity     = m.owned ? Math.max((d.purchasePrice||0) - m.ownedBal, 0) : 0;
         const spent      = m.owned ? equity + (d.repairCosts||0) : m.cashOOP;
         const back       = m.owned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
-        const leftIn     = Math.max(spent - back, 0);
         const flipGain   = m.owned ? m.flipProfit - equity : m.flipProfit;
+        const g          = brrrrGate(m, spent, back);
         const holdYears  = Math.max((m.holdMonths || 6) / 12, 0.25);
         const scores = {
           buyhold: m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
-          brrrr:   !arv || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
+          brrrr:   !arv ? 0 : g.score,
           flip:    !arv || flipGain <= 0 ? 0 : spent > 0 ? (flipGain/spent)*100 / holdYears : 0,
         };
         const order  = ["buyhold","brrrr","flip"];
@@ -7111,7 +7139,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         const NAMES  = {buyhold:"Rental", brrrr:"BRRRR", flip:"Fix & Flip"};
         const WHY    = {
           buyhold: "Steady cash flow with the simplest execution.",
-          brrrr:   leftIn <= 0
+          brrrr:   g.leftIn <= 0
             ? "The refi returns all of your capital and it still cash flows."
             : "Strong return on the capital left in after the refinance.",
           flip:    "Highest annualized return on your cash for this deal.",
@@ -7185,6 +7213,12 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             <div style={{fontSize:13, color:C.textSub, lineHeight:1.6, fontFamily:F}}>
               {WHY[winId]}
             </div>
+            {!!arv && !g.eligible && winId !== "brrrr" && (
+              <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.6,
+                marginTop:10, paddingTop:10, borderTop:"1px solid "+C.border}}>
+                <span style={{fontWeight:700, color:C.purple}}>Why not BRRRR?</span> Because {g.reason}.
+              </div>
+            )}
           </Card>
         );
       })();
