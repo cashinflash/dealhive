@@ -845,3 +845,159 @@ exports.pullDealsNow = onRequest({
     res.status(500).json({error: e.message});
   }
 });
+
+// == Stripe billing =============================================================
+// Pro is a single $29.99/mo subscription. Checkout and the customer portal are
+// created server-side (price is pinned by ID — the client can't tamper with
+// amounts), and the webhook is the only writer of billing/{uid}, which the app
+// treats as the tier authority at sign-in.
+//
+// Webhook trust model: we never act on the posted payload. We take the event
+// id and re-fetch the event from Stripe's API with our key — an attacker
+// can't forge that — so no webhook signing secret is needed.
+const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
+const STRIPE_PRICE_ID   = "price_1TgDZo02g0ecGMpyP7iKQCpP"; // DealHive Pro, $29.99/mo
+const APP_ORIGIN        = "https://dealhive.io";
+
+async function stripeReq(key, method, path, params) {
+  const res = await fetch(`https://api.stripe.com${path}`, {
+    method,
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      ...(method === "POST" ? {"Content-Type": "application/x-www-form-urlencoded"} : {}),
+    },
+    body: method === "POST" && params ? new URLSearchParams(params).toString() : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error((data.error && data.error.message) || `Stripe ${res.status}`);
+  }
+  return data;
+}
+
+async function verifyUser(req) {
+  const authz = String(req.headers.authorization || "");
+  const tok = authz.startsWith("Bearer ") ? authz.slice(7) : null;
+  if (!tok) return null;
+  return admin.auth().verifyIdToken(tok).catch(() => null);
+}
+
+const billingRef = (uid) => admin.database().ref(`billing/${uid}`);
+
+exports.createCheckoutSession = onRequest(
+  {secrets: [STRIPE_SECRET_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+      const user = await verifyUser(req);
+      if (!user) { res.status(401).json({error: "Sign in first."}); return; }
+      const key = STRIPE_SECRET_KEY.value();
+
+      // One Stripe customer per account, reused across checkouts so the
+      // subscription, invoices, and portal all hang off a single record.
+      let customerId = (await billingRef(user.uid).child("customerId").get()).val();
+      if (!customerId) {
+        const customer = await stripeReq(key, "POST", "/v1/customers", {
+          email: user.email || "",
+          "metadata[firebaseUid]": user.uid,
+        });
+        customerId = customer.id;
+        await billingRef(user.uid).update({customerId});
+        await admin.database().ref(`stripeCustomers/${customerId}`).set(user.uid);
+      }
+
+      const session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
+        "mode": "subscription",
+        "customer": customerId,
+        "line_items[0][price]": STRIPE_PRICE_ID,
+        "line_items[0][quantity]": "1",
+        "client_reference_id": user.uid,
+        "subscription_data[metadata][firebaseUid]": user.uid,
+        "allow_promotion_codes": "true",
+        "success_url": `${APP_ORIGIN}/?billing=success`,
+        "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
+      });
+      res.json({url: session.url});
+    } catch (e) {
+      logger.error("createCheckoutSession", {error: e.message});
+      res.status(500).json({error: "Could not start checkout. Try again in a moment."});
+    }
+  });
+
+exports.createPortalSession = onRequest(
+  {secrets: [STRIPE_SECRET_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+      const user = await verifyUser(req);
+      if (!user) { res.status(401).json({error: "Sign in first."}); return; }
+      const customerId = (await billingRef(user.uid).child("customerId").get()).val();
+      if (!customerId) { res.status(400).json({error: "No billing profile on this account yet."}); return; }
+      const session = await stripeReq(STRIPE_SECRET_KEY.value(), "POST", "/v1/billing_portal/sessions", {
+        "customer": customerId,
+        "return_url": `${APP_ORIGIN}/`,
+      });
+      res.json({url: session.url});
+    } catch (e) {
+      logger.error("createPortalSession", {error: e.message});
+      res.status(500).json({error: "Could not open the billing portal."});
+    }
+  });
+
+exports.stripeWebhook = onRequest(
+  {secrets: [STRIPE_SECRET_KEY], region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      const id = req.body && req.body.id;
+      if (!id || !/^evt_[A-Za-z0-9_]+$/.test(String(id))) { res.status(400).send("bad event"); return; }
+      const key   = STRIPE_SECRET_KEY.value();
+      const event = await stripeReq(key, "GET", `/v1/events/${id}`); // authoritative copy
+      const obj   = event.data && event.data.object;
+      if (!obj) { res.status(200).send("ok"); return; }
+
+      const uidFor = async (customerId, fallbackUid) => {
+        if (fallbackUid) return fallbackUid;
+        if (!customerId) return null;
+        return (await admin.database().ref(`stripeCustomers/${customerId}`).get()).val();
+      };
+
+      if (event.type === "checkout.session.completed" && obj.mode === "subscription") {
+        const uid = await uidFor(obj.customer, obj.client_reference_id);
+        if (uid) {
+          await billingRef(uid).update({
+            tier: "pro", status: "active",
+            customerId: obj.customer,
+            subscriptionId: obj.subscription || null,
+            updatedAt: Date.now(),
+          });
+          await admin.database().ref(`stripeCustomers/${obj.customer}`).set(uid);
+          logger.info("stripe: pro activated", {uid});
+        }
+      } else if (event.type === "customer.subscription.updated" ||
+                 event.type === "customer.subscription.deleted") {
+        const uid = await uidFor(obj.customer, obj.metadata && obj.metadata.firebaseUid);
+        if (uid) {
+          // past_due keeps Pro while Stripe retries the card; deleted/unpaid
+          // drops to free. Newer API versions moved current_period_end onto
+          // the subscription items — read both shapes.
+          const active = event.type !== "customer.subscription.deleted" &&
+            ["active", "trialing", "past_due"].includes(obj.status);
+          const periodEnd = obj.current_period_end ||
+            (obj.items && obj.items.data && obj.items.data[0] &&
+             obj.items.data[0].current_period_end) || 0;
+          await billingRef(uid).update({
+            tier: active ? "pro" : "free",
+            status: obj.status,
+            cancelAtPeriodEnd: !!obj.cancel_at_period_end,
+            currentPeriodEnd: periodEnd * 1000,
+            updatedAt: Date.now(),
+          });
+          logger.info("stripe: subscription sync", {uid, status: obj.status, active});
+        }
+      }
+      res.status(200).send("ok");
+    } catch (e) {
+      logger.error("stripeWebhook", {error: e.message});
+      res.status(500).send("error"); // non-2xx => Stripe retries, which is what we want
+    }
+  });

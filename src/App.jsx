@@ -27,7 +27,8 @@ const FB_AUTH_URL    = "https://identitytoolkit.googleapis.com/v1";
 const FB_DB_URL      = "https://darallc-default-rtdb.firebaseio.com";
 const GOOGLE_API_KEY = "AIzaSyAYrJOulIBpfDZIgC50IXSgbXET05VqOC8";
 const RC_BASE        = "https://api.rentcast.io/v1";
-const RC_PROXY       = "https://us-central1-darallc.cloudfunctions.net/rcProxy";
+const FN_BASE        = "https://us-central1-darallc.cloudfunctions.net";
+const RC_PROXY       = FN_BASE + "/rcProxy";
 // One door to property data: a personal API key (legacy admin path) hits
 // RentCast directly; otherwise any signed-in session goes through our server
 // proxy, so customers never see or handle keys. `path` is "/endpoint?query".
@@ -121,6 +122,15 @@ const fbRefresh = async (refreshToken) => {
 // -- Firebase DB ---------------------------------------------------------------
 const dbPath   = uid => `${FB_DB_URL}/users/${uid}/data.json`;
 const metaPath = uid => `${FB_DB_URL}/users/${uid}/meta.json`;
+// billing/{uid} is written only by the Stripe webhook (server-side); the app
+// reads it at sign-in and treats it as the tier authority.
+const loadBilling = async (uid, token) => {
+  try {
+    const r = await fetch(`${FB_DB_URL}/billing/${uid}.json?auth=${token}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+};
 
 const saveData = async (uid, token, d) => {
   try {
@@ -7803,8 +7813,11 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade}) {
+function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade, billing=null, billingBusy=false, isAdmin=false}) {
   const isPro = tier === "pro";
+  const periodEnd = billing && billing.currentPeriodEnd
+    ? new Date(billing.currentPeriodEnd).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})
+    : null;
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px", maxWidth:680}}>
       <PageHeader title="Settings"/>
@@ -7853,16 +7866,22 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
               </div>
               <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, lineHeight:1.5}}>
                 {isPro
-                  ? "Full access to all deals, exact addresses, and the analyzer pre-filled."
-                  : "Browse a preview of the deal feed. Upgrade for the full list, exact addresses, and unlimited analyzer pre-fills."}
+                  ? (periodEnd
+                      ? (billing && billing.cancelAtPeriodEnd
+                          ? `Cancels on ${periodEnd} — you keep Pro until then.`
+                          : `Renews on ${periodEnd} at $29.99/month.`)
+                      : "Full access to all deals, exact addresses, unlimited saves, and every photo.")
+                  : "Upgrade for the full deal feed, exact addresses, unlimited saves, and every photo. $29.99/month, cancel anytime."}
               </div>
             </div>
           </div>
           {isPro ? (
-            <button onClick={onDowngrade} {...btnStyle("secondary","md")}>Switch to Free</button>
+            <button onClick={onDowngrade} disabled={billingBusy} {...btnStyle("secondary","md")}>
+              {isAdmin ? "Switch to Free" : billingBusy ? "Opening…" : "Manage Billing"}
+            </button>
           ) : (
-            <button onClick={onUpgrade} {...btnStyle("primary","md")}>
-              <I.star size={13}/> Upgrade to Pro
+            <button onClick={onUpgrade} disabled={billingBusy} {...btnStyle("primary","md")}>
+              <I.star size={13}/> {billingBusy ? "Opening checkout…" : "Upgrade to Pro"}
             </button>
           )}
         </div>
@@ -8249,6 +8268,75 @@ export default function App() {
     return () => clearInterval(id);
   }, [user && user.localId, refreshSession]);
 
+  // -- Stripe billing ----------------------------------------------------------
+  const [billing, setBilling]         = useState(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  // Checkout and the customer portal both come back as a URL we send the
+  // browser to. Fresh token first — these calls are token-gated server-side.
+  const callBillingFn = async (name) => {
+    const u = (await refreshSession()) || userRef.current;
+    if (!u) throw new Error("Sign in first.");
+    const r = await fetch(`${FN_BASE}/${name}`, {method: "POST",
+      headers: {Authorization: `Bearer ${u.idToken}`}});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.url) throw new Error(d.error || "Billing is unavailable right now — try again in a minute.");
+    return d.url;
+  };
+  const startCheckout = async () => {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    try { window.location.assign(await callBillingFn("createCheckoutSession")); }
+    catch (e) {
+      setToast(e.message || "Could not start checkout.");
+      setTimeout(() => setToast(""), 3200);
+      setBillingBusy(false);
+    }
+  };
+  const openBillingPortal = async () => {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    try { window.location.assign(await callBillingFn("createPortalSession")); }
+    catch (e) {
+      setToast(e.message || "Could not open billing.");
+      setTimeout(() => setToast(""), 3200);
+      setBillingBusy(false);
+    }
+  };
+  // Returning from Stripe: ?billing=success|cancelled. The webhook usually
+  // lands within seconds of the redirect, so poll until the tier flips.
+  const billingReturnRef = useRef(
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("billing") : null);
+  useEffect(() => {
+    if (!user || !billingReturnRef.current) return;
+    const kind = billingReturnRef.current;
+    billingReturnRef.current = null;
+    window.history.replaceState({}, "", "/");
+    if (kind !== "success") {
+      setToast("Checkout cancelled — no charge was made.");
+      setTimeout(() => setToast(""), 3200);
+      return;
+    }
+    setToast("Payment received! Activating Pro…");
+    let tries = 0;
+    const poll = async () => {
+      const u = userRef.current;
+      if (!u) return;
+      const bill = await loadBilling(u.localId, u.idToken);
+      if (bill && bill.tier === "pro") {
+        setBilling(bill);
+        setData(d => (d ? {...d, tier: "pro"} : d));
+        setToast("Welcome to DealHive Pro! 🐝");
+        setTimeout(() => setToast(""), 3500);
+      } else if (++tries < 10) {
+        setTimeout(poll, 2000);
+      } else {
+        setToast("Payment received — Pro activates within a minute or two.");
+        setTimeout(() => setToast(""), 4000);
+      }
+    };
+    poll();
+  }, [user && user.localId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Body scroll lock — class-based. Toggling a class is far more robust
   // than mutating body.style.overflow: classList.add/remove can't get
   // stuck in a half-state under React Strict Mode, fast-clicked modal
@@ -8360,10 +8448,13 @@ export default function App() {
       meta = {createdAt:new Date().toISOString(), trialStart:new Date().toISOString()};
       await saveMeta(u.localId, u.idToken, meta);
     }
-    const dl = Math.ceil((new Date(meta.trialStart).getTime() + TRIAL_DAYS*86400000 - Date.now()) / 86400000);
-    setDL(dl);
+    // No trial in the business model — Free is free forever, Pro is $29.99/mo
+    // via Stripe. daysLeft stays null, which keeps every trial banner hidden.
     const saved = await loadData(u.localId, u.idToken);
-    setData(saved || {...SEED});
+    const bill  = await loadBilling(u.localId, u.idToken);
+    setBilling(bill);
+    const base  = saved || {...SEED};
+    setData(bill && bill.tier ? {...base, tier: bill.tier} : base);
     setAL(false);
     if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
@@ -8553,16 +8644,17 @@ export default function App() {
     if (isAdmin) saveDealToPortfolio(deal);
     else         setSavePicker({deal, suggested: null});
   };
-  // Pre-Stripe: clicking Upgrade flips the tier flag immediately so the user
-  // can use Pro features. When checkout lands this will redirect to Stripe and
-  // the tier will be set server-side on a successful payment webhook.
+  // Admin/dev path: flips the tier flag directly (no Stripe). Member tier is
+  // set server-side by the Stripe webhook and folded in at sign-in.
   const setTier = (tier) => {
     persist({...data, tier});
     setToast(tier === "pro" ? "Welcome to DealHive Pro!" : "Switched to Free");
     setTimeout(()=>setToast(""), 2500);
   };
-  const handleUpgrade   = () => setTier("pro");
-  const handleDowngrade = () => setTier("free");
+  // Members go through Stripe: checkout to upgrade, the billing portal to
+  // manage or cancel. The admin account keeps the instant toggle for testing.
+  const handleUpgrade   = () => { if (isAdmin) setTier("pro");  else startCheckout(); };
+  const handleDowngrade = () => { if (isAdmin) setTier("free"); else openBillingPortal(); };
 
   // Admin gate. data.role is the canonical signal (set via Firebase console
   // to "admin" on accounts that should get the full portfolio app). The email
@@ -8671,7 +8763,8 @@ export default function App() {
           <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
         ) : page==="settings" ? (
           <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
-            tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
+            tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} />
         ) : (
           // Fallback for non-admins who somehow land on an admin-only page —
           // bounce them to their dashboard.
@@ -8739,7 +8832,8 @@ export default function App() {
               <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
             ) : page==="settings" ? (
               <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
-                tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade} />
+                tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} />
             ) : null}
           </ErrorBoundary>
         </div>
