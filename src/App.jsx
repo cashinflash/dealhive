@@ -295,6 +295,12 @@ const itemTotals = (items, price, loanAmt) => {
 };
 
 const calc = (p) => {
+  // "Already own it" mode: no purchase happens. Out-of-pocket is the rehab
+  // budget, the existing loan payment carries the hold, a refi or sale pays
+  // off the existing balance, and purchasePrice holds today's value.
+  const owned    = !!p.alreadyOwned;
+  const ownedBal = owned ? (p.ownedLoanBalance||0) : 0;
+  const ownedPmt = owned ? (p.ownedLoanPayment||0) : 0;
   const vacancyFactor = 1 - ((p.vacancyRate||0)/100);
   const effectiveRent = (p.rentAmount||0) * vacancyFactor + (p.otherIncome||0);
   const expItemized = Array.isArray(p.expenseItems) && p.expenseItems.length
@@ -303,8 +309,8 @@ const calc = (p) => {
   const exp  = expItemized != null ? expItemized
     : (p.expPropTax||0)+(p.expUtilities||0)+(p.expManagement||0)+(p.expInsurance||0);
   const noi  = effectiveRent - exp;
-  const cashOOP  = (p.purchasePrice||0)+(p.repairCosts||0);
-  const cashCF   = effectiveRent - exp;
+  const cashOOP  = (owned ? 0 : (p.purchasePrice||0))+(p.repairCosts||0);
+  const cashCF   = effectiveRent - exp - ownedPmt;
   const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
   // Cap rate is NOI over purchase price (property metric); CoC is cash flow
   // over cash invested (investor metric). Dividing cap by OOP made the two
@@ -314,7 +320,8 @@ const calc = (p) => {
   // Purchase costs: itemized breakdown wins; otherwise a % of price (default
   // 3%); legacy saves that stored a flat $ amount keep honoring it.
   const ccItemized = Array.isArray(p.closingItems) && p.closingItems.length > 0;
-  const cc = ccItemized && p.closingCosts != null
+  const cc = owned ? 0
+    : ccItemized && p.closingCosts != null
     ? p.closingCosts
     : (p.purchaseCostsPct != null || p.closingCosts == null)
       ? Math.round((p.purchasePrice||0) * ((p.purchaseCostsPct ?? 3) / 100))
@@ -357,9 +364,9 @@ const calc = (p) => {
 
   // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
   const holdMonths  = p.holdMonths ?? 6;
-  const flipHolding = holdMonths * exp;
+  const flipHolding = holdMonths * (exp + ownedPmt);
   const agentFee = (p.flipSalePrice||0) * (p.agentFeePct||6)/100;
-  const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding;
+  const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding - ownedBal;
   const flipROI  = cashOOP>0 ? (flipProfit/cashOOP)*100 : 0;
 
   // Financed flip: carrying costs include the debt service, the loan gets
@@ -371,11 +378,12 @@ const calc = (p) => {
 
   // Financed BRRRR: the refi pays off the existing loans first; what's left
   // is the cash that actually reaches your pocket.
-  const brrrNetCash = brrrCashOut - loan;
+  const brrrNetCash = brrrCashOut - (owned ? ownedBal : loan);
 
   const s = p.chosenStrategy || "finance";
   return {
     exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
+    owned, ownedBal, ownedPmt,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
     rolledIn, loanBreakdown, holdMonths, flipHolding,
     finFlipHolding, finFlipProfit, finFlipROI, brrrNetCash,
@@ -434,6 +442,7 @@ const newDeal = () => ({
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
   brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, flipSalePrice:0, agentFeePct:6,
+  alreadyOwned:false, ownedLoanBalance:0, ownedLoanPayment:0,
   chosenStrategy:null, notes:"", savedAt:""
 });
 
@@ -1869,6 +1878,7 @@ function DealSummaryBlock({p, m, exit}) {
   const cash = (p.chosenStrategy||"finance") === "cash";
   const exitLabel = exit === "brrrr" ? "BRRRR"
     : exit === "flip" ? "Fix & Flip"
+    : m.owned ? "Rental"
     : cash ? "Buy & Hold" : "Rental";
   // Rows adapt to the exit: a flip is sold (profit + return on cash, no cap
   // rate or monthly cash flow); a BRRRR's story is the refi proceeds and the
@@ -1882,37 +1892,41 @@ function DealSummaryBlock({p, m, exit}) {
       ["Sale Price (ARV)", $(p.flipSalePrice||0), C.text],
       ["Agent Fee", $(m.agentFee), C.text],
       [`Holding Costs (${m.holdMonths} mo)`, $(holding), C.text],
-      ...(cash ? [] : [["Loan Payoff at Sale", $(m.loan), C.text]]),
+      ...(m.owned && m.ownedBal > 0 ? [["Loan Payoff at Sale", $(m.ownedBal), C.text]]
+        : cash ? [] : [["Loan Payoff at Sale", $(m.loan), C.text]]),
       ["hr"],
-      ["Out of Pocket", $(m.chosenOOP), C.text],
-      ["Total Profit",  $(profit),      cfC(profit)],
-      ["Cash-on-Cash",  pct(roi),       cfC(profit)],
+      [m.owned ? "New Cash In (Rehab)" : "Out of Pocket", $(m.chosenOOP), C.text],
+      [m.owned ? "Net Cash From Sale" : "Total Profit",  $(profit),      cfC(profit)],
+      [m.owned ? "Return on New Cash" : "Cash-on-Cash",  pct(roi),       cfC(profit)],
     ];
   } else if (exit === "brrrr") {
-    const refiCash = cash ? m.brrrCashOut : m.brrrNetCash;
+    const refiCash = (cash && !m.owned) ? m.brrrCashOut : m.brrrNetCash;
     // Cash that actually ends up in your pocket: refi proceeds beyond what
     // you put in (zero when the refi returns less than your investment).
     const inPocket = Math.max(Math.max(refiCash, 0) - m.chosenOOP, 0);
     rows = [
-      ["Out of Pocket", $(m.chosenOOP), C.text],
-      [cash ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
+      [m.owned ? "New Cash In (Rehab)" : "Out of Pocket", $(m.chosenOOP), C.text],
+      [(cash && !m.owned) ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
       ["hr"],
       ["Cash Flow / mo (After Refi)", $mo(m.brrrCF), cfC(m.brrrCF)],
       ["Cash in Pocket", $(inPocket), cfC(inPocket)],
     ];
   } else {
     rows = [
-      ["Out of Pocket",      $(m.chosenOOP),   C.text],
-      ...(cash ? [] : [["Loan Payments / mo", $mo(m.mtg), C.text]]),
+      [m.owned ? "New Cash In (Rehab)" : "Out of Pocket", $(m.chosenOOP), C.text],
+      ...(m.owned
+        ? (m.ownedPmt > 0 ? [["Current Loan Payment / mo", $mo(m.ownedPmt), C.text]] : [])
+        : cash ? [] : [["Loan Payments / mo", $mo(m.mtg), C.text]]),
       ["Net Cash Flow / mo", $mo(m.chosenCF),  cfC(m.chosenCF)],
       ["NOI / yr",           $(m.noi*12),      C.text],
-      ["Cash-on-Cash",       pct(m.chosenCoC), cfC(m.chosenCoC)],
+      [m.owned ? "Return on New Cash" : "Cash-on-Cash", pct(m.chosenCoC), cfC(m.chosenCoC)],
       ["Cap Rate",           pct(m.chosenCap), C.text],
     ];
   }
   return (
     <SectionBlock title="Summary" color={C.green} icon={I.clipboardCheck}>
-      <DataRow label="Purchase Method" value={cash ? "Cash" : "Finance"} />
+      <DataRow label={m.owned ? "Ownership" : "Purchase Method"}
+        value={m.owned ? "Already Owned" : cash ? "Cash" : "Finance"} />
       <DataRow label="Exit Strategy" value={exitLabel} />
       {rows.map(([l, v, color], i) =>
         l === "hr"
@@ -1937,20 +1951,32 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const [avmBusy, setAvmBusy] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
   const [compsOpen, setCompsOpen] = useState(false);
-  // One-time attention pulse on the exit toggle, fired just after the
-  // recommendation card lands. Never repeats within a session.
+  // One-time attention pulse on the exit toggle. It only plays once the
+  // toggle is actually on screen (a plain timer used to fire while the row
+  // was still scrolled out of view, so nobody ever saw it), and it re-arms
+  // when the address changes so each new property gets its own pulse.
   const [exitPulse, setExitPulse] = useState(false);
   const [addrNudge, setAddrNudge] = useState(false);
   useEffect(() => { if (p.address) setAddrNudge(false); }, [p.address]);
-  const pulsedRef = useRef(false);
+  const pulsedRef  = useRef(false);
+  const exitRowRef = useRef(null);
+  useEffect(() => { pulsedRef.current = false; }, [p.address]);
   useEffect(() => {
     if (pulsedRef.current) return;
     if (!methodChosen || !(p.purchasePrice > 0)) return;
-    pulsedRef.current = true;
-    const t1 = setTimeout(() => setExitPulse(true), 400);
-    const t2 = setTimeout(() => setExitPulse(false), 3400);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [methodChosen, p.purchasePrice]); // eslint-disable-line react-hooks/exhaustive-deps
+    const el = exitRowRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let t1, t2;
+    const io = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting || pulsedRef.current) return;
+      pulsedRef.current = true;
+      io.disconnect();
+      t1 = setTimeout(() => setExitPulse(true), 250);
+      t2 = setTimeout(() => setExitPulse(false), 3250);
+    }, {threshold: 0.6});
+    io.observe(el);
+    return () => { io.disconnect(); clearTimeout(t1); clearTimeout(t2); };
+  }, [methodChosen, p.purchasePrice, p.address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Check Home Value" — RentCast value AVM for the entered address. Fills the
   // ARV field (high end of the range) and keeps the median for reference.
@@ -1998,6 +2024,14 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
     if (Object.keys(next).length) set({...p, ...next});
   }, [p.state, p.taxValue, p.purchasePrice, p.homeValueMedian, p.expPropTaxAuto, p.expInsuranceAuto]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Owned mode: the price field holds today's value, so seed it from the
+  // pulled value estimate (or tax value) rather than making the user type it.
+  useEffect(() => {
+    if (!p.alreadyOwned || (p.purchasePrice||0) > 0) return;
+    const v = p.homeValueMedian || p.taxValue || 0;
+    if (v > 0) set({...p, purchasePrice: v});
+  }, [p.alreadyOwned, p.homeValueMedian, p.taxValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div>
       {/* Purchase method — chosen explicitly before the calculator opens */}
@@ -2025,7 +2059,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             {[["cash","Cash","All-cash purchase. Simple math, full equity from day one.",C.cashPos],
               ["finance","Finance","Loans, down payments, leverage. Model it like real life.",C.green]].map(([id,label,line,accent]) => (
               <button key={id}
-                onClick={()=>{ if (!p.address) { setAddrNudge(true); return; } u("chosenStrategy", id); }}
+                onClick={()=>{ if (!p.address) { setAddrNudge(true); return; } set({...p, chosenStrategy:id, alreadyOwned:false}); }}
                 style={{
                   padding:"18px 16px", borderRadius:C.r4, cursor:"pointer", textAlign:"center",
                   background:"#fff", border:"1.5px solid "+C.border,
@@ -2045,6 +2079,17 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               </button>
             ))}
           </div>
+          <button
+            onClick={()=>{ if (!p.address) { setAddrNudge(true); return; } set({...p, alreadyOwned:true, chosenStrategy:"cash"}); }}
+            style={{marginTop:16, display:"inline-flex", alignItems:"center", gap:7,
+              padding:"9px 16px", borderRadius:9999, background:"#fff",
+              border:"1px dashed "+C.borderHover, color:C.textSub,
+              fontSize:13, fontWeight:600, fontFamily:F, cursor:"pointer",
+              transition:"border-color .12s, color .12s"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.blue; e.currentTarget.style.color=C.blueDark;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderHover; e.currentTarget.style.color=C.textSub;}}>
+            <I.home size={14} stroke={2.2}/> I already own this property
+          </button>
         </Card>
       )}
 
@@ -2053,8 +2098,24 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       {/* Strategy tabs — sticky on mobile so the cash/finance switch stays in view */}
       <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
         letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
-        Purchase Method
+        {m.owned ? "Ownership" : "Purchase Method"}
       </div>
+      {m.owned ? (
+        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+          marginBottom:18, padding:"11px 14px", background:C.blueSubtle,
+          border:"1px solid "+C.blueBorder, borderRadius:C.r2}}>
+          <span style={{display:"inline-flex", alignItems:"center", gap:8,
+            fontSize:13, fontWeight:700, color:C.blueDark, fontFamily:F}}>
+            <I.home size={14} stroke={2.2}/> You already own this property
+          </span>
+          <button onClick={()=>set({...p, alreadyOwned:false, chosenStrategy:null})}
+            style={{background:"none", border:"none", cursor:"pointer", padding:0,
+              fontSize:12.5, fontWeight:600, color:C.textSub, fontFamily:F,
+              textDecoration:"underline", textUnderlineOffset:2}}>
+            Change
+          </button>
+        </div>
+      ) : (
       <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
         background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
         ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
@@ -2076,21 +2137,40 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           );
         })}
       </div>
+      )}
 
       <div style={{display:"grid", gridTemplateColumns:mobile?"1fr":"1fr 1fr", gap:14}}>
 
         {/* Purchase — shared by both tabs */}
-        <SectionBlock title="Purchase" color={C.green} icon={I.tag}>
-          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
-          <InputField label="Purchase Costs" val={p.purchaseCostsPct ?? 3}
-            set={v=>set({...p, purchaseCostsPct:v, closingItems:null, closingCosts:null})} suf="%"
-            note={Array.isArray(p.closingItems) && p.closingItems.length
-              ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown`
-              : `= ${$(m.cc)} (closing, lender, title…)`}
-            mobile={mobile} />
-          <button onClick={()=>setItemize("closing")} {...btnStyle("secondary","sm", {marginBottom:12})}>
-            <I.edit size={12}/> {Array.isArray(p.closingItems) && p.closingItems.length ? "Edit Itemized Costs" : "Itemize"}
-          </button>
+        <SectionBlock title={m.owned ? "Your Property" : "Purchase"} color={C.green} icon={I.tag}>
+          {m.owned ? (
+            <>
+              <InputField label="Estimated Current Value" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$"
+                note="What it would sell for today, as-is. Prefilled from property records when available."
+                mobile={mobile} />
+              <InputField label="Current Loan Balance" val={p.ownedLoanBalance} set={v=>u("ownedLoanBalance",v)} pre="$"
+                note="What you still owe. Enter 0 if you own it free and clear."
+                mobile={mobile} />
+              {(p.ownedLoanBalance||0) > 0 && (
+                <InputField label="Current Monthly Payment (P&I)" val={p.ownedLoanPayment} set={v=>u("ownedLoanPayment",v)} pre="$"
+                  note="Your existing principal + interest payment. Taxes and insurance stay under Expenses."
+                  mobile={mobile} />
+              )}
+            </>
+          ) : (
+            <>
+              <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile} />
+              <InputField label="Purchase Costs" val={p.purchaseCostsPct ?? 3}
+                set={v=>set({...p, purchaseCostsPct:v, closingItems:null, closingCosts:null})} suf="%"
+                note={Array.isArray(p.closingItems) && p.closingItems.length
+                  ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown`
+                  : `= ${$(m.cc)} (closing, lender, title…)`}
+                mobile={mobile} />
+              <button onClick={()=>setItemize("closing")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+                <I.edit size={12}/> {Array.isArray(p.closingItems) && p.closingItems.length ? "Edit Itemized Costs" : "Itemize"}
+              </button>
+            </>
+          )}
           <InputField label="Rehab Costs" val={p.repairCosts}
             set={v=>set({...p, repairCosts:v, repairItems:null})} pre="$"
             note={Array.isArray(p.repairItems) && p.repairItems.length ? `Itemized (${p.repairItems.length} items) — typing here clears the breakdown` : undefined}
@@ -2350,7 +2430,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
           Explore Exit Strategies
         </div>
-        <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
+        <div ref={exitRowRef} style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
           {[["buyhold","Buy & Hold",C.cashPos],["brrrr","BRRRR",C.purple],["flip","Fix & Flip",C.amber]].map(([id,label,accent], i) => {
             const active = (xtra || "buyhold") === id;
@@ -2388,16 +2468,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               <InputField label="Refi Interest Rate" val={p.brrrRate ?? 7.5} set={v=>u("brrrRate",v)} suf="%" mobile={mobile} />
               <InputField label="Refi Loan Term (Years)" val={p.brrrTermYears ?? 30} set={v=>u("brrrTermYears",v)} mobile={mobile} />
             </div>
-            {s === "finance" && <DataRow label="Pays Off Existing Loans" value={$(m.loan)} />}
-            {s === "finance" && (
+            {(s === "finance" || (m.owned && m.ownedBal > 0)) &&
+              <DataRow label={m.owned ? "Pays Off Current Loan" : "Pays Off Existing Loans"}
+                value={$(m.owned ? m.ownedBal : m.loan)} />}
+            {(s === "finance" || (m.owned && m.ownedBal > 0)) && (
               <DataRow label="Net Cash at Refi" value={$(m.brrrNetCash)} color={cfC(m.brrrNetCash)} />
             )}
             <DataRow label="Est. Mortgage / mo (After Refi)" value={$mo(m.brrrMtg)} />
             <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-            {s === "cash" && (
+            {s === "cash" && !(m.owned && m.ownedBal > 0) && (
               <DataRow label="Cash Received at Refi" value={$(m.brrrCashOut)} color={cfC(m.brrrCashOut)} />
             )}
-            {s === "finance" && m.brrrNetCash < 0 && (
+            {(s === "finance" || m.owned) && m.brrrNetCash < 0 && (
               <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"8px 12px", borderRadius:C.r2, marginTop:8, fontFamily:F, lineHeight:1.5}}>
                 The refinance doesn't fully cover your existing loans — you'd bring cash to close the refi.
@@ -2419,11 +2501,12 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
             {s === "cash" ? (
               <>
-                <DataRow label="Total Into Deal" value={$(m.cashOOP)} />
+                <DataRow label={m.owned ? "New Cash In (Rehab)" : "Total Into Deal"} value={$(m.cashOOP)} />
                 <DataRow label="Agent Fee" value={$(m.agentFee)} />
                 <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={$(m.flipHolding)} />
-                <DataRow label="Net Profit" value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
-                <DataRow label="ROI" value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+                {m.owned && m.ownedBal > 0 && <DataRow label="Loan Payoff at Sale" value={$(m.ownedBal)} />}
+                <DataRow label={m.owned ? "Net Cash From Sale" : "Net Profit"} value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
+                <DataRow label={m.owned ? "Return on New Cash" : "ROI"} value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
               </>
             ) : (
               <>
@@ -5114,6 +5197,9 @@ const proFormaToFeedDeal = pf => ({
   repair: pf.repairCosts || 0,
   arv:    pf.homeValueHigh || pf.flipSalePrice || pf.homeValueMedian || 0,
   photo: null, photos: [],
+  alreadyOwned: !!pf.alreadyOwned,
+  ownedLoanBalance: pf.ownedLoanBalance || 0,
+  ownedLoanPayment: pf.ownedLoanPayment || 0,
   source: "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
 });
@@ -5136,6 +5222,9 @@ const dealToProForma = (deal) => {
       : deal.financing === "cash" ? {chosenStrategy: "cash"}
       : deal.financing === "finance" ? {chosenStrategy: "finance"} : {}),
     savedScenario: deal.scenario || null,
+    ...(deal.alreadyOwned ? {alreadyOwned: true,
+      ownedLoanBalance: deal.ownedLoanBalance || 0,
+      ownedLoanPayment: deal.ownedLoanPayment || 0} : {}),
     address:      addressForAnalyzer,
     city:         deal.city,
     state:        deal.state,
@@ -5306,7 +5395,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   // cash-vs-finance choice for the rental math.
   const primary = savedScenario || autoPrimary;
   const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
-  const cashMode = savedFinancing === "cash";
+  const cashMode = savedFinancing === "cash" || savedFinancing === "owned";
 
   // User-filed deals saved from the analyzer carry an `analysis` snapshot of
   // the exact numbers the analyzer showed; the card displays those verbatim.
@@ -5379,7 +5468,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                 padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
                 letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
               }}>
-                {savedFinancing === "cash" ? "Cash" : "Finance"}
+                {savedFinancing === "owned" ? "Owned" : savedFinancing === "cash" ? "Cash" : "Finance"}
               </span>
             ) : isBrrrr && (
               <span style={{
@@ -5436,7 +5525,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {deal.address}
               {mobile && (deal.city || deal.state) && (
-                <span style={{color:C.textSub, fontWeight:600}}>
+                <span>
                   {", "}{[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
                 </span>
               )}
@@ -5448,7 +5537,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             </div>
           )}
           {!mobile && isPro && (deal.city || deal.state) && (
-            <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:500,
+            <div style={{fontSize:16, color:C.text, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:700, letterSpacing:"-0.015em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
             </div>
@@ -5500,15 +5589,15 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               padding:"11px 8px 12px", textAlign:"center",
             }}>
               <div style={{display:"inline-flex", alignItems:"center", gap:5,
-                fontSize:11.5, color:C.textSub, fontWeight:600, fontFamily:F,
+                fontSize:11.5, color:C.text, fontWeight:800, fontFamily:F,
                 letterSpacing:".04em", textTransform: keepCase ? "none" : "uppercase"}}>
                 <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
                   background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
                 {l}
               </div>
-              <div style={{fontSize: isHero ? 18 : 15.5, fontWeight:700,
+              <div style={{fontSize: isHero ? 18 : 15.5, fontWeight:400,
                 color: vColor || (isHero ? heroNumber.color : C.text), fontFamily:F,
-                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.015em", marginTop:3}}>
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em", marginTop:3}}>
                 {v}
               </div>
             </div>
@@ -6850,7 +6939,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
     if (!d.chosenStrategy) { setErr("Choose a purchase method (Cash or Finance) first."); return; }
-    if (!(d.purchasePrice > 0)) { setErr("Enter a purchase price before saving — the analysis is meaningless without it."); return; }
+    if (!(d.purchasePrice > 0)) { setErr(d.alreadyOwned
+      ? "Enter the property's current value before saving."
+      : "Enter a purchase price before saving — the analysis is meaningless without it."); return; }
     // Member accounts: file it on the home watchlist (opens the scenario +
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
@@ -6870,11 +6961,17 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     const holdY = Math.max((m.holdMonths || 6) / 12, 0.25);
     let scores, order;
     if ((d.chosenStrategy||"finance") === "cash") {
-      const leftIn = Math.max(m.cashOOP - m.brrrCashOut, 0);
+      // Owned mode: the capital at stake is the equity already in the walls
+      // plus new rehab cash, not a purchase price. Score every exit on that.
+      const equity   = d.alreadyOwned ? Math.max((d.purchasePrice||0) - (d.ownedLoanBalance||0), 0) : 0;
+      const spent    = d.alreadyOwned ? equity + (d.repairCosts||0) : m.cashOOP;
+      const back     = d.alreadyOwned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
+      const leftIn   = Math.max(spent - back, 0);
+      const flipGain = d.alreadyOwned ? m.flipProfit - equity : m.flipProfit;
       scores = {
-        base:  m.cashCF > 0 ? m.cashCoC : 0,
+        base:  m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
         brrrr: !arvW || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
-        flip:  !arvW || m.flipProfit <= 0 ? 0 : m.flipROI / holdY,
+        flip:  !arvW || flipGain <= 0 ? 0 : spent > 0 ? (flipGain/spent)*100 / holdY : 0,
       };
     } else {
       const leftIn = Math.max(m.finOOP - Math.max(m.brrrNetCash, 0), 0);
@@ -6996,13 +7093,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // Flip toggle.
   const cashRecommendation = d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "cash" && (() => {
         const arv = d.homeValueHigh || 0;
-        // Comparable "annualized return on capital" scores for each exit.
-        const leftIn     = Math.max(m.cashOOP - m.brrrCashOut, 0);
+        // Comparable "annualized return on capital" scores for each exit. In
+        // owned mode the capital is existing equity plus new rehab cash.
+        const equity     = m.owned ? Math.max((d.purchasePrice||0) - m.ownedBal, 0) : 0;
+        const spent      = m.owned ? equity + (d.repairCosts||0) : m.cashOOP;
+        const back       = m.owned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
+        const leftIn     = Math.max(spent - back, 0);
+        const flipGain   = m.owned ? m.flipProfit - equity : m.flipProfit;
         const holdYears  = Math.max((m.holdMonths || 6) / 12, 0.25);
         const scores = {
-          buyhold: m.cashCF > 0 ? m.cashCoC : 0,
+          buyhold: m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
           brrrr:   !arv || m.brrrCF <= 0 ? 0 : leftIn > 0 ? (m.brrrCF*12/leftIn)*100 : 999,
-          flip:    !arv || m.flipProfit <= 0 ? 0 : m.flipROI / holdYears,
+          flip:    !arv || flipGain <= 0 ? 0 : spent > 0 ? (flipGain/spent)*100 / holdYears : 0,
         };
         const order  = ["buyhold","brrrr","flip"];
         const winId  = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "buyhold");
@@ -7014,20 +7116,23 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             : "Strong return on the capital left in after the refinance.",
           flip:    "Highest annualized return on your cash for this deal.",
         };
+        const oopLabel = m.owned ? "New Cash In" : "Total Out of Pocket";
         const cards = [
           {id:"buyhold", label:"Rental", rows:[
-            ["Total Out of Pocket", $(m.cashOOP), C.text],
+            [oopLabel, $(m.cashOOP), C.text],
             ["Cash Flow / mo", $mo(m.cashCF), cfC(m.cashCF)],
             ["Cap Rate", pct(m.cashCap), C.text],
           ]},
           {id:"brrrr", label:"BRRRR", rows:[
-            ["Total Out of Pocket", $(m.cashOOP), C.text],
-            ["Total Cash Out", $(m.brrrCashOut), C.text],
+            [oopLabel, $(m.cashOOP), C.text],
+            m.owned && m.ownedBal > 0
+              ? ["Net Cash at Refi", $(m.brrrNetCash), cfC(m.brrrNetCash)]
+              : ["Total Cash Out", $(m.brrrCashOut), C.text],
             ["Cash Flow / mo", $mo(m.brrrCF), cfC(m.brrrCF)],
           ]},
           {id:"flip", label:"Fix & Flip", rows:[
-            ["Total Out of Pocket", $(m.cashOOP), C.text],
-            ["Net Profit", $(m.flipProfit), cfC(m.flipProfit)],
+            [oopLabel, $(m.cashOOP), C.text],
+            [m.owned ? "Net Cash From Sale" : "Net Profit", $(m.flipProfit), cfC(m.flipProfit)],
           ]},
         ];
         return (
@@ -7208,7 +7313,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
         <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
           : exitStrategy === "flip" ? "Fix & Flip"
-          : (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
+          : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
       </button>
 
       {/* Saved Deals */}
@@ -8143,7 +8248,7 @@ export default function App() {
       input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
       @keyframes dhSpin{to{transform:rotate(360deg)}}
       @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-      @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+      @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
       @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
@@ -8380,7 +8485,7 @@ export default function App() {
   const saveDealToWatchlist = (deal, scenario, financing) => {
     const existing = data.savedDeals || [];
     const label = (STRATEGY_LABELS[scenario] || STRATEGY_LABELS.buyhold).label;
-    const fin = financing === "cash" ? "all cash" : "financed";
+    const fin = financing === "owned" ? "already owned" : financing === "cash" ? "all cash" : "financed";
     const match = existing.find(x => x.id === deal.id ||
       (deal.address && x.address === deal.address && x.city === deal.city));
     if (!match && (data.tier||"free") !== "pro" && existing.length >= 5) {
@@ -8466,7 +8571,7 @@ export default function App() {
           // exactly what the user saw at save time — not the feed
           // classifier's re-derivation with different assumptions.
           analysis: {
-            method:       isCash ? "cash" : "finance",
+            method:       pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance",
             oop:          Math.round(isCash ? mm.cashOOP : mm.finOOP),
             cashFlow:     Math.round(isCash ? mm.cashCF  : mm.finCF),
             coc:          isCash ? mm.cashCoC : mm.finCoC,
@@ -8475,11 +8580,11 @@ export default function App() {
             flipROI:      isCash ? mm.flipROI : mm.finFlipROI,
             brrrrCF:      Math.round(mm.brrrCF),
             brrrrCashOut: Math.round(mm.brrrCashOut),
-            brrrrNetCash: Math.round(isCash ? mm.brrrCashOut : mm.brrrNetCash),
+            brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashOut : mm.brrrNetCash),
             arv:          pf.homeValueHigh || pf.flipSalePrice || 0,
           }},
         suggested || "buyhold",
-        isCash ? "cash" : "finance");
+        pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance");
       // A professional save takes you to where the deal now lives.
       if (res === "created" || res === "updated") setPage("dashboard");
     },
