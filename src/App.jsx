@@ -7876,9 +7876,15 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
             </div>
           </div>
           {isPro ? (
-            <button onClick={onDowngrade} disabled={billingBusy} {...btnStyle("secondary","md")}>
-              {isAdmin ? "Switch to Free" : billingBusy ? "Opening…" : "Manage Billing"}
-            </button>
+            isAdmin ? (
+              <button onClick={onDowngrade} {...btnStyle("secondary","md")}>Switch to Free</button>
+            ) : billing && billing.customerId ? (
+              <button onClick={onDowngrade} disabled={billingBusy} {...btnStyle("secondary","md")}>
+                {billingBusy ? "Opening…" : "Manage Billing"}
+              </button>
+            ) : (
+              <Badge label="Complimentary access" bg={C.greenLight} c={C.greenDark} dot/>
+            )
           ) : (
             <button onClick={onUpgrade} disabled={billingBusy} {...btnStyle("primary","md")}>
               <I.star size={13}/> {billingBusy ? "Opening checkout…" : "Upgrade to Pro"}
@@ -8454,7 +8460,13 @@ export default function App() {
     const bill  = await loadBilling(u.localId, u.idToken);
     setBilling(bill);
     const base  = saved || {...SEED};
-    setData(bill && bill.tier ? {...base, tier: bill.tier} : base);
+    // Tier authority: billing/{uid}, written by the Stripe webhook. Members
+    // without a billing record are Free — this also clears "pro" flags left
+    // behind by the pre-Stripe instant-upgrade toggle. Admin accounts keep
+    // their stored tier (dev toggle).
+    const adminUser = (base.role === "admin") || u.email === "harut@ymail.com";
+    const tier = bill && bill.tier ? bill.tier : adminUser ? (base.tier || "free") : "free";
+    setData({...base, tier});
     setAL(false);
     if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
