@@ -7006,7 +7006,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         };
         const order  = ["buyhold","brrrr","flip"];
         const winId  = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "buyhold");
-        const NAMES  = {buyhold:"Buy & Hold", brrrr:"BRRRR", flip:"Fix & Flip"};
+        const NAMES  = {buyhold:"Rental", brrrr:"BRRRR", flip:"Fix & Flip"};
         const WHY    = {
           buyhold: "Steady cash flow with the simplest execution.",
           brrrr:   leftIn <= 0
@@ -7015,7 +7015,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           flip:    "Highest annualized return on your cash for this deal.",
         };
         const cards = [
-          {id:"buyhold", label:"Buy & Hold", rows:[
+          {id:"buyhold", label:"Rental", rows:[
             ["Total Out of Pocket", $(m.cashOOP), C.text],
             ["Cash Flow / mo", $mo(m.cashCF), cfC(m.cashCF)],
             ["Cap Rate", pct(m.cashCap), C.text],
