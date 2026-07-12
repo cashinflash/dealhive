@@ -396,7 +396,10 @@ const cfC = v  => v>0 ? "#059669" : v<0 ? "#dc2626" : "#71717a";
 const dU  = d  => { if(!d) return null; return Math.ceil((new Date(d)-new Date())/86400000); };
 const obBadge = p => p.occupied ? {label:"Occupied",bg:"#dcfce7",c:"#166534"} : {label:"Vacant",bg:"#f4f4f5",c:"#71717a"};
 const stStyle = s => s==="Current"?{bg:"#dcfce7",c:"#166534"}:s==="Late"?{bg:"#fee2e2",c:"#991b1b"}:s==="Partial"?{bg:"#ffedd5",c:"#9a3412"}:{bg:"#f4f4f5",c:"#71717a"};
-const svUrl   = (lat,lng,w=800,h=400) => "https://maps.googleapis.com/maps/api/streetview?size="+w+"x"+h+"&location="+lat+","+lng+"&fov=90&pitch=0&key="+GOOGLE_API_KEY;
+const svUrl   = (lat,lng,w=800,h=400,heading=null) => "https://maps.googleapis.com/maps/api/streetview?size="+w+"x"+h+"&location="+lat+","+lng+"&fov=90&pitch=0"+(heading!=null?"&heading="+heading:"")+"&key="+GOOGLE_API_KEY;
+// Six exterior angles around the pin — a Street View "photo shoot" for
+// properties that carry no listing photos.
+const svAngles = (lat,lng) => [20, 80, 140, 200, 260, 320].map(h => svUrl(lat, lng, 900, 560, h));
 
 const newProp = (base={}) => ({
   id:"p"+Date.now(), address:"", city:"", state:"", zip:"", lat:null, lng:null,
@@ -650,6 +653,11 @@ const applyRentcast = (prev, data, rates) => {
               : taxVal ? Math.round(taxVal * (STATE_TAX_RATES[(prev.state||"").toUpperCase()] || DEFAULT_TAX_RATE) / 12)
               : prev.expPropTax,
     expPropTaxAuto: (annual || taxVal) ? false : prev.expPropTaxAuto,
+    // Insurance estimated from value and the state's effective rate — only
+    // when the user hasn't already entered their own number.
+    expInsurance: (prev.expInsurance||0) > 0 ? prev.expInsurance
+      : Math.round(((med || taxVal || prev.purchasePrice || 0)
+          * (INSURANCE_RATES[(prev.state||"").toUpperCase()] || DEFAULT_INS_RATE)) / 12),
     homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
     flipSalePrice: hi || prev.flipSalePrice,
     brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
@@ -1932,6 +1940,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   // One-time attention pulse on the exit toggle, fired just after the
   // recommendation card lands. Never repeats within a session.
   const [exitPulse, setExitPulse] = useState(false);
+  const [addrNudge, setAddrNudge] = useState(false);
+  useEffect(() => { if (p.address) setAddrNudge(false); }, [p.address]);
   const pulsedRef = useRef(false);
   useEffect(() => {
     if (pulsedRef.current) return;
@@ -1959,7 +1969,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       else {
         set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: hi,
           flipSalePrice: hi, brrrCashOut: Math.round(hi * 0.8)});
-        setAvmMsg({kind:"ok", text:`Current value estimate ${$(med)} (range ${$(lo)} – ${$(hi)}). ARV set to the high end — adjust for your rehab.`});
+        setAvmMsg({kind:"ok", med, lo, hi});
       }
     } catch (e) {
       setAvmMsg({kind:"err", text: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Value lookup failed. Check the address and try again."});
@@ -1973,13 +1983,20 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   // (expPropTaxAuto === false) or a pulled tax record turns the sync off.
   useEffect(() => {
     if (Array.isArray(p.expenseItems) && p.expenseItems.length) return;
-    if (p.expPropTaxAuto === false) return;
-    const rate  = STATE_TAX_RATES[(p.state||"").toUpperCase()] || DEFAULT_TAX_RATE;
     const basis = (p.taxValue||0) > 0 ? p.taxValue : (p.purchasePrice||0);
     if (basis <= 0) return;
-    const monthly = Math.round(basis * rate / 12);
-    if (p.expPropTax !== monthly) set({...p, expPropTax: monthly});
-  }, [p.state, p.taxValue, p.purchasePrice, p.expPropTaxAuto]); // eslint-disable-line react-hooks/exhaustive-deps
+    const next = {};
+    if (p.expPropTaxAuto !== false) {
+      const rate = STATE_TAX_RATES[(p.state||"").toUpperCase()] || DEFAULT_TAX_RATE;
+      const monthly = Math.round(basis * rate / 12);
+      if (p.expPropTax !== monthly) next.expPropTax = monthly;
+    }
+    if (p.expInsuranceAuto !== false && !(p.expInsurance > 0)) {
+      const insRate = INSURANCE_RATES[(p.state||"").toUpperCase()] || DEFAULT_INS_RATE;
+      next.expInsurance = Math.round((p.homeValueMedian || basis) * insRate / 12);
+    }
+    if (Object.keys(next).length) set({...p, ...next});
+  }, [p.state, p.taxValue, p.purchasePrice, p.homeValueMedian, p.expPropTaxAuto, p.expInsuranceAuto]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -1992,10 +2009,23 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:4, marginBottom:18}}>
             Pick a purchase method and the calculator opens for it. You can switch anytime.
           </div>
+          {addrNudge && (
+            <div style={{
+              display:"flex", alignItems:"center", justifyContent:"center", gap:9,
+              margin:"0 auto 16px", maxWidth:440, padding:"11px 16px",
+              background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 85%)`,
+              border:"1px solid "+C.greenBorder, borderRadius:C.r3,
+              fontSize:13.5, fontWeight:600, color:C.greenDark, fontFamily:F,
+              animation:"dhNudge .4s ease",
+            }}>
+              <I.pin size={15} stroke={2.2}/> Enter the property address above first — the analysis starts there.
+            </div>
+          )}
           <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12, maxWidth:520, margin:"0 auto"}}>
             {[["cash","Cash","All-cash purchase. Simple math, full equity from day one.",C.cashPos],
               ["finance","Finance","Loans, down payments, leverage. Model it like real life.",C.green]].map(([id,label,line,accent]) => (
-              <button key={id} onClick={()=>u("chosenStrategy",id)}
+              <button key={id}
+                onClick={()=>{ if (!p.address) { setAddrNudge(true); return; } u("chosenStrategy", id); }}
                 style={{
                   padding:"18px 16px", borderRadius:C.r4, cursor:"pointer", textAlign:"center",
                   background:"#fff", border:"1.5px solid "+C.border,
@@ -2086,7 +2116,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 </div>
                 <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
                   {$(p.rentEstimate)}/mo
-                  <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
+                  {(p.rentEstLow > 0 && p.rentEstHigh > 0) && (
+                    <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
+                  )}
                 </div>
               </div>
               {p.rentAmount !== p.rentEstimate && (
@@ -2094,7 +2126,25 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               )}
             </div>
           )}
-          <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$" mobile={mobile} />
+          <div style={{position:"relative"}}>
+            <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$"
+              suf={(rcOk(rcAuth) && apiLookup) ? "        " : undefined} mobile={mobile} />
+            {(rcOk(rcAuth) && apiLookup) && (
+              <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
+                title={p.address ? "Check rental comps" : "Enter the property address first"}
+                style={{
+                  position:"absolute", right:6, top: mobile ? 33 : 31, height: mobile ? 34 : 30,
+                  display:"inline-flex", alignItems:"center", gap:6, padding:"0 12px",
+                  background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 90%)`,
+                  border:"1px solid "+C.greenBorder, borderRadius:9999,
+                  color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F,
+                  cursor: p.address ? "pointer" : "default",
+                  opacity: p.address ? 1 : .5, boxShadow:C.sh1,
+                }}>
+                <I.search size={12} stroke={2.4}/> Comps
+              </button>
+            )}
+          </div>
           <InputField label="Other Income / mo" val={p.otherIncome}
             set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
             note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
@@ -2102,13 +2152,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
           </button>
-          {(rcOk(rcAuth) && apiLookup) && (
-            <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
-              title={p.address ? undefined : "Enter the property address first"}
-              {...btnStyle("secondary","sm", {marginBottom:12, opacity: p.address ? 1 : .55})}>
-              <I.search size={12}/> Check Rental Comps
-            </button>
-          )}
           <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
           {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
           <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
@@ -2236,7 +2279,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
               <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
               <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
-              <InputField label="Insurance / mo" val={p.expInsurance} set={v=>u("expInsurance",v)} pre="$" mobile={mobile} />
+              <InputField label="Insurance / mo" val={p.expInsurance}
+                set={v=>set({...p, expInsurance:v, expInsuranceAuto:false})} pre="$"
+                note="Estimated from the address — adjust anytime" mobile={mobile} />
               <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {marginBottom:12})}>
                 <I.edit size={12}/> Itemize Expenses
               </button>
@@ -2258,12 +2303,30 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               {avmBusy ? "Checking…" : <><I.search size={13}/> Check Home Value</>}
             </button>
           )}
-          {avmMsg && (
+          {avmMsg?.kind === "ok" ? (
+            <div style={{
+              background:`linear-gradient(150deg, ${C.blueSubtle} 0%, #fff 80%)`,
+              border:"1px solid "+C.blueBorder, borderRadius:C.r3,
+              padding:"14px 16px", textAlign:"center", marginBottom:12, boxShadow:C.sh1,
+            }}>
+              <div style={{fontSize:10.5, fontWeight:700, color:C.blueDark, fontFamily:F,
+                letterSpacing:".07em", textTransform:"uppercase"}}>Current Value Estimate</div>
+              <div style={{fontSize:26, fontWeight:800, color:C.text, fontFamily:F,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em", marginTop:2}}>
+                {$(avmMsg.med)}
+              </div>
+              <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
+                background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
+                padding:"3px 11px", fontSize:11.5, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                Range {$(avmMsg.lo)} – {$(avmMsg.hi)}
+              </div>
+              <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:7, lineHeight:1.5}}>
+                ARV pre-filled at the high end — tune it for your rehab.
+              </div>
+            </div>
+          ) : avmMsg && (
             <div style={{fontSize:12.5, fontFamily:F, lineHeight:1.55, borderRadius:C.r2, padding:"9px 12px",
-              marginBottom:10,
-              background: avmMsg.kind==="ok" ? C.greenSubtle : C.redSubtle,
-              border:"1px solid "+(avmMsg.kind==="ok" ? C.greenBorder : C.redBorder),
-              color: avmMsg.kind==="ok" ? C.greenDark : C.redDark}}>
+              marginBottom:10, background:C.redSubtle, border:"1px solid "+C.redBorder, color:C.redDark}}>
               {avmMsg.text}
             </div>
           )}
@@ -2657,7 +2720,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
                     background:C.border, borderRadius:C.r2, overflow:"hidden", border:"1px solid "+C.border}}>
                     {[["CF/mo",m.chosenCF,$mo(m.chosenCF)],["CoC",m.chosenCoC,pct(m.chosenCoC)],["Cap",m.chosenCap,pct(m.chosenCap)]].map(([l,v,sv]) => (
                       <div key={l} style={{textAlign:"center", background:C.card, padding:"10px 6px"}}>
-                        <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                        <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
                         <div style={{fontSize:14, fontWeight:700, marginTop:3,
                           color:["CF/mo","CoC"].includes(l)?cfC(v):C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{sv}</div>
                       </div>
@@ -4951,6 +5014,16 @@ const STATE_TAX_RATES = {
   VT:0.0190, VA:0.0082, WA:0.0098, WV:0.0058, WI:0.0185, WY:0.0061,
 };
 const DEFAULT_TAX_RATE = 0.011;
+// Homeowners-insurance effective annual rates (% of value) — coastal and
+// hail-belt states run hot. Used to estimate insurance from the address.
+const INSURANCE_RATES = {
+  FL:0.0110, LA:0.0120, OK:0.0100, KS:0.0090, TX:0.0085, MS:0.0090,
+  AL:0.0080, AR:0.0085, NE:0.0090, CO:0.0075, MO:0.0075, SC:0.0070,
+  GA:0.0060, TN:0.0060, OH:0.0045, MI:0.0050, IN:0.0050, PA:0.0040,
+  NY:0.0040, NJ:0.0040, IL:0.0050, WI:0.0040, MN:0.0055, KY:0.0060,
+  NC:0.0060, VA:0.0045, MD:0.0040, CA:0.0045, WA:0.0040, OR:0.0040,
+};
+const DEFAULT_INS_RATE = 0.0055;
 
 const classifyDeal = (deal) => {
   // Rent — 1% rule fallback capped at $2,200 so a $400k property doesn't
@@ -5149,7 +5222,7 @@ const SAMPLE_DEALS = [
 
 const FREE_PREVIEW_COUNT = 5;
 const STRATEGY_LABELS = {
-  buyhold: {label:"Buy & Hold",   color:C.greenDark, bg:C.greenSubtle, border:C.greenBorder, dot:C.green},
+  buyhold: {label:"Rental",       color:C.greenDark, bg:C.greenSubtle, border:C.greenBorder, dot:C.green},
   flip:    {label:"Fix & Flip",   color:C.amberDark, bg:C.amberSubtle, border:C.amberBorder, dot:C.amber},
   brrrr:   {label:"BRRRR",        color:C.blueDark,  bg:C.blueSubtle,  border:C.blueBorder,  dot:C.blue},
   wholesale:{label:"Wholesale",   color:C.sidebar,   bg:C.bgSubtle,    border:C.borderHover, dot:C.sidebarHover},
@@ -5359,23 +5432,23 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
         {/* Address — gated */}
         <div>
           {isPro ? (
-            <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
-              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            <div style={{fontSize:16, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
+              textAlign:"center", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {deal.address}
               {mobile && (deal.city || deal.state) && (
-                <span style={{color:C.textSub, fontWeight:500}}>
+                <span style={{color:C.textSub, fontWeight:600}}>
                   {", "}{[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
                 </span>
               )}
             </div>
           ) : (
-            <div style={{fontSize:13, color:C.textMuted, fontFamily:F,
+            <div style={{fontSize:13, color:C.textMuted, fontFamily:F, justifyContent:"center", width:"100%",
               display:"inline-flex", alignItems:"center", gap:6}}>
               <I.lock size={12} stroke={2.2}/> Address unlocked with Pro
             </div>
           )}
           {!mobile && isPro && (deal.city || deal.state) && (
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
+            <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:500,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
               {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
             </div>
@@ -5427,7 +5500,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               padding:"11px 8px 12px", textAlign:"center",
             }}>
               <div style={{display:"inline-flex", alignItems:"center", gap:5,
-                fontSize:10, color:C.textMuted, fontWeight:600, fontFamily:F,
+                fontSize:11.5, color:C.textSub, fontWeight:600, fontFamily:F,
                 letterSpacing:".04em", textTransform: keepCase ? "none" : "uppercase"}}>
                 <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
                   background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
@@ -5709,7 +5782,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
             ...(deal.condition ? [["Condition", deal.condition]] : []),
           ].map(([l, v]) => (
             <div key={l}>
-              <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+              <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:600,
                 letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
               <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
                 fontVariantNumeric:"tabular-nums", marginTop:2,
@@ -5734,7 +5807,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
               ["Spread %",      pct(spreadPct),  spread > 0 ? cfC(spread) : C.textMuted],
             ].map(([l, v, color]) => (
               <div key={l} style={{padding:"12px 14px", background:C.card}}>
-                <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:600,
                   letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
                 <div style={{fontSize:16, fontWeight:700, color, fontFamily:F, marginTop:2,
                   fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</div>
@@ -5768,7 +5841,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
                 ["Cash flow after refi",  $mo(c.brrrr.cashFlow),  cfC(c.brrrr.cashFlow)],
               ].map(([l, v, color]) => (
                 <div key={l} style={{padding:"12px 14px", background:C.card}}>
-                  <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:600,
+                  <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:600,
                     letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
                   <div style={{fontSize:16, fontWeight:700, color, fontFamily:F, marginTop:2,
                     fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</div>
@@ -6132,6 +6205,195 @@ function StrategyCards({active, counts, onSelect, mobile}) {
   );
 }
 
+// Property showcase for saved deals: photos, facts, and the map — no deal
+// numbers (those live on the card and in the analyzer). Free accounts see up
+// to 5 photos; Pro unlocks the full set.
+function MiniMap({lat, lng}) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!lat || !lng || !ref.current) return;
+    let map;
+    const init = () => {
+      if (!ref.current || map) return;
+      map = window.L.map(ref.current, {zoomControl:false, attributionControl:false, scrollWheelZoom:false, dragging:false});
+      map.setView([lat, lng], 15);
+      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+      window.L.circleMarker([lat, lng], {radius:9, color:"#E8731C", weight:3, fillColor:"#E8731C", fillOpacity:.35}).addTo(map);
+    };
+    if (window.L) init();
+    else {
+      const sc = document.createElement("script");
+      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+      sc.onload = init;
+      document.head.appendChild(sc);
+      if (!document.querySelector('link[href*="leaflet.min.css"]')) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+        document.head.appendChild(l);
+      }
+    }
+    return () => { if (map) map.remove(); };
+  }, [lat, lng]);
+  return <div ref={ref} style={{height:180, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border}}/>;
+}
+
+function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
+  const photos = Array.isArray(deal.photos) && deal.photos.length
+    ? deal.photos
+    : (deal.lat && deal.lng ? svAngles(deal.lat, deal.lng) : (deal.photo ? [deal.photo] : []));
+  const visible = isPro ? photos : photos.slice(0, 5);
+  const locked  = photos.length - visible.length;
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    document.body.classList.add("dh-scroll-locked");
+    const handler = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => {
+      document.body.classList.remove("dh-scroll-locked");
+      window.removeEventListener("keydown", handler);
+    };
+  }, [onClose]);
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%",
+       maxHeight:"93dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:620,
+       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+
+  const mapsHref  = deal.lat && deal.lng
+    ? `https://maps.google.com/?q=${deal.lat},${deal.lng}`
+    : `https://maps.google.com/?q=${encodeURIComponent([deal.address, deal.city, deal.state].filter(Boolean).join(", "))}`;
+  const zillowHref = `https://www.zillow.com/homes/${encodeURIComponent([deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(" "))}_rb/`;
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        {/* Gallery */}
+        <div style={{position:"relative", background:C.bgSubtle}}>
+          <div style={{height: mobile ? 240 : 300, overflow:"hidden"}}>
+            <SafeImg src={visible[idx] || visible[0]} fallback={imgPlaceholder(36)}
+              style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            style={{position:"absolute", top:14, right:14, width:38, height:38, borderRadius:"50%",
+              background:"rgba(255,255,255,.94)", border:"none", cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh3}}>
+            <I.x size={17}/>
+          </button>
+          {visible.length > 1 && (
+            <div style={{position:"absolute", bottom:12, right:12, background:"rgba(9,9,11,.65)",
+              color:"#fff", padding:"3px 10px", borderRadius:9999, fontSize:11.5, fontWeight:700,
+              fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {idx+1} / {visible.length}
+            </div>
+          )}
+        </div>
+        {(visible.length > 1 || locked > 0) && (
+          <div style={{display:"flex", gap:8, padding:"12px 16px 4px", overflowX:"auto"}}>
+            {visible.map((src, i) => (
+              <button key={i} onClick={()=>setIdx(i)}
+                style={{width:64, height:46, borderRadius:8, overflow:"hidden", padding:0, flexShrink:0,
+                  border: i === idx ? "2px solid "+C.green : "1px solid "+C.border,
+                  cursor:"pointer", background:C.bgSubtle}}>
+                <SafeImg src={src.replace("size=900x560","size=200x140")} fallback={imgPlaceholder(14)}
+                  style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+              </button>
+            ))}
+            {locked > 0 && (
+              <div title="Unlock all photos with Pro"
+                style={{width:64, height:46, borderRadius:8, flexShrink:0,
+                  border:"1px dashed "+C.greenBorder, background:C.greenSubtle,
+                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                  color:C.greenDark, fontSize:10, fontWeight:800, fontFamily:F, gap:2}}>
+                <I.lock size={13} stroke={2.4}/> +{locked} Pro
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Address hero */}
+        <div style={{padding:"16px 20px 4px", textAlign:"center"}}>
+          <div style={{fontSize:20, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            {deal.address}
+          </div>
+          {(deal.city || deal.state) && (
+            <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, fontWeight:500, marginTop:2}}>
+              {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+            </div>
+          )}
+        </div>
+
+        {/* Facts */}
+        <div style={{padding:"14px 16px 0"}}>
+          <div style={{display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(3, 1fr)",
+            gap:1, background:C.border, border:"1px solid "+C.border,
+            borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+            {[
+              ["Beds",     deal.beds || "—",  I.bed],
+              ["Baths",    deal.baths || "—", I.bath],
+              ["Sqft",     deal.sqft ? deal.sqft.toLocaleString() : "—", I.ruler],
+              ["Lot Size", deal.lotSize ? deal.lotSize.toLocaleString() : "—", I.parcel],
+              ["Year",     deal.yearBuilt || "—", I.calendar],
+              ["Type",     deal.type || "—", I.home],
+            ].map(([l, v, Ic]) => (
+              <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+                padding:"12px 8px", textAlign:"center"}}>
+                <div style={{width:30, height:30, borderRadius:8, margin:"0 auto 6px",
+                  background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                  display:"flex", alignItems:"center", justifyContent:"center"}}>
+                  <Ic size={14} stroke={2}/>
+                </div>
+                <div style={{fontSize:14.5, fontWeight:700, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums",
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+                <div style={{fontSize:10.5, color:C.textSub, fontFamily:F, fontWeight:700,
+                  letterSpacing:".06em", textTransform:"uppercase", marginTop:1}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Map */}
+        {deal.lat && deal.lng && (
+          <div style={{padding:"14px 16px 0"}}>
+            <MiniMap lat={deal.lat} lng={deal.lng}/>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{padding:"16px 16px 20px"}}>
+          <button onClick={()=>{ onClose(); onAnalyze(deal); }}
+            {...btnStyle("primary","lg", {width:"100%", justifyContent:"center"})}>
+            <I.search size={15}/> Open Full Analysis
+          </button>
+          <div style={{display:"flex", gap:10, marginTop:10}}>
+            <a href={mapsHref} target="_blank" rel="noreferrer"
+              style={{flex:1, textDecoration:"none"}}>
+              <span {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+                <I.pin size={13}/> Open in Maps
+              </span>
+            </a>
+            <a href={zillowHref} target="_blank" rel="noreferrer"
+              style={{flex:1, textDecoration:"none"}}>
+              <span {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+                <I.externalLink size={13}/> View on Zillow
+              </span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
@@ -6226,12 +6488,10 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         const d = ordered.map(x => x.d).find(x => x.id === selectedId);
         if (!d) return null;
         return (
-          <DealDetailModal
+          <PropertyModal
             deal={d} isPro={isPro}
             onClose={() => setSelectedId(null)}
             onAnalyze={onAnalyze}
-            onSave={() => { setSelectedId(null); setConfirmRemove(d); }}
-            onUpgrade={onUpgrade}
             mobile={mobile} />
         );
       })()}
@@ -6913,7 +7173,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F,
                 fontVariantNumeric:"tabular-nums", letterSpacing:"-0.015em",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
-              <div style={{fontSize:9.5, color:C.textMuted, fontFamily:F, fontWeight:700,
+              <div style={{fontSize:11, color:C.textSub, fontFamily:F, fontWeight:700,
                 letterSpacing:".06em", textTransform:"uppercase", marginTop:2}}>{l}</div>
             </div>
           ))}
@@ -6992,7 +7252,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
                       {[["CF/mo",$mo(dm.chosenCF),cfC(dm.chosenCF)],["CoC",pct(dm.chosenCoC),cfC(dm.chosenCoC)],
                         ["Cap rate",pct(dm.chosenCap)],["Out of pocket",$(dm.chosenOOP)]].map(([l,v,c]) => (
                         <div key={l} style={{background:C.card, padding:"8px 10px"}}>
-                          <div style={{fontSize:10, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
+                          <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
                           <div style={{fontSize:13, fontWeight:700, color:c||C.text, fontFamily:F, marginTop:2, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.005em"}}>{v}</div>
                         </div>
                       ))}
@@ -7882,6 +8142,7 @@ export default function App() {
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
       input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
       @keyframes dhSpin{to{transform:rotate(360deg)}}
+      @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
       @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
