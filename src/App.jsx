@@ -1269,9 +1269,6 @@ function AuthPage({onAuth}) {
             background:`radial-gradient(closest-side, ${C.green}33, transparent 70%)`, filter:"blur(8px)"}}/>
           <div aria-hidden="true" style={{position:"absolute", bottom:-60, left:-40, width:190, height:210,
             background:`radial-gradient(closest-side, ${C.green}22, transparent 70%)`, filter:"blur(6px)"}}/>
-          <img src="/logo.png" alt="DealHive"
-            style={{height:40, width:"auto", alignSelf:"flex-start", marginBottom:22,
-              filter:"brightness(0) invert(1)", opacity:.95}} />
           <div style={{fontSize:26, fontWeight:700, color:"#fff", fontFamily:F,
             letterSpacing:"-0.025em", lineHeight:1.15, marginBottom:10}}>
             Know it's a deal<br/>before you offer.
@@ -8396,10 +8393,10 @@ export default function App() {
       input,select,textarea,button{font-family:inherit;}
       /* Prevent iOS from auto-zooming when focusing inputs — needs font-size >= 16px on the input. iS() already sets 16 on mobile, this is a safety net. */
       @media (max-width:767px){input,select,textarea{font-size:16px!important;}}
-      input::placeholder,textarea::placeholder{color:${C.textMuted};}
+      input::placeholder,textarea::placeholder{color:#c2c2c9;font-style:normal;opacity:1;}
       input,select,textarea{transition:border-color .15s,box-shadow .15s;}
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
-      input::placeholder,textarea::placeholder{color:#a1a1aa;font-style:italic;opacity:1;}
+
       @keyframes dhSpin{to{transform:rotate(360deg)}}
       @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
