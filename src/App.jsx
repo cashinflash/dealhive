@@ -1181,19 +1181,45 @@ function AuthPage({onAuth}) {
       return;
     }
     const launch = () => {
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_OAUTH_CLIENT_ID,
-        scope: "openid email profile",
-        callback: async (resp) => {
-          if (!resp || !resp.access_token) { setErr("Google sign-in was cancelled."); return; }
-          setL(true);
-          try {
-            const u = await fbSignInWithIdp(`access_token=${resp.access_token}&providerId=google.com`);
-            onAuth(u, !!u.isNewUser);
-          } catch { setErr("Google sign-in failed. Try email instead."); }
-          setL(false);
-        },
-      });
+      let client;
+      try {
+        client = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_OAUTH_CLIENT_ID,
+          scope: "openid email profile",
+          // Fires when the popup can't open or closes early — without this,
+          // a misconfigured origin makes the button look like it does nothing.
+          error_callback: (e) => {
+            setL(false);
+            setErr(e && (e.type === "popup_closed" || e.type === "user_cancel")
+              ? "Google sign-in was cancelled."
+              : "Google sign-in couldn't open (" + ((e && e.type) || "blocked") + "). Try email instead.");
+          },
+          callback: async (resp) => {
+            if (!resp || !resp.access_token) {
+              setL(false);
+              setErr(resp && resp.error
+                ? "Google sign-in failed (" + resp.error + "). Try email instead."
+                : "Google sign-in was cancelled.");
+              return;
+            }
+            setL(true);
+            try {
+              const u = await fbSignInWithIdp(`access_token=${resp.access_token}&providerId=google.com`);
+              onAuth(u, !!u.isNewUser);
+            } catch (ex) {
+              const m = String((ex && ex.message) || "");
+              setErr(
+                m.includes("UNAUTHORIZED_DOMAIN")    ? "This domain isn't authorized for Google sign-in yet — use email for now." :
+                m.includes("OPERATION_NOT_ALLOWED")  ? "Google sign-in isn't enabled on the account system yet — use email for now." :
+                "Google sign-in failed (" + (m || "unknown") + "). Try email instead.");
+            }
+            setL(false);
+          },
+        });
+      } catch {
+        setErr("Google sign-in couldn't start. Try email instead.");
+        return;
+      }
       client.requestAccessToken();
     };
     if (window.google?.accounts?.oauth2) { launch(); return; }
