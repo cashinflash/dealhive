@@ -1765,8 +1765,8 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}
           () => rcGet(`/avm/rent/long-term?address=${q}&bedrooms=${beds}`, rcAuth));
         let comps = [];
         try {
-          const listings = await apiLookup(lookupKey("rc-rentcomps", p.address, p.city, p.state, p.zip, beds),
-            () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=1&limit=12&status=Active`, rcAuth));
+          const listings = await apiLookup(lookupKey("rc-rentcomps-05", p.address, p.city, p.state, p.zip, beds),
+            () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=0.5&limit=12&status=Active`, rcAuth));
           comps = Array.isArray(listings) ? listings : [];
         } catch { /* comps are a bonus — the estimate alone is still useful */ }
         if (!alive) return;
@@ -1861,7 +1861,7 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}
                   margin:"20px 0 10px"}}>
                   <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
                     letterSpacing:".06em", textTransform:"uppercase"}}>
-                    Active Rentals Nearby
+                    Active Rentals Within 0.5 Mi
                   </span>
                   <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
                     {isPro ? st.comps.length : `showing ${visible.length} of ${st.comps.length}`}
