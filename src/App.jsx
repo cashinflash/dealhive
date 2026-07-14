@@ -1745,7 +1745,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 // -- Rent comps sheet ------------------------------------------------------------
 // RentCast rent AVM + nearby active rental listings for the entered address,
 // so Monthly Rent can be sanity-checked without leaving the analyzer.
-function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}) {
+function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgrade, mobile}) {
   const isPro = tier === "pro";
   const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
 
@@ -1854,7 +1854,67 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}
 
             {st.comps.length > 0 && (() => {
               const visible = isPro ? st.comps : st.comps.slice(0, 5);
-              const hidden = st.comps.length - visible.length;
+              const hidden  = st.comps.length - visible.length;
+              // Two of the locked comps render blurred behind the unlock CTA,
+              // so free users see exactly what Pro is holding for them.
+              const teaser  = hidden > 0 ? st.comps.slice(5, 7) : [];
+              const listedOn = l => {
+                const d = l.listedDate || l.createdDate || l.lastSeenDate;
+                if (!d) return null;
+                const dt = new Date(d);
+                return isNaN(dt.getTime())
+                  ? null
+                  : dt.toLocaleDateString("en-US", {month:"short", day:"numeric"});
+              };
+              const row = (l, i) => {
+                const rentV = l.price || l.rent || 0;
+                const psf   = l.squareFootage ? (rentV / l.squareFootage) : null;
+                const seen  = listedOn(l);
+                return (
+                  <div key={l.id || i} style={{
+                    display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
+                    border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 13px",
+                    background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
+                  }}>
+                    <div style={{display:"flex", alignItems:"flex-start", gap:11, minWidth:0}}>
+                      <span style={{
+                        width:30, height:30, borderRadius:8, flexShrink:0, marginTop:1,
+                        background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                        display:"inline-flex", alignItems:"center", justifyContent:"center",
+                        fontSize:11.5, fontWeight:800, fontFamily:F,
+                      }}>{i+1}</span>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13, fontWeight:650, color:C.text, fontFamily:F,
+                          lineHeight:1.35, letterSpacing:"-0.005em"}}>
+                          {l.formattedAddress || l.addressLine1 || "Nearby rental"}
+                        </div>
+                        <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:2}}>
+                          {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right", flexShrink:0}}>
+                      <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F,
+                        fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>
+                        {$(rentV)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
+                      </div>
+                      {psf && (
+                        <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                          ${psf.toFixed(2)}/sqft
+                        </div>
+                      )}
+                      {seen && (
+                        <div style={{display:"inline-flex", alignItems:"center", marginTop:4,
+                          padding:"2px 8px", borderRadius:9999, background:C.bgSubtle,
+                          border:"1px solid "+C.border, fontSize:10, fontWeight:600,
+                          color:C.textSub, fontFamily:F, whiteSpace:"nowrap"}}>
+                          Listed {seen}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              };
               return (
               <>
                 <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline",
@@ -1868,58 +1928,35 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, mobile}
                   </span>
                 </div>
                 <div style={{display:"flex", flexDirection:"column", gap:8}}>
-                  {visible.map((l, i) => {
-                    const rentV = l.price || l.rent || 0;
-                    const psf = l.squareFootage ? (rentV / l.squareFootage) : null;
-                    return (
-                      <div key={l.id || i} style={{
-                        display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
-                        border:"1px solid "+C.border, borderRadius:C.r3, padding:"11px 13px",
-                        background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:11, minWidth:0}}>
-                          <span style={{
-                            width:30, height:30, borderRadius:8, flexShrink:0,
-                            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
-                            display:"inline-flex", alignItems:"center", justifyContent:"center",
-                            fontSize:11.5, fontWeight:800, fontFamily:F,
-                          }}>{i+1}</span>
-                          <div style={{minWidth:0}}>
-                            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F,
-                              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-                              {l.formattedAddress || l.addressLine1 || "Nearby rental"}
-                            </div>
-                            <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:1}}>
-                              {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
-                            </div>
-                          </div>
-                        </div>
-                        <div style={{textAlign:"right", flexShrink:0}}>
-                          <div style={{fontSize:14.5, fontWeight:700, color:C.text, fontFamily:F,
-                            fontVariantNumeric:"tabular-nums"}}>
-                            {$(rentV)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
-                          </div>
-                          {psf && (
-                            <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                              ${psf.toFixed(2)}/sqft
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {visible.map(row)}
                 </div>
                 {hidden > 0 && (
-                  <div style={{
-                    marginTop:10, padding:"13px 14px", borderRadius:C.r3, textAlign:"center",
-                    background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 70%)`,
-                    border:"1px dashed "+C.greenBorder,
-                  }}>
-                    <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:F}}>
-                      <I.lock size={12} stroke={2.4} style={{verticalAlign:"-1px"}}/> {hidden} more comp{hidden===1?"":"s"} with Pro
+                  <div style={{position:"relative", marginTop:8, borderRadius:C.r4, overflow:"hidden"}}>
+                    <div aria-hidden="true" style={{display:"flex", flexDirection:"column", gap:8,
+                      filter:"blur(6px)", opacity:.8, pointerEvents:"none", userSelect:"none"}}>
+                      {teaser.map((l, i) => row(l, i + 5))}
                     </div>
-                    <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
-                      Upgrade in Settings for the full comp set on every address.
+                    <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
+                      alignItems:"center", justifyContent:"center", gap:10, padding:"0 16px",
+                      background:"linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.94) 100%)"}}>
+                      <div style={{display:"inline-flex", alignItems:"center", gap:8,
+                        fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                        <span style={{width:26, height:26, borderRadius:"50%", flexShrink:0,
+                          background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                          display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
+                          <I.lock size={12} stroke={2.6}/>
+                        </span>
+                        {hidden} more comp{hidden===1?"":"s"} within half a mile
+                      </div>
+                      {onUpgrade ? (
+                        <button onClick={onUpgrade} {...btnStyle("primary","md")}>
+                          <I.star size={13}/> Unlock with Pro
+                        </button>
+                      ) : (
+                        <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>
+                          Upgrade to Pro in Settings to see them all.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1998,7 +2035,7 @@ function DealSummaryBlock({p, m, exit}) {
 }
 
 // -- Calculator ----------------------------------------------------------------
-function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, rcAuth, tier, exit, onExitChange, externalSummary, midSlot}) {
+function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stickyTop, apiLookup, rentcastKey, rcAuth, tier, onUpgrade, exit, onExitChange, externalSummary, midSlot}) {
   const u   = (f,v) => set({...p, [f]:v});
   const m   = calc(p);
   const s   = p.chosenStrategy || "finance";
@@ -2592,7 +2629,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           onClose={()=>setItemize(null)} mobile={mobile} />
       )}
       {compsOpen && (
-        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth} tier={tier} mobile={mobile}
+        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth} tier={tier} onUpgrade={onUpgrade} mobile={mobile}
           onUseRent={(rent, lo, hi) => {
             set({...p, rentAmount: rent, rentEstimate: rent, rentEstLow: lo, rentEstHigh: hi});
             setCompsOpen(false);
@@ -6932,7 +6969,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, initial, onConsumeInitial, onBackToDeals}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, initial, onConsumeInitial, onBackToDeals}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
@@ -7354,7 +7391,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       )}
 
       {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth}
+      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
         exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
         midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
         stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
@@ -8751,6 +8788,7 @@ export default function App() {
       if (res === "created" || res === "updated") setPage("dashboard");
     },
     onMoveToPortfolio: moveDealToPortfolio,
+    onUpgrade: handleUpgrade,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
     onBackToDeals:    () => setPage("deals"),
