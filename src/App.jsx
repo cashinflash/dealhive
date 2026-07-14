@@ -1251,7 +1251,7 @@ function AuthPage({onAuth}) {
   ];
 
   return (
-    <div style={{padding: mobile ? "14px 16px 56px" : "26px 20px 72px", background:C.bg,
+    <div style={{padding: mobile ? "14px 16px 16px" : "26px 20px 30px", background:C.bg,
       backgroundImage:`radial-gradient(circle at 85% 0%, ${C.greenSubtle} 0%, transparent 42%), radial-gradient(circle at 0% 100%, ${C.bgSubtle} 0%, transparent 50%)`}}>
       <div className="dh-auth-grid" style={{
         maxWidth:920, margin:"0 auto",
