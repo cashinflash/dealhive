@@ -132,6 +132,47 @@ const loadBilling = async (uid, token) => {
   } catch { return null; }
 };
 
+// -- Firebase Storage (user photo uploads) --------------------------------------
+// The default bucket name differs by project age; we try both and remember
+// which one answers. Until Storage is enabled in the Firebase console, both
+// 404 and the uploader reports a friendly setup message.
+const FB_STORAGE_BUCKETS = ["darallc.appspot.com", "darallc.firebasestorage.app"];
+let fbBucketPick = 0;
+const fbStorageUpload = async (path, blob, token) => {
+  for (let attempt = 0; attempt < FB_STORAGE_BUCKETS.length; attempt++) {
+    const i = (fbBucketPick + attempt) % FB_STORAGE_BUCKETS.length;
+    const bucket = FB_STORAGE_BUCKETS[i];
+    const r = await fetch(
+      `https://firebasestorage.googleapis.com/v0/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(path)}`,
+      {method:"POST", headers:{Authorization:`Firebase ${token}`, "Content-Type":"image/jpeg"}, body: blob});
+    if (r.status === 404) continue; // bucket doesn't exist under this name
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d.error && d.error.message) || "Upload failed — try again.");
+    fbBucketPick = i;
+    const tok = String(d.downloadTokens || "").split(",")[0];
+    return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(d.name)}?alt=media${tok ? `&token=${tok}` : ""}`;
+  }
+  throw new Error("Photo storage isn't switched on yet — it's coming shortly.");
+};
+
+// Shrink phone photos before upload: max 1600px on the long edge, JPEG.
+const compressImage = (file, maxDim = 1600, quality = 0.82) => new Promise((resolve, reject) => {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(img, 0, 0, w, h);
+    cv.toBlob(b => b ? resolve(b) : reject(new Error("Couldn't read that image.")), "image/jpeg", quality);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read that image.")); };
+  img.src = url;
+});
+
 const saveData = async (uid, token, d) => {
   try {
     const r = await fetch(`${dbPath(uid)}?auth=${token}`, {
@@ -6781,18 +6822,26 @@ function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
 // -- Deal View -------------------------------------------------------------------
 // The home of a saved deal: hero gallery, the saved verdict numbers up top,
 // then a grouped hub of everything else. Opens from any saved-deal card.
-function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, apiLookup, rcAuth, mobile}) {
+function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, apiLookup, rcAuth, onUploadPhotos, onPatchDeal, mobile}) {
   const {strat, heroNumber, secondaryMetrics} =
     dealHeroMetrics(deal, deal.scenario || null, deal.financing || null);
   const [idx, setIdx]     = useState(0);
   const [sheet, setSheet] = useState(null); // null | "comps" | "owner" | "records"
   const [shared, setShared] = useState(false);
+  const fileRef = useRef(null);
+  const [upBusy, setUpBusy] = useState(false);
+  const [upNote, setUpNote] = useState("");
 
-  const photos = Array.isArray(deal.photos) && deal.photos.length
+  // One provided shot — the straight-on Street View of the front — plus the
+  // user's own uploads. Feed deals keep their real listing photos when the
+  // source provided them.
+  const uploads  = Array.isArray(deal.userPhotos) ? deal.userPhotos : [];
+  const provided = Array.isArray(deal.photos) && deal.photos.length
     ? deal.photos
-    : (deal.lat && deal.lng ? svAngles(deal.lat, deal.lng) : (deal.photo ? [deal.photo] : []));
-  const visible = isPro ? photos : photos.slice(0, 5);
-  const locked  = photos.length - visible.length;
+    : (deal.lat && deal.lng ? [svUrl(deal.lat, deal.lng, 900, 560)]
+      : (deal.photo ? [deal.photo] : []));
+  const photos  = [...provided, ...uploads];
+  const visible = photos;
 
   useEffect(() => {
     document.body.classList.add("dh-scroll-locked");
@@ -6812,6 +6861,43 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   const finLabel = deal.financing === "owned" ? "Owned"
     : deal.financing === "cash" ? "Cash"
     : deal.financing === "finance" ? "Finance" : null;
+
+  useEffect(() => { if (idx > 0 && idx >= photos.length) setIdx(0); }, [photos.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickFiles = () => {
+    setUpNote("");
+    if (!isPro && uploads.length >= 5) {
+      setUpNote("Free plan holds 5 of your own photos per deal — Pro is unlimited.");
+      return;
+    }
+    if (fileRef.current) fileRef.current.click();
+  };
+  const onFiles = async e => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length || !onUploadPhotos) return;
+    let take = files;
+    if (!isPro) {
+      const room = Math.max(5 - uploads.length, 0);
+      if (files.length > room) {
+        take = files.slice(0, room);
+        setUpNote(`Free plan holds 5 photos per deal — added the first ${room}.`);
+      }
+    }
+    if (!take.length) return;
+    setUpBusy(true);
+    try {
+      const urls = await onUploadPhotos(deal, take);
+      if (onPatchDeal) onPatchDeal(deal.id, {userPhotos: [...uploads, ...urls]});
+    } catch (err) {
+      setUpNote((err && err.message) || "Upload failed — try again.");
+    }
+    setUpBusy(false);
+  };
+  const removePhoto = (u) => {
+    if (onPatchDeal) onPatchDeal(deal.id, {userPhotos: uploads.filter(x => x !== u)});
+    setIdx(0);
+  };
 
   const share = async () => {
     const text = `${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")} — ${$(deal.price)} · ${heroNumber.label}: ${heroNumber.value} · analyzed on DealHive (dealhive.io)`;
@@ -6843,24 +6929,21 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
     </span>
   );
 
-  const Row = ({Ic, label, note, pro, onClick, last}) => (
+  const Row = ({Ic, label, pro, onClick, last}) => (
     <button onClick={onClick} style={{display:"flex", alignItems:"center", gap:12, width:"100%",
-      padding:"13px 14px", background:"#fff", border:"none", cursor:"pointer", textAlign:"left",
+      padding:"14px", background:"#fff", border:"none", cursor:"pointer", textAlign:"left",
       borderBottom: last ? "none" : "1px solid "+C.border, fontFamily:F}}>
       <span style={{width:32, height:32, borderRadius:9, flexShrink:0, background:C.greenSubtle,
         border:"1px solid "+C.greenBorder, color:C.greenDark, display:"inline-flex",
         alignItems:"center", justifyContent:"center"}}><Ic size={15} stroke={2}/></span>
-      <span style={{flex:1, minWidth:0}}>
-        <span style={{display:"flex", alignItems:"center", gap:7, fontSize:14, fontWeight:600,
-          color:C.text, letterSpacing:"-0.01em"}}>
-          {label}
-          {pro && !isPro && (
-            <span style={{fontSize:9.5, fontWeight:800, color:C.greenDark, background:C.greenSubtle,
-              border:"1px solid "+C.greenBorder, borderRadius:9999, padding:"1.5px 7px",
-              letterSpacing:".05em"}}>PRO</span>
-          )}
-        </span>
-        {note && <span style={{display:"block", fontSize:11.5, color:C.textSub, marginTop:1.5}}>{note}</span>}
+      <span style={{flex:1, minWidth:0, display:"flex", alignItems:"center", gap:8,
+        fontSize:14.5, fontWeight:650, color:C.text, letterSpacing:"-0.01em"}}>
+        {label}
+        {pro && !isPro && (
+          <span style={{fontSize:9.5, fontWeight:800, color:C.greenDark, background:C.greenSubtle,
+            border:"1px solid "+C.greenBorder, borderRadius:9999, padding:"1.5px 7px",
+            letterSpacing:".05em"}}>PRO</span>
+        )}
       </span>
       <span style={{color:C.textMuted, flexShrink:0, display:"inline-flex"}}>
         <I.chevronRight size={15} stroke={2.2}/>
@@ -6901,7 +6984,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
             </div>
           )}
         </div>
-        {(visible.length > 1 || locked > 0) && (
+        {visible.length > 1 && (
           <div style={{display:"flex", gap:8, padding:"12px 16px 4px", overflowX:"auto"}}>
             {visible.map((src, i) => (
               <button key={i} onClick={()=>setIdx(i)}
@@ -6912,15 +6995,6 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
                   style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
               </button>
             ))}
-            {locked > 0 && (
-              <button onClick={onUpgrade} title="Unlock all photos with Pro"
-                style={{width:64, height:46, borderRadius:8, flexShrink:0, cursor:"pointer",
-                  border:"1px dashed "+C.greenBorder, background:C.greenSubtle,
-                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-                  color:C.greenDark, fontSize:10, fontWeight:800, fontFamily:F, gap:2}}>
-                <I.lock size={13} stroke={2.4}/> +{locked} Pro
-              </button>
-            )}
           </div>
         )}
 
@@ -7004,23 +7078,71 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
           </div>
         )}
 
+        {/* Photos — the front shot is ours; the rest are the user's own */}
+        <div style={{padding:"16px 16px 0"}}>
+          <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+            letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"}}>
+            Photos
+          </div>
+          <div style={{border:"1px solid "+C.border, borderRadius:C.r4, background:"#fff",
+            boxShadow:C.sh1, padding:12}}>
+            <div style={{display:"flex", gap:10, overflowX:"auto", padding:"6px 2px 2px"}}>
+              {uploads.map(u => (
+                <div key={u} style={{position:"relative", flexShrink:0}}>
+                  <SafeImg src={u} fallback={imgPlaceholder(14)}
+                    style={{width:86, height:64, borderRadius:8, objectFit:"cover", display:"block",
+                      border:"1px solid "+C.border}}/>
+                  <button onClick={()=>removePhoto(u)} aria-label="Remove photo"
+                    style={{position:"absolute", top:-7, right:-7, width:21, height:21, borderRadius:"50%",
+                      background:C.text, color:"#fff", border:"2px solid #fff", cursor:"pointer",
+                      display:"flex", alignItems:"center", justifyContent:"center", padding:0,
+                      boxShadow:C.sh2}}>
+                    <I.x size={10} stroke={2.6}/>
+                  </button>
+                </div>
+              ))}
+              <button onClick={pickFiles} disabled={upBusy}
+                style={{width:86, height:64, borderRadius:8, flexShrink:0, cursor:"pointer",
+                  border:"1.5px dashed "+C.greenBorder, background:C.greenSubtle, color:C.greenDark,
+                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                  gap:3, fontSize:10.5, fontWeight:700, fontFamily:F}}>
+                {upBusy
+                  ? <span className="dh-pulse">Uploading…</span>
+                  : <><I.plus size={15} stroke={2.4}/> Add Photos</>}
+              </button>
+            </div>
+            <div style={{fontSize:11.5, color: upNote ? C.amberDark : C.textSub, fontFamily:F,
+              marginTop:9, lineHeight:1.5}}>
+              {upNote || (isPro
+                ? "Add your own photos — walkthroughs, rehab progress, anything."
+                : `Your own photos of this property — ${Math.max(5 - uploads.length, 0)} of 5 free slots left.`)}
+            </div>
+            {!isPro && uploads.length >= 5 && onUpgrade && (
+              <button onClick={onUpgrade} {...btnStyle("secondary","sm", {marginTop:9})}>
+                <I.star size={11}/> Unlimited photos with Pro
+              </button>
+            )}
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" multiple
+            style={{display:"none"}} onChange={onFiles}/>
+        </div>
+
         {/* Hub */}
         <div style={{padding:"0 16px"}}>
           <Group title="Analysis">
-            <Row Ic={I.chart} label="Full Analysis" note="Open in the Deal Analyzer to review or edit any number"
+            <Row Ic={I.chart} label="Deal Calculator"
               onClick={()=>{ onClose(); onAnalyze(deal); }} last/>
           </Group>
           <Group title="Research">
-            <Row Ic={I.dollar} label="Rental Comps & Rent" note="Market rent estimate + active rentals within 0.5 mi"
+            <Row Ic={I.dollar} label="Rental Comps & Rent"
               onClick={()=>setSheet("comps")}/>
-            <Row Ic={I.user} label="Owner Lookup" note="Owner name, mailing address, absentee status" pro
+            <Row Ic={I.user} label="Owner Lookup" pro
               onClick={()=>setSheet("owner")}/>
-            <Row Ic={I.receipt} label="Property Records" note="Last sale, assessed value, taxes, parcel"
+            <Row Ic={I.receipt} label="Property Records"
               onClick={()=>setSheet("records")} last/>
           </Group>
           <Group title="Tools">
-            <Row Ic={I.externalLink} label="Share Deal"
-              note={shared ? "Copied to clipboard!" : "Send the address and headline numbers anywhere"}
+            <Row Ic={I.externalLink} label={shared ? "Copied to Clipboard!" : "Share Deal"}
               onClick={share} last/>
           </Group>
         </div>
@@ -7070,7 +7192,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   );
 }
 
-function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, apiLookup, rcAuth, mobile}) {
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, apiLookup, rcAuth, onUploadPhotos, onPatchDeal, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
   const [selectedId, setSelectedId] = useState(null);
@@ -7171,6 +7293,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
             onRemove={dd => { setSelectedId(null); setConfirmRemove(dd); }}
             onUpgrade={onUpgrade}
             apiLookup={apiLookup} rcAuth={rcAuth}
+            onUploadPhotos={onUploadPhotos} onPatchDeal={onPatchDeal}
             mobile={mobile} />
         );
       })()}
@@ -9205,6 +9328,22 @@ export default function App() {
     persist({...data, savedDeals: (data.savedDeals || []).filter(d => d.id !== id)});
     setToast("Removed from saved deals"); setTimeout(()=>setToast(""), 2000);
   };
+  // Patch one saved deal in place (user photo lists etc.) and sync.
+  const patchSavedDeal = (id, patch) => {
+    persist({...data, savedDeals: (data.savedDeals || []).map(d => d.id === id ? {...d, ...patch} : d)});
+  };
+  // Compress and upload the user's own deal photos; returns their URLs.
+  const uploadDealPhotos = async (deal, files) => {
+    const u = (await refreshSession()) || userRef.current;
+    if (!u) throw new Error("Sign in first.");
+    const urls = [];
+    for (const f of files) {
+      const blob = await compressImage(f);
+      const path = `dealPhotos/${u.localId}/${deal.id}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
+      urls.push(await fbStorageUpload(path, blob, u.idToken));
+    }
+    return urls;
+  };
   // The actual save handler the Deals page calls — admin gets portfolio,
   // everyone else picks a scenario + financing in the save sheet first.
   const saveDealFromMarket = deal => {
@@ -9316,7 +9455,8 @@ export default function App() {
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
-                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -9344,7 +9484,8 @@ export default function App() {
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
-                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
         )}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
@@ -9387,7 +9528,8 @@ export default function App() {
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                     onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
-                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
