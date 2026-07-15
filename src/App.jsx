@@ -136,15 +136,18 @@ const loadBilling = async (uid, token) => {
 // The default bucket name differs by project age; we try both and remember
 // which one answers. Until Storage is enabled in the Firebase console, both
 // 404 and the uploader reports a friendly setup message.
-const FB_STORAGE_BUCKETS = ["darallc.appspot.com", "darallc.firebasestorage.app"];
+const FB_STORAGE_BUCKETS = ["darallc.firebasestorage.app", "darallc.appspot.com"];
 let fbBucketPick = 0;
 const fbStorageUpload = async (path, blob, token) => {
   for (let attempt = 0; attempt < FB_STORAGE_BUCKETS.length; attempt++) {
     const i = (fbBucketPick + attempt) % FB_STORAGE_BUCKETS.length;
     const bucket = FB_STORAGE_BUCKETS[i];
-    const r = await fetch(
-      `https://firebasestorage.googleapis.com/v0/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(path)}`,
-      {method:"POST", headers:{Authorization:`Firebase ${token}`, "Content-Type":"image/jpeg"}, body: blob});
+    let r;
+    try {
+      r = await fetch(
+        `https://firebasestorage.googleapis.com/v0/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(path)}`,
+        {method:"POST", headers:{Authorization:`Firebase ${token}`, "Content-Type":"image/jpeg"}, body: blob});
+    } catch { continue; } // browser-level rejection (nonexistent bucket blocks CORS) — try the next name
     if (r.status === 404) continue; // bucket doesn't exist under this name
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((d.error && d.error.message) || "Upload failed — try again.");
@@ -5341,6 +5344,14 @@ const proFormaToFeedDeal = pf => ({
   alreadyOwned: !!pf.alreadyOwned,
   ownedLoanBalance: pf.ownedLoanBalance || 0,
   ownedLoanPayment: pf.ownedLoanPayment || 0,
+  // Actual operating inputs at save time — Buy & Hold Projections and deal
+  // reopens run on these instead of re-derived estimates.
+  expPropTax:    pf.expPropTax    || 0,
+  expInsurance:  pf.expInsurance  || 0,
+  expManagement: pf.expManagement || 0,
+  expUtilities:  pf.expUtilities  || 0,
+  vacancyRate:   pf.vacancyRate ?? 5,
+  otherIncome:   pf.otherIncome   || 0,
   source: "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
 });
@@ -5387,9 +5398,12 @@ const dealToProForma = (deal) => {
     homeValueHigh:   deal.arv || Math.round((deal.price||0) * 1.35),
     homeValueLow:    Math.round((deal.arv || deal.price * 1.3) * 0.9),
     flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
-    expPropTax:      Math.round((deal.price || 0) * 0.0233 / 12),
-    expInsurance:    100,
-    expManagement:   Math.round((deal.rent || 0) * 0.08),
+    expPropTax:      deal.expPropTax    || Math.round((deal.price || 0) * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12),
+    expInsurance:    deal.expInsurance  || 100,
+    expManagement:   deal.expManagement ?? Math.round((deal.rent || 0) * 0.08),
+    expUtilities:    deal.expUtilities  || 0,
+    vacancyRate:     deal.vacancyRate ?? 5,
+    otherIncome:     deal.otherIncome   || 0,
     // Photos the analyzer should display in its own carousel.
     photos:          (Array.isArray(deal.photos) && deal.photos.length > 0)
                        ? deal.photos
@@ -6819,6 +6833,356 @@ function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
   );
 }
 
+// Sales comps: RentCast's value AVM with its comparable sale listings — the
+// actual comps the valuation model used, each with price and distance.
+function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
+  const [st, setSt] = useState({loading:true, err:null, med:0, lo:0, hi:0, comps:[]});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!rcOk(rcAuth) || !apiLookup) throw new Error("unavailable");
+        const q   = encodeURIComponent(`${deal.address}, ${deal.city}, ${deal.state} ${deal.zip||""}`.trim());
+        const key = lookupKey("rc-salescomps", deal.address, deal.city, deal.state, deal.zip);
+        const val = await apiLookup(key, () => rcGet(`/avm/value?address=${q}&compCount=15`, rcAuth));
+        if (!alive) return;
+        const med = (val && val.price) || 0;
+        setSt({
+          loading:false,
+          err: med ? null : "No value estimate found for this address.",
+          med,
+          lo: (val && val.priceRangeLow)  || (med ? Math.round(med*0.9) : 0),
+          hi: (val && val.priceRangeHigh) || (med ? Math.round(med*1.1) : 0),
+          comps: (val && Array.isArray(val.comparables)) ? val.comparables : [],
+        });
+      } catch (e) {
+        if (!alive) return;
+        setSt(x => ({...x, loading:false,
+          err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Value lookup failed. Try again in a moment."}));
+      }
+    })();
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = isPro ? st.comps : st.comps.slice(0, 5);
+  const hidden  = st.comps.length - visible.length;
+  const teaser  = hidden > 0 ? st.comps.slice(5, 7) : [];
+  const row = (l, i) => {
+    const priceV = l.price || 0;
+    const psf    = l.squareFootage ? (priceV / l.squareFootage) : null;
+    return (
+      <div key={l.id || i} style={{
+        display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
+        border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 13px",
+        background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
+      }}>
+        <div style={{display:"flex", alignItems:"flex-start", gap:11, minWidth:0}}>
+          <span style={{width:30, height:30, borderRadius:8, flexShrink:0, marginTop:1,
+            background:C.blueSubtle, border:"1px solid "+C.blueBorder, color:C.blueDark,
+            display:"inline-flex", alignItems:"center", justifyContent:"center",
+            fontSize:11.5, fontWeight:800, fontFamily:F}}>{i+1}</span>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13, fontWeight:650, color:C.text, fontFamily:F,
+              lineHeight:1.35, letterSpacing:"-0.005em"}}>
+              {l.formattedAddress || l.addressLine1 || "Nearby sale"}
+            </div>
+            <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:2}}>
+              {(l.bedrooms||0)}bd · {(l.bathrooms||0)}ba{l.squareFootage ? ` · ${l.squareFootage.toLocaleString()} sqft` : ""}
+            </div>
+          </div>
+        </div>
+        <div style={{textAlign:"right", flexShrink:0}}>
+          <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F,
+            fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>
+            {$(priceV)}
+          </div>
+          {psf && (
+            <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+              ${Math.round(psf)}/sqft
+            </div>
+          )}
+          {typeof l.distance === "number" && (
+            <div style={{display:"inline-flex", alignItems:"center", marginTop:4,
+              padding:"2px 8px", borderRadius:9999, background:C.bgSubtle,
+              border:"1px solid "+C.border, fontSize:10, fontWeight:600,
+              color:C.textSub, fontFamily:F, whiteSpace:"nowrap"}}>
+              {l.distance.toFixed(2)} mi
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <SheetShell title="Sales Comps & ARV" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={onClose} mobile={mobile}>
+      {st.loading ? sheetSpinner("Pulling comparable sales…")
+        : st.err ? sheetError(st.err)
+        : (
+        <>
+          <div style={{
+            background:`linear-gradient(150deg, ${C.blueSubtle} 0%, #fff 80%)`,
+            border:"1px solid "+C.blueBorder, borderRadius:C.r4,
+            padding:"18px 16px", textAlign:"center", boxShadow:C.sh2,
+          }}>
+            <div style={{fontSize:10.5, fontWeight:700, color:C.blueDark, fontFamily:F,
+              letterSpacing:".07em", textTransform:"uppercase"}}>Estimated Value</div>
+            <div style={{fontSize:34, fontWeight:800, color:C.text, fontFamily:F,
+              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>
+              {$(st.med)}
+            </div>
+            <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
+              background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
+              padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              Range {$(st.lo)} – {$(st.hi)}
+            </div>
+            <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:7, lineHeight:1.5}}>
+              As-is value from comparable sales — set your ARV in the Deal Calculator.
+            </div>
+          </div>
+
+          {st.comps.length > 0 && (
+            <>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline",
+                margin:"20px 0 10px"}}>
+                <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+                  letterSpacing:".06em", textTransform:"uppercase"}}>
+                  Comparable Sales
+                </span>
+                <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                  {isPro ? st.comps.length : `showing ${visible.length} of ${st.comps.length}`}
+                </span>
+              </div>
+              <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                {visible.map(row)}
+              </div>
+              {hidden > 0 && (
+                <div style={{position:"relative", marginTop:8, borderRadius:C.r4, overflow:"hidden"}}>
+                  <div aria-hidden="true" style={{display:"flex", flexDirection:"column", gap:8,
+                    filter:"blur(6px)", opacity:.8, pointerEvents:"none", userSelect:"none"}}>
+                    {teaser.map((l, i) => row(l, i + 5))}
+                  </div>
+                  <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
+                    alignItems:"center", justifyContent:"center", gap:10, padding:"0 16px",
+                    background:"linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.94) 100%)"}}>
+                    <div style={{display:"inline-flex", alignItems:"center", gap:8,
+                      fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                      <span style={{width:26, height:26, borderRadius:"50%", flexShrink:0,
+                        background:C.blueSubtle, border:"1px solid "+C.blueBorder, color:C.blueDark,
+                        display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
+                        <I.lock size={12} stroke={2.6}/>
+                      </span>
+                      {hidden} more comparable sale{hidden===1?"":"s"}
+                    </div>
+                    {onUpgrade ? (
+                      <button onClick={onUpgrade} {...btnStyle("primary","md")}>
+                        <I.star size={13}/> Unlock with Pro
+                      </button>
+                    ) : (
+                      <div style={{fontSize:12, color:C.textSub, fontFamily:F}}>
+                        Upgrade to Pro in Settings to see them all.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </SheetShell>
+  );
+}
+
+// Buy & Hold projection engine. Runs on the exact figures captured when the
+// deal was saved (expenses, vacancy, loan payment/rate); anything missing
+// falls back to state-rate estimates so older saves still project sensibly.
+function projectYear(deal, asm, year) {
+  const price  = deal.price || 0;
+  const snap   = deal.analysis || {};
+  const vacPct = deal.vacancyRate ?? 5;
+  const rent0  = (deal.rent || 0) * 12;
+  const other0 = (deal.otherIncome || 0) * 12;
+  const taxMo  = deal.expPropTax   || Math.round(price * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12);
+  const insMo  = deal.expInsurance || Math.round(price * (INSURANCE_RATES[deal.state] || DEFAULT_INS_RATE) / 12);
+  const mgmtMo = deal.expManagement ?? Math.round((deal.rent || 0) * 0.08);
+  const utilMo = deal.expUtilities || 0;
+  const knownMo    = taxMo + insMo + mgmtMo + utilMo;
+  const otherExpMo = Math.max((snap.expMo || knownMo) - knownMo, 0);
+
+  const g  = Math.pow(1 + (asm.incomeGrowth  || 0) / 100, year - 1);
+  const ge = Math.pow(1 + (asm.expenseGrowth || 0) / 100, year - 1);
+  const rentYr  = rent0  * g;
+  const otherYr = other0 * g;
+  const gross   = rentYr + otherYr;
+  const vacancy = gross * vacPct / 100;
+  const opIncome = gross - vacancy;
+
+  const lines = [
+    ["Property Taxes",       taxMo  * 12 * ge],
+    ["Insurance",            insMo  * 12 * ge],
+    ["Property Management",  mgmtMo * 12 * ge],
+    ["Capital Expenditures", (asm.capexPct || 0) / 100 * rentYr],
+    ["HOA Fees",             0],
+    ["Utilities",            utilMo * 12 * ge],
+    ["Landscaping",          0],
+    ["Accounting & Legal",   0],
+    ...(otherExpMo > 0 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
+  ];
+  const opEx = lines.reduce((s, [, v]) => s + v, 0);
+  const noi  = opIncome - opEx;
+
+  // Amortize the loan month by month up to the selected year.
+  let bal = snap.loanAmt || 0;
+  const rM  = (snap.loanRate ?? 7.5) / 1200;
+  const pmt = snap.mtgMo || 0;
+  let interestYr = 0, debtYr = 0;
+  if (bal > 0 && pmt > 0) {
+    for (let m = 1; m <= year * 12 && bal > 0; m++) {
+      const i   = bal * rM;
+      const pay = Math.min(pmt, bal + i);
+      if (m > (year - 1) * 12) { interestYr += i; debtYr += pay; }
+      bal = bal + i - pay;
+      if (bal < 0.5) bal = 0;
+    }
+  }
+
+  const cashFlow     = noi - debtYr;
+  const depreciation = price * 0.8 / 27.5; // building at 80% of price, 27.5-yr straight line
+  const taxable      = noi - interestYr - depreciation;
+  const taxDue       = taxable > 0 ? taxable * ((asm.taxRate ?? 24) / 100) : 0;
+  const postTax      = cashFlow - taxDue;
+  const value        = price * Math.pow(1 + (asm.appreciation || 0) / 100, year);
+  const equity       = value - bal;
+  const sellNet      = value * (1 - (asm.sellingCosts || 0) / 100) - bal;
+  const totalDeductions = opEx + interestYr + depreciation;
+
+  return {vacPct, rentYr, otherYr, gross, vacancy, opIncome, lines, opEx, noi,
+    debtYr, interestYr, cashFlow, depreciation, taxable, taxDue, postTax,
+    value, bal, equity, sellNet, totalDeductions};
+}
+
+const PROJ_DEFAULTS = {appreciation:3, incomeGrowth:2, expenseGrowth:2, sellingCosts:6, capexPct:5, taxRate:24};
+const PROJ_YEARS    = [1, 2, 3, 5, 10, 15, 20, 30];
+
+function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
+  const [asm, setAsm]   = useState(() => ({...PROJ_DEFAULTS, ...(deal.projections || {})}));
+  const [year, setYear] = useState(1);
+  const dirty = useRef(false);
+  const setA  = (k, v) => { dirty.current = true; setAsm(x => ({...x, [k]: v})); };
+  // Assumptions ride with the deal — closing the sheet keeps them for next time.
+  const close = () => {
+    if (dirty.current && onPatchDeal) onPatchDeal(deal.id, {projections: asm});
+    onClose();
+  };
+  const p = projectYear(deal, asm, year);
+
+  const Sec = ({t, rows, note}) => (
+    <div style={{marginTop:14}}>
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+        letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"}}>{t}</div>
+      <div style={{border:"1px solid "+C.border, borderRadius:C.r3, background:"#fff",
+        boxShadow:C.sh1, padding:"6px 14px"}}>
+        {rows.map(([l, v, color, strong], i) => l === "hr"
+          ? <div key={"hr"+i} style={{height:1, background:C.border, margin:"6px 0"}}/>
+          : (
+          <div key={String(l)+i} style={{display:"flex", justifyContent:"space-between",
+            alignItems:"baseline", gap:10, padding:"7px 0"}}>
+            <span style={{fontSize:12.5, color: strong ? C.text : C.textSub,
+              fontWeight: strong ? 700 : 500, fontFamily:F}}>{l}</span>
+            <span style={{fontSize:13.5, fontWeight: strong ? 800 : 600,
+              color: color || C.text, fontFamily:F, fontVariantNumeric:"tabular-nums",
+              letterSpacing:"-0.01em"}}>{v}</span>
+          </div>
+        ))}
+      </div>
+      {note && <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.5, margin:"7px 2px 0"}}>{note}</div>}
+    </div>
+  );
+
+  return (
+    <SheetShell title="Buy & Hold Projections" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={close} mobile={mobile}>
+      {/* Assumptions */}
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+        letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"}}>Assumptions</div>
+      <div style={{border:"1px solid "+C.border, borderRadius:C.r3, background:"#fff",
+        boxShadow:C.sh1, padding:"14px 14px 2px"}}>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px"}}>
+          <InputField label="Appreciation / Yr" val={asm.appreciation} set={v=>setA("appreciation", v)} suf="%" mobile={mobile}/>
+          <InputField label="Income Increase / Yr" val={asm.incomeGrowth} set={v=>setA("incomeGrowth", v)} suf="%" mobile={mobile}/>
+          <InputField label="Expense Increase / Yr" val={asm.expenseGrowth} set={v=>setA("expenseGrowth", v)} suf="%" mobile={mobile}/>
+          <InputField label="Selling Costs" val={asm.sellingCosts} set={v=>setA("sellingCosts", v)} suf="%" mobile={mobile}/>
+          <InputField label="CapEx (% of Rent)" val={asm.capexPct} set={v=>setA("capexPct", v)} suf="%" mobile={mobile}/>
+          <InputField label="Income Tax Rate" val={asm.taxRate} set={v=>setA("taxRate", v)} suf="%" mobile={mobile}/>
+        </div>
+      </div>
+
+      {/* Year picker */}
+      <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", margin:"16px 0 2px", padding:"2px 2px 6px"}}>
+        {PROJ_YEARS.map(y => {
+          const active = year === y;
+          return (
+            <button key={y} onClick={()=>setYear(y)} style={{
+              padding:"6px 13px", borderRadius:9999, whiteSpace:"nowrap", cursor:"pointer",
+              border:"1px solid " + (active ? C.green : C.border),
+              background: active ? C.green : "#fff",
+              color: active ? "#fff" : C.textSub,
+              fontSize:12, fontWeight:700, fontFamily:F, flexShrink:0,
+              boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
+              transition:"background .12s, color .12s, border-color .12s",
+            }}>
+              Year {y}
+            </button>
+          );
+        })}
+      </div>
+
+      <Sec t="Income" rows={[
+        ["Rental Income", $(p.rentYr)],
+        ...(p.otherYr > 0 ? [["Other Income", $(p.otherYr)]] : []),
+        [`Vacancy (${p.vacPct}%)`, "-" + $(p.vacancy), C.red],
+        ["hr"],
+        ["Operating Income", $(p.opIncome), C.text, true],
+      ]}/>
+
+      <Sec t="Operating Expenses" rows={[
+        ...p.lines.map(([l, v]) => [l, $(v)]),
+        ["hr"],
+        ["Total Operating Expenses", $(p.opEx), C.red, true],
+      ]}/>
+
+      <Sec t="Cash Flow" rows={[
+        ["Operating Income", $(p.opIncome)],
+        ["Operating Expenses", "-" + $(p.opEx), C.red],
+        ["hr"],
+        ["Net Operating Income", $(p.noi), C.text, true],
+        ...(p.debtYr > 0 ? [["Debt Service", "-" + $(p.debtYr), C.red]] : []),
+        ["Cash Flow", $(p.cashFlow), cfC(p.cashFlow), true],
+        ["Post-Tax Cash Flow", $(p.postTax), cfC(p.postTax), true],
+      ]}/>
+
+      <Sec t="Tax Benefits & Deductions" rows={[
+        ["Operating Expenses", $(p.opEx)],
+        ...(p.interestYr > 0 ? [["Mortgage Interest", $(p.interestYr)]] : []),
+        ["Depreciation", $(p.depreciation)],
+        ["hr"],
+        ["Total Deductions", $(p.totalDeductions), C.text, true],
+      ]} note={p.taxable < 0
+        ? `Paper loss of ${$(Math.abs(p.taxable))} this year — cash flow that the IRS sees as a loss. Talk to your CPA.`
+        : `Taxable income after deductions: ${$(p.taxable)} at ${asm.taxRate ?? 24}%.`}/>
+
+      <Sec t="Equity Accumulation" rows={[
+        [`Property Value (${asm.appreciation}% apprec.)`, $(p.value)],
+        ...(p.bal > 0 ? [["Loan Balance", "-" + $(p.bal), C.red]] : []),
+        ["hr"],
+        ["Total Equity", $(p.equity), C.cashPos, true],
+        [`Net Proceeds If Sold (${asm.sellingCosts}% costs)`, $(p.sellNet), cfC(p.sellNet), true],
+      ]} note="Projections run on the numbers saved with this deal. Re-save from the Deal Calculator after edits to refresh them."/>
+    </SheetShell>
+  );
+}
+
 // -- Deal View -------------------------------------------------------------------
 // The home of a saved deal: hero gallery, the saved verdict numbers up top,
 // then a grouped hub of everything else. Opens from any saved-deal card.
@@ -7131,10 +7495,14 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
         <div style={{padding:"0 16px"}}>
           <Group title="Analysis">
             <Row Ic={I.chart} label="Deal Calculator"
-              onClick={()=>{ onClose(); onAnalyze(deal); }} last/>
+              onClick={()=>{ onClose(); onAnalyze(deal); }}/>
+            <Row Ic={I.trendingUp} label="Buy & Hold Projections"
+              onClick={()=>setSheet("proj")} last/>
           </Group>
           <Group title="Research">
-            <Row Ic={I.dollar} label="Rental Comps & Rent"
+            <Row Ic={I.tag} label="Sales Comps & ARV"
+              onClick={()=>setSheet("sales")}/>
+            <Row Ic={I.dollar} label="Rental Comps & Estimate"
               onClick={()=>setSheet("comps")}/>
             <Row Ic={I.user} label="Owner Lookup" pro
               onClick={()=>setSheet("owner")}/>
@@ -7186,6 +7554,14 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
       )}
       {sheet === "records" && (
         <RecordsSheet deal={deal} apiLookup={apiLookup} rcAuth={rcAuth}
+          onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "sales" && (
+        <SalesCompsSheet deal={deal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+          onUpgrade={onUpgrade} onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "proj" && (
+        <ProjectionsSheet deal={deal} onPatchDeal={onPatchDeal}
           onClose={()=>setSheet(null)} mobile={mobile} />
       )}
     </div>
@@ -9414,6 +9790,14 @@ export default function App() {
             brrrrCashOut: Math.round(mm.brrrCashOut),
             brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashOut : mm.brrrNetCash),
             arv:          pf.homeValueHigh || pf.flipSalePrice || 0,
+            // Projection inputs captured at save time.
+            expMo:        Math.round(mm.exp),
+            mtgMo:        Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanPayment||0) : 0) : mm.mtg),
+            loanAmt:      Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanBalance||0) : 0) : mm.loan),
+            loanRate:     pf.alreadyOwned ? 7
+              : Array.isArray(pf.loans) && pf.loans.length && mm.loan > 0
+                ? Math.round(mm.loanBreakdown.reduce((s, b) => s + b.amount * (b.loan.rate ?? 12), 0) / mm.loan * 100) / 100
+                : (pf.interestRate || 7.5),
           }},
         suggested || "buyhold",
         pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance");
