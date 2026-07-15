@@ -2194,6 +2194,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const xtra    = exit !== undefined ? exit : localXtra;
   const setXtra = onExitChange ?? setLocalXtra;
   const [avmBusy, setAvmBusy] = useState(false);
+  // Flips don't rent — Income and Operating Expenses fold away in flip mode
+  // (they still drive holding costs), with a one-tap expander.
+  const [showFlipOpEx, setShowFlipOpEx] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
   const [compsOpen, setCompsOpen] = useState(false);
   // One-time attention pulse on the exit toggle. It only plays once the
@@ -2361,7 +2364,10 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           </button>
         </div>
       ) : (
-      <div style={{marginBottom:18, ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
+      <div style={{marginBottom:18, ...(mobile && stickyTop
+        ? {position:"sticky", top:stickyTop, zIndex:40, background:C.bg,
+           paddingBottom:6, margin:"0 -4px 18px", padding:"0 4px 6px"}
+        : {})}}>
       <div style={{display:"flex", gap:0, padding:4,
         background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
         {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
@@ -2452,6 +2458,26 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
+        {xtra === "flip" && !showFlipOpEx ? (
+          <button onClick={()=>setShowFlipOpEx(true)} style={{
+            gridColumn:"1 / -1", display:"flex", alignItems:"center", justifyContent:"space-between",
+            gap:10, padding:"13px 16px", borderRadius:C.r3, cursor:"pointer", textAlign:"left",
+            background:"#fff", border:"1px dashed "+C.borderHover, fontFamily:F,
+          }}>
+            <span style={{minWidth:0}}>
+              <span style={{display:"block", fontSize:13.5, fontWeight:700, color:C.text, letterSpacing:"-0.01em"}}>
+                Income & Operating Expenses — folded for flips
+              </span>
+              <span style={{display:"block", fontSize:11.5, color:C.textSub, marginTop:2}}>
+                A flip never rents. Taxes, insurance, and fixed bills still count as holding costs.
+              </span>
+            </span>
+            <span style={{color:C.textMuted, display:"inline-flex", flexShrink:0}}>
+              <I.chevronDown size={16} stroke={2.2}/>
+            </span>
+          </button>
+        ) : (
+        <>
         {/* Income — shared by both tabs (this used to hide on Finance) */}
         <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
           {p.rentEstimate > 0 && (
@@ -2561,6 +2587,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="Total Expenses / mo" value={$(m.exp)} />
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
+        </>
+        )}
 
         {/* Financing — Finance tab only */}
         {s==="finance" && (
@@ -5612,6 +5640,54 @@ const dealToProForma = (deal) => {
   };
 };
 
+// The analysis snapshot a saved deal carries — the exact numbers the
+// analyzer showed. Built at save time AND by the one-time migration below,
+// so both always agree with the current engine. Bump SNAPSHOT_V whenever the
+// calc engine changes in a way that should re-heal existing saves.
+const SNAPSHOT_V = 2;
+const buildAnalysisSnapshot = (pf) => {
+  const mm = calc(pf);
+  const isCash = pf.chosenStrategy === "cash";
+  return {
+    v:            SNAPSHOT_V,
+    method:       pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance",
+    oop:          Math.round(isCash ? mm.cashOOP : mm.finOOP),
+    cashFlow:     Math.round(isCash ? mm.cashCF  : mm.finCF),
+    coc:          isCash ? mm.cashCoC : mm.finCoC,
+    capRate:      isCash ? mm.cashCap : mm.finCap,
+    flipProfit:   Math.round(isCash ? mm.flipProfit : mm.finFlipProfit),
+    flipROI:      isCash ? mm.flipROI : mm.finFlipROI,
+    brrrrCF:      Math.round(mm.brrrCF),
+    brrrrCashOut: Math.round(mm.brrrCashOut),
+    brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashNet : mm.brrrNetCash),
+    brrrrAllIn:   Math.round(mm.brrrAllIn),
+    arv:          pf.homeValueHigh || pf.flipSalePrice || 0,
+    expMo:        Math.round(mm.exp),
+    mtgMo:        Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanPayment||0) : 0) : mm.mtg),
+    loanAmt:      Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanBalance||0) : 0) : mm.loan),
+    loanRate:     pf.alreadyOwned ? 7
+      : Array.isArray(pf.loans) && pf.loans.length && mm.loan > 0
+        ? Math.round(mm.loanBreakdown.reduce((s, b) => s + b.amount * (b.loan.rate ?? 12), 0) / mm.loan * 100) / 100
+        : (pf.interestRate || 7.5),
+  };
+};
+
+// One-time heal at sign-in: snapshots written by older engine versions get
+// recomputed from the deal's stored inputs so dashboards never show pre-fix
+// math. Non-analyzer saves (no snapshot) are left alone.
+const migrateSavedDeals = (data) => {
+  const list = Array.isArray(data.savedDeals) ? data.savedDeals : [];
+  let changed = false;
+  const next = list.map(d => {
+    if (!d || !d.scenario || !d.analysis || d.analysis.v === SNAPSHOT_V) return d;
+    try {
+      changed = true;
+      return {...d, analysis: buildAnalysisSnapshot(dealToProForma(d))};
+    } catch { return d; }
+  });
+  return changed ? {changed, data: {...data, savedDeals: next}} : {changed, data};
+};
+
 // Sample deals — Phase 0 placeholder until the listings pipeline lands.
 // Real lat/lng so Street View renders authentically per card.
 // Property types that surface in the Deals feed. Residential 1–4 unit only —
@@ -5770,10 +5846,10 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
       ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], ["Total Spent", $(a.oop)]]
       : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]])
   : primary === "brrrr"     ? (a
-      ? [["Out of Pocket", $(a.brrrrAllIn ?? a.oop), C.red],
+      ? [["Out of Pocket", $(a.brrrrAllIn ?? a.oop)],
          ["Cash Out Refi", $(a.brrrrNetCash), C.cashPos],
          ["Cash in Pocket", $(brrrrInPocket), C.cashPos]]
-      : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn), C.red]])
+      : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn)]])
   : primary === "wholesale" ? [["ARV", $(c.flip.arv)], ["All in", $(c.flip.totalIn)], ["ROI", pct(c.flip.roi)]]
   : (a
       ? [["Cap rate", pct(a.capRate)], ["CoC", pct(a.coc), null, true], ["Total Spent", $(a.oop)]]
@@ -7266,7 +7342,7 @@ function projectHold(deal, asm, year) {
       ["Utilities",            utilMo * 12 * ge],
       ["Landscaping",          landMo * 12 * ge],
       ["Accounting & Legal",   acctMo * 12 * ge],
-      ...(otherExpMo > 0 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
+      ...(otherExpMo >= 2 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
     ];
     const opEx = lines.reduce((s, x) => s + x[1], 0);
     const noi  = opIncome - opEx;
@@ -7527,7 +7603,7 @@ function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
         ...(p.dscr != null ? [["Debt Coverage Ratio (DSCR)", p.dscr.toFixed(2),
           p.dscr >= 1.2 ? C.cashPos : p.dscr >= 1 ? null : C.red, false, "NOI ÷ annual debt service"]] : []),
         ...(p.debtYield != null ? [["Debt Yield", pct1(p.debtYield), null, false, "NOI ÷ loan balance"]] : []),
-      ]} note="Projections run on the numbers saved with this deal — re-save from the Deal Calculator after edits to refresh them."/>
+      ]} note="Projections use this deal's saved numbers. Edits in the Deal Calculator flow in the moment you save the deal."/>
     </SheetShell>
   );
 }
@@ -8495,6 +8571,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     const order = ["rental","brrrr","flip"];
     const winId = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "rental");
     const NAMES = {rental:"Rental", brrrr:"BRRRR", flip:"Fix & Flip"};
+    const lockedId = exitTouched.current ? (exitStrategy || "rental") : null;
     const WHY   = {
       rental: "Solid leveraged cash flow with the simplest execution.",
       brrrr:  m.brrrNetCash >= 0
@@ -8529,8 +8606,15 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           <div>
             <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
             <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
-              Best exit: {NAMES[winId]}
+              {lockedId && lockedId !== winId
+                ? <>Best numbers: {NAMES[winId]}</>
+                : <>Best exit: {NAMES[winId]}</>}
             </div>
+            {lockedId && lockedId !== winId && (
+              <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:2}}>
+                You chose {NAMES[lockedId]} — your pick stays; this is just the comparison.
+              </div>
+            )}
           </div>
         </div>
         {!arv && (
@@ -8600,6 +8684,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         const order  = ["buyhold","brrrr","flip"];
         const winId  = order.reduce((a,b) => scores[b] > scores[a] ? b : a, "buyhold");
         const NAMES  = {buyhold:"Rental", brrrr:"BRRRR", flip:"Fix & Flip"};
+        const lockedId = exitTouched.current ? (exitStrategy || "buyhold") : null;
         const WHY    = {
           buyhold: "Steady cash flow with the simplest execution.",
           brrrr:   g.leftIn <= 0
@@ -8635,8 +8720,15 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               <div>
                 <div style={{fontSize:11, color:C.textMuted, fontWeight:600, fontFamily:F, letterSpacing:".03em", textTransform:"uppercase"}}>Recommendation</div>
                 <div style={{fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em", marginTop:1}}>
-                  Best exit: {NAMES[winId]}
+                  {lockedId && lockedId !== winId
+                    ? <>Best numbers: {NAMES[winId]}</>
+                    : <>Best exit: {NAMES[winId]}</>}
                 </div>
+                {lockedId && lockedId !== winId && (
+                  <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, marginTop:2}}>
+                    You chose {NAMES[lockedId]} — your pick stays; this is just the comparison.
+                  </div>
+                )}
               </div>
             </div>
             {!arv && (
@@ -9817,7 +9909,7 @@ export default function App() {
     const style = document.createElement("style");
     style.textContent = `
       *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-      body{margin:0;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
+      body{margin:0;font-feature-settings:"cv11","ss01","ss03","tnum";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
       /* Scroll lock used by the AddPropertyModal. Class-based so it can't
          leave body.style.overflow stuck. */
       body.dh-scroll-locked{overflow:hidden;overscroll-behavior:none;}
@@ -9921,7 +10013,10 @@ export default function App() {
     // their stored tier (dev toggle).
     const adminUser = (base.role === "admin") || u.email === "harut@ymail.com";
     const tier = bill && bill.tier ? bill.tier : adminUser ? (base.tier || "free") : "free";
-    setData({...base, tier});
+    // Heal any saved-deal snapshots written by an older calc engine.
+    const mig = migrateSavedDeals({...base, tier});
+    setData(mig.data);
+    if (mig.changed) saveData(u.localId, u.idToken, mig.data);
     setAL(false);
     if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
@@ -10175,35 +10270,13 @@ export default function App() {
     // purchase method, so the save is one tap. The Deals-page save keeps its
     // sheet since market cards carry no user choice yet.
     onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
-      const mm = calc(pf);
       const isCash = pf.chosenStrategy === "cash";
       const res = saveDealToWatchlist(
         {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy,
           // Snapshot of the analyzer's own numbers so the home card shows
-          // exactly what the user saw at save time — not the feed
-          // classifier's re-derivation with different assumptions.
-          analysis: {
-            method:       pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance",
-            oop:          Math.round(isCash ? mm.cashOOP : mm.finOOP),
-            cashFlow:     Math.round(isCash ? mm.cashCF  : mm.finCF),
-            coc:          isCash ? mm.cashCoC : mm.finCoC,
-            capRate:      isCash ? mm.cashCap : mm.finCap,
-            flipProfit:   Math.round(isCash ? mm.flipProfit : mm.finFlipProfit),
-            flipROI:      isCash ? mm.flipROI : mm.finFlipROI,
-            brrrrCF:      Math.round(mm.brrrCF),
-            brrrrCashOut: Math.round(mm.brrrCashOut),
-            brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashNet : mm.brrrNetCash),
-            brrrrAllIn:   Math.round(mm.brrrAllIn),
-            arv:          pf.homeValueHigh || pf.flipSalePrice || 0,
-            // Projection inputs captured at save time.
-            expMo:        Math.round(mm.exp),
-            mtgMo:        Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanPayment||0) : 0) : mm.mtg),
-            loanAmt:      Math.round(isCash ? (pf.alreadyOwned ? (pf.ownedLoanBalance||0) : 0) : mm.loan),
-            loanRate:     pf.alreadyOwned ? 7
-              : Array.isArray(pf.loans) && pf.loans.length && mm.loan > 0
-                ? Math.round(mm.loanBreakdown.reduce((s, b) => s + b.amount * (b.loan.rate ?? 12), 0) / mm.loan * 100) / 100
-                : (pf.interestRate || 7.5),
-          }},
+          // exactly what the user saw at save time — same builder as the
+          // sign-in migration, so the two can never diverge.
+          analysis: buildAnalysisSnapshot(pf)},
         suggested || "buyhold",
         pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance");
       // A professional save takes you to where the deal now lives.
