@@ -489,6 +489,14 @@ const svUrl   = (lat,lng,w=800,h=400,heading=null) => "https://maps.googleapis.c
 // Six exterior angles around the pin — a Street View "photo shoot" for
 // properties that carry no listing photos.
 const svAngles = (lat,lng) => [20, 80, 140, 200, 260, 320].map(h => svUrl(lat, lng, 900, 560, h));
+// Haversine miles between two points — used to sort comps nearest-first.
+const milesBetween = (lat1, lng1, lat2, lng2) => {
+  const toR = d => d * Math.PI / 180;
+  const dLat = toR(lat2 - lat1), dLng = toR(lng2 - lng1);
+  const a = Math.sin(dLat/2)*Math.sin(dLat/2)
+    + Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+};
 
 const newProp = (base={}) => ({
   id:"p"+Date.now(), address:"", city:"", state:"", zip:"", lat:null, lng:null,
@@ -1813,6 +1821,11 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
           const listings = await apiLookup(lookupKey("rc-rentcomps-05", p.address, p.city, p.state, p.zip, beds),
             () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=0.5&limit=12&status=Active`, rcAuth));
           comps = Array.isArray(listings) ? listings : [];
+          // Nearest first — in comps, proximity is credibility.
+          comps = comps.map(l => ({...l,
+            _mi: (p.lat != null && p.lng != null && l.latitude != null && l.longitude != null)
+              ? milesBetween(p.lat, p.lng, l.latitude, l.longitude) : null}))
+            .sort((a, b) => (a._mi ?? 99) - (b._mi ?? 99));
         } catch { /* comps are a bonus — the estimate alone is still useful */ }
         if (!alive) return;
         const rent = avm?.rent || 0;
@@ -1950,12 +1963,13 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                           ${psf.toFixed(2)}/sqft
                         </div>
                       )}
-                      {seen && (
+                      {(seen || l._mi != null) && (
                         <div style={{display:"inline-flex", alignItems:"center", marginTop:4,
                           padding:"2px 8px", borderRadius:9999, background:C.bgSubtle,
                           border:"1px solid "+C.border, fontSize:10, fontWeight:600,
                           color:C.textSub, fontFamily:F, whiteSpace:"nowrap"}}>
-                          Listed {seen}
+                          {[l._mi != null ? `${l._mi.toFixed(2)} mi` : null,
+                            seen ? `Listed ${seen}` : null].filter(Boolean).join(" · ")}
                         </div>
                       )}
                     </div>
@@ -5405,9 +5419,12 @@ const dealToProForma = (deal) => {
     vacancyRate:     deal.vacancyRate ?? 5,
     otherIncome:     deal.otherIncome   || 0,
     // Photos the analyzer should display in its own carousel.
-    photos:          (Array.isArray(deal.photos) && deal.photos.length > 0)
-                       ? deal.photos
-                       : (deal.photo ? [deal.photo] : []),
+    photos:          [
+      ...(Array.isArray(deal.userPhotos) ? deal.userPhotos : []),
+      ...((Array.isArray(deal.photos) && deal.photos.length > 0)
+        ? deal.photos
+        : (deal.photo ? [deal.photo] : [])),
+    ],
   };
 };
 
@@ -5595,7 +5612,8 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   // always render the card their way; only auto-classified feed cards bail.
   if (c.tags.length === 0 && !savedScenario) return null;
 
-  const photo = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
+  const photo = (Array.isArray(deal.userPhotos) && deal.userPhotos[0])
+    || deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
 
   const onPrimaryClick = isPro ? onAnalyze : onUpgrade;
   const onSecondaryClick = isPro ? onSave : onUpgrade;
@@ -6853,7 +6871,8 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
           med,
           lo: (val && val.priceRangeLow)  || (med ? Math.round(med*0.9) : 0),
           hi: (val && val.priceRangeHigh) || (med ? Math.round(med*1.1) : 0),
-          comps: (val && Array.isArray(val.comparables)) ? val.comparables : [],
+          comps: ((val && Array.isArray(val.comparables)) ? [...val.comparables] : [])
+            .sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99)),
         });
       } catch (e) {
         if (!alive) return;
@@ -6994,10 +7013,11 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
   );
 }
 
-// Buy & Hold projection engine. Runs on the exact figures captured when the
-// deal was saved (expenses, vacancy, loan payment/rate); anything missing
-// falls back to state-rate estimates so older saves still project sensibly.
-function projectYear(deal, asm, year) {
+// Buy & Hold projection engine — single pass through every year up to the
+// selected one, on the exact figures captured at save time (state-rate
+// estimates back-fill older saves). Returns the selected year's statement
+// plus cumulative cash flow, sale analysis, return metrics, and a true IRR.
+function projectHold(deal, asm, year) {
   const price  = deal.price || 0;
   const snap   = deal.analysis || {};
   const vacPct = deal.vacancyRate ?? 5;
@@ -7009,176 +7029,292 @@ function projectYear(deal, asm, year) {
   const utilMo = deal.expUtilities || 0;
   const knownMo    = taxMo + insMo + mgmtMo + utilMo;
   const otherExpMo = Math.max((snap.expMo || knownMo) - knownMo, 0);
+  const invested   = snap.oop ?? (price + (deal.repair || 0));
 
-  const g  = Math.pow(1 + (asm.incomeGrowth  || 0) / 100, year - 1);
-  const ge = Math.pow(1 + (asm.expenseGrowth || 0) / 100, year - 1);
-  const rentYr  = rent0  * g;
-  const otherYr = other0 * g;
-  const gross   = rentYr + otherYr;
-  const vacancy = gross * vacPct / 100;
-  const opIncome = gross - vacancy;
-
-  const lines = [
-    ["Property Taxes",       taxMo  * 12 * ge],
-    ["Insurance",            insMo  * 12 * ge],
-    ["Property Management",  mgmtMo * 12 * ge],
-    ["Capital Expenditures", (asm.capexPct || 0) / 100 * rentYr],
-    ["HOA Fees",             0],
-    ["Utilities",            utilMo * 12 * ge],
-    ["Landscaping",          0],
-    ["Accounting & Legal",   0],
-    ...(otherExpMo > 0 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
-  ];
-  const opEx = lines.reduce((s, [, v]) => s + v, 0);
-  const noi  = opIncome - opEx;
-
-  // Amortize the loan month by month up to the selected year.
   let bal = snap.loanAmt || 0;
   const rM  = (snap.loanRate ?? 7.5) / 1200;
   const pmt = snap.mtgMo || 0;
-  let interestYr = 0, debtYr = 0;
-  if (bal > 0 && pmt > 0) {
-    for (let m = 1; m <= year * 12 && bal > 0; m++) {
-      const i   = bal * rM;
-      const pay = Math.min(pmt, bal + i);
-      if (m > (year - 1) * 12) { interestYr += i; debtYr += pay; }
-      bal = bal + i - pay;
-      if (bal < 0.5) bal = 0;
+
+  let cumCF = 0, out = null;
+  const flows = [-invested];
+  for (let y = 1; y <= year; y++) {
+    const g  = Math.pow(1 + (asm.incomeGrowth  || 0) / 100, y - 1);
+    const ge = Math.pow(1 + (asm.expenseGrowth || 0) / 100, y - 1);
+    const rentYr  = rent0 * g;
+    const otherYr = other0 * g;
+    const gross   = rentYr + otherYr;
+    const vacancy = gross * vacPct / 100;
+    const opIncome = gross - vacancy;
+    const lines = [
+      ["Property Taxes",       taxMo  * 12 * ge],
+      ["Insurance",            insMo  * 12 * ge],
+      ["Property Management",  mgmtMo * 12 * ge],
+      ["Maintenance",          (asm.maintenancePct || 0) / 100 * rentYr],
+      ["Capital Expenditures", (asm.capexPct || 0) / 100 * rentYr],
+      ["HOA Fees",             0],
+      ["Utilities",            utilMo * 12 * ge],
+      ["Landscaping",          0],
+      ["Accounting & Legal",   0],
+      ...(otherExpMo > 0 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
+    ];
+    const opEx = lines.reduce((s, x) => s + x[1], 0);
+    const noi  = opIncome - opEx;
+
+    let interestYr = 0, debtYr = 0;
+    if (pmt > 0) {
+      for (let m = 0; m < 12 && bal > 0; m++) {
+        const i   = bal * rM;
+        const pay = Math.min(pmt, bal + i);
+        interestYr += i; debtYr += pay;
+        bal = bal + i - pay;
+        if (bal < 0.5) bal = 0;
+      }
+    }
+
+    const cashFlow = noi - debtYr;
+    cumCF += cashFlow;
+    const depreciation = price * 0.8 / 27.5; // building at 80% of price, 27.5-yr straight line
+    const taxable = noi - interestYr - depreciation;
+    const taxDue  = taxable > 0 ? taxable * ((asm.taxRate ?? 24) / 100) : 0;
+    const postTax = cashFlow - taxDue;
+    const value   = price * Math.pow(1 + (asm.appreciation || 0) / 100, y);
+
+    if (y < year) flows.push(cashFlow);
+    else {
+      const sellCosts    = value * (asm.sellingCosts || 0) / 100;
+      const saleProceeds = value - sellCosts - bal;
+      const totalProfit  = saleProceeds + cumCF - invested;
+      flows.push(cashFlow + saleProceeds);
+      const equity = value - bal;
+      out = {vacPct, rentYr, otherYr, gross, vacancy, opIncome, lines, opEx, noi,
+        interestYr, debtYr, cashFlow, cumCF, depreciation, taxable, taxDue, postTax,
+        value, bal, equity, sellCosts, saleProceeds, invested, totalProfit,
+        capPP: price > 0 ? noi / price * 100 : 0,
+        capMV: value > 0 ? noi / value * 100 : 0,
+        coc:   invested > 0 ? cashFlow / invested * 100 : 0,
+        roe:   equity > 0 ? cashFlow / equity * 100 : 0,
+        roi:   invested > 0 ? totalProfit / invested * 100 : 0,
+        irr:   null,
+        rentToValue: value > 0 ? (rentYr / 12) / value * 100 : 0,
+        grm: gross > 0 ? value / gross : 0,
+        equityMultiple: invested > 0 ? (cumCF + saleProceeds) / invested : 0,
+        breakEven: gross > 0 ? (opEx + debtYr) / gross * 100 : 0,
+      };
     }
   }
-
-  const cashFlow     = noi - debtYr;
-  const depreciation = price * 0.8 / 27.5; // building at 80% of price, 27.5-yr straight line
-  const taxable      = noi - interestYr - depreciation;
-  const taxDue       = taxable > 0 ? taxable * ((asm.taxRate ?? 24) / 100) : 0;
-  const postTax      = cashFlow - taxDue;
-  const value        = price * Math.pow(1 + (asm.appreciation || 0) / 100, year);
-  const equity       = value - bal;
-  const sellNet      = value * (1 - (asm.sellingCosts || 0) / 100) - bal;
-  const totalDeductions = opEx + interestYr + depreciation;
-
-  return {vacPct, rentYr, otherYr, gross, vacancy, opIncome, lines, opEx, noi,
-    debtYr, interestYr, cashFlow, depreciation, taxable, taxDue, postTax,
-    value, bal, equity, sellNet, totalDeductions};
+  if (out && invested > 0) {
+    const npv = r => flows.reduce((s, f, i) => s + f / Math.pow(1 + r, i), 0);
+    let lo = -0.9999, hi = 10;
+    if (npv(lo) * npv(hi) < 0) {
+      for (let i = 0; i < 80; i++) {
+        const mid = (lo + hi) / 2;
+        if (npv(lo) * npv(mid) <= 0) hi = mid; else lo = mid;
+      }
+      out.irr = ((lo + hi) / 2) * 100;
+    }
+  }
+  return out;
 }
 
-const PROJ_DEFAULTS = {appreciation:3, incomeGrowth:2, expenseGrowth:2, sellingCosts:6, capexPct:5, taxRate:24};
+const PROJ_DEFAULTS = {appreciation:3, incomeGrowth:2, expenseGrowth:2, sellingCosts:6,
+  maintenancePct:5, capexPct:5, taxRate:24};
 const PROJ_YEARS    = [1, 2, 3, 5, 10, 15, 20, 30];
 
 function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
-  const [asm, setAsm]   = useState(() => ({...PROJ_DEFAULTS, ...(deal.projections || {})}));
-  const [year, setYear] = useState(1);
+  const [asm, setAsm]     = useState(() => ({...PROJ_DEFAULTS, ...(deal.projections || {})}));
+  const [year, setYear]   = useState(1);
+  const [showAsm, setShowAsm] = useState(false);
   const dirty = useRef(false);
   const setA  = (k, v) => { dirty.current = true; setAsm(x => ({...x, [k]: v})); };
-  // Assumptions ride with the deal — closing the sheet keeps them for next time.
   const close = () => {
     if (dirty.current && onPatchDeal) onPatchDeal(deal.id, {projections: asm});
     onClose();
   };
-  const p = projectYear(deal, asm, year);
+  const p = projectHold(deal, asm, year);
+  const pct1 = n => (isNaN(n) || !isFinite(n) ? "0.0" : n.toFixed(1)) + "%";
 
+  // Row: [label, value, color, strong, sub]
   const Sec = ({t, rows, note}) => (
-    <div style={{marginTop:14}}>
+    <div style={{marginTop:16}}>
       <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
         letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"}}>{t}</div>
       <div style={{border:"1px solid "+C.border, borderRadius:C.r3, background:"#fff",
         boxShadow:C.sh1, padding:"6px 14px"}}>
-        {rows.map(([l, v, color, strong], i) => l === "hr"
+        {rows.map((r, i) => r[0] === "hr"
           ? <div key={"hr"+i} style={{height:1, background:C.border, margin:"6px 0"}}/>
           : (
-          <div key={String(l)+i} style={{display:"flex", justifyContent:"space-between",
-            alignItems:"baseline", gap:10, padding:"7px 0"}}>
-            <span style={{fontSize:12.5, color: strong ? C.text : C.textSub,
-              fontWeight: strong ? 700 : 500, fontFamily:F}}>{l}</span>
-            <span style={{fontSize:13.5, fontWeight: strong ? 800 : 600,
-              color: color || C.text, fontFamily:F, fontVariantNumeric:"tabular-nums",
-              letterSpacing:"-0.01em"}}>{v}</span>
+          <div key={String(r[0])+i} style={{display:"flex", justifyContent:"space-between",
+            alignItems:"baseline", gap:10, padding:"7.5px 0"}}>
+            <span style={{fontSize:12.5, color: r[3] ? C.text : C.textSub,
+              fontWeight: r[3] ? 700 : 500, fontFamily:F}}>{r[0]}</span>
+            <span style={{textAlign:"right", flexShrink:0}}>
+              <span style={{display:"block", fontSize: r[3] ? 14.5 : 13.5, fontWeight: r[3] ? 800 : 600,
+                color: r[2] || C.text, fontFamily:F, fontVariantNumeric:"tabular-nums",
+                letterSpacing:"-0.01em"}}>{r[1]}</span>
+              {r[4] && <span style={{display:"block", fontSize:10.5, color:C.textMuted,
+                fontFamily:F, marginTop:1}}>{r[4]}</span>}
+            </span>
           </div>
         ))}
       </div>
-      {note && <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.5, margin:"7px 2px 0"}}>{note}</div>}
+      {note && <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.5,
+        margin:"7px 2px 0"}}>{note}</div>}
     </div>
   );
 
   return (
     <SheetShell title="Buy & Hold Projections" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={close} mobile={mobile}>
-      {/* Assumptions */}
-      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
-        letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"}}>Assumptions</div>
-      <div style={{border:"1px solid "+C.border, borderRadius:C.r3, background:"#fff",
-        boxShadow:C.sh1, padding:"14px 14px 2px"}}>
-        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px"}}>
-          <InputField label="Appreciation / Yr" val={asm.appreciation} set={v=>setA("appreciation", v)} suf="%" mobile={mobile}/>
-          <InputField label="Income Increase / Yr" val={asm.incomeGrowth} set={v=>setA("incomeGrowth", v)} suf="%" mobile={mobile}/>
-          <InputField label="Expense Increase / Yr" val={asm.expenseGrowth} set={v=>setA("expenseGrowth", v)} suf="%" mobile={mobile}/>
-          <InputField label="Selling Costs" val={asm.sellingCosts} set={v=>setA("sellingCosts", v)} suf="%" mobile={mobile}/>
-          <InputField label="CapEx (% of Rent)" val={asm.capexPct} set={v=>setA("capexPct", v)} suf="%" mobile={mobile}/>
-          <InputField label="Income Tax Rate" val={asm.taxRate} set={v=>setA("taxRate", v)} suf="%" mobile={mobile}/>
+
+      {/* Year picker — sticky so you can flip years from anywhere on the page */}
+      <div style={{position:"sticky", top: mobile ? -20 : -22, zIndex:5,
+        background:C.card, margin:"0 -6px", padding:"6px 6px 10px"}}>
+        <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
+          {PROJ_YEARS.map(y => {
+            const active = year === y;
+            return (
+              <button key={y} onClick={()=>setYear(y)} style={{
+                padding:"6px 13px", borderRadius:9999, whiteSpace:"nowrap", cursor:"pointer",
+                border:"1px solid " + (active ? C.green : C.border),
+                background: active ? C.green : "#fff",
+                color: active ? "#fff" : C.textSub,
+                fontSize:12, fontWeight:700, fontFamily:F, flexShrink:0,
+                boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
+                transition:"background .12s, color .12s, border-color .12s",
+              }}>
+                Year {y}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Year picker */}
-      <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", margin:"16px 0 2px", padding:"2px 2px 6px"}}>
-        {PROJ_YEARS.map(y => {
-          const active = year === y;
-          return (
-            <button key={y} onClick={()=>setYear(y)} style={{
-              padding:"6px 13px", borderRadius:9999, whiteSpace:"nowrap", cursor:"pointer",
-              border:"1px solid " + (active ? C.green : C.border),
-              background: active ? C.green : "#fff",
-              color: active ? "#fff" : C.textSub,
-              fontSize:12, fontWeight:700, fontFamily:F, flexShrink:0,
-              boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
-              transition:"background .12s, color .12s, border-color .12s",
-            }}>
-              Year {y}
-            </button>
-          );
-        })}
+      {/* The year's verdict at a glance */}
+      <div style={{
+        display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, marginTop:4,
+        background:C.border, border:"1px solid "+C.border,
+        borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1,
+      }}>
+        {[["Cash Flow / Yr", $(p.cashFlow), cfC(p.cashFlow)],
+          ["Total Equity", $(p.equity), C.cashPos],
+          ["Profit If Sold", $(p.totalProfit), cfC(p.totalProfit)],
+          ["IRR", p.irr == null ? "—" : pct1(p.irr), C.text]].map(([l, v, color]) => (
+          <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+            padding:"12px 8px 13px", textAlign:"center"}}>
+            <div style={{display:"inline-flex", alignItems:"center", gap:5,
+              fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F,
+              letterSpacing:".07em", textTransform:"uppercase"}}>
+              <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0, background:color}}/>
+              {l}
+            </div>
+            <div style={{fontSize:19, fontWeight:500, color, fontFamily:F,
+              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:3}}>{v}</div>
+          </div>
+        ))}
       </div>
 
-      <Sec t="Income" rows={[
-        ["Rental Income", $(p.rentYr)],
+      {/* Assumptions — collapsed into one line until you want to tune them */}
+      <div style={{marginTop:14, border:"1px solid "+C.border, borderRadius:C.r3,
+        background:"#fff", boxShadow:C.sh1, overflow:"hidden"}}>
+        <button onClick={()=>setShowAsm(s => !s)} style={{display:"flex", alignItems:"center",
+          justifyContent:"space-between", gap:10, width:"100%", padding:"12px 14px",
+          background:"none", border:"none", cursor:"pointer", textAlign:"left", fontFamily:F}}>
+          <span style={{minWidth:0}}>
+            <span style={{display:"block", fontSize:13, fontWeight:700, color:C.text, letterSpacing:"-0.005em"}}>
+              Assumptions
+            </span>
+            <span style={{display:"block", fontSize:11.5, color:C.textSub, marginTop:2}}>
+              {asm.appreciation}% appreciation · {asm.incomeGrowth}% income · {asm.expenseGrowth}% expenses · {asm.sellingCosts}% selling costs
+            </span>
+          </span>
+          <span style={{color:C.textMuted, display:"inline-flex", flexShrink:0,
+            transform: showAsm ? "rotate(180deg)" : "none", transition:"transform .15s"}}>
+            <I.chevronDown size={16} stroke={2.2}/>
+          </span>
+        </button>
+        {showAsm && (
+          <div style={{padding:"2px 14px 2px", borderTop:"1px solid "+C.border}}>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px", paddingTop:12}}>
+              <InputField label="Appreciation / Yr" val={asm.appreciation} set={v=>setA("appreciation", v)} suf="%" mobile={mobile}/>
+              <InputField label="Income Increase / Yr" val={asm.incomeGrowth} set={v=>setA("incomeGrowth", v)} suf="%" mobile={mobile}/>
+              <InputField label="Expense Increase / Yr" val={asm.expenseGrowth} set={v=>setA("expenseGrowth", v)} suf="%" mobile={mobile}/>
+              <InputField label="Selling Costs" val={asm.sellingCosts} set={v=>setA("sellingCosts", v)} suf="%" mobile={mobile}/>
+              <InputField label="Maintenance (% of Rent)" val={asm.maintenancePct} set={v=>setA("maintenancePct", v)} suf="%" mobile={mobile}/>
+              <InputField label="CapEx (% of Rent)" val={asm.capexPct} set={v=>setA("capexPct", v)} suf="%" mobile={mobile}/>
+              <InputField label="Income Tax Rate" val={asm.taxRate} set={v=>setA("taxRate", v)} suf="%" mobile={mobile}/>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <Sec t="Rental Income" rows={[
+        ["Gross Rent", $(p.rentYr)],
         ...(p.otherYr > 0 ? [["Other Income", $(p.otherYr)]] : []),
-        [`Vacancy (${p.vacPct}%)`, "-" + $(p.vacancy), C.red],
+        ["Vacancy", "-" + $(p.vacancy), C.red, false, `${p.vacPct}% of rent`],
         ["hr"],
-        ["Operating Income", $(p.opIncome), C.text, true],
+        ["Operating Income", $(p.opIncome), C.text, true, `growing ${asm.incomeGrowth}%/yr`],
       ]}/>
 
       <Sec t="Operating Expenses" rows={[
         ...p.lines.map(([l, v]) => [l, $(v)]),
         ["hr"],
-        ["Total Operating Expenses", $(p.opEx), C.red, true],
+        ["Total Operating Expenses", $(p.opEx), C.red, true, `growing ${asm.expenseGrowth}%/yr`],
       ]}/>
 
       <Sec t="Cash Flow" rows={[
         ["Operating Income", $(p.opIncome)],
-        ["Operating Expenses", "-" + $(p.opEx), C.red],
+        ["Operating Expenses", "-" + $(p.opEx), C.red, false,
+          p.gross > 0 ? `${(p.opEx / p.gross * 100).toFixed(1)}% of income` : null],
         ["hr"],
         ["Net Operating Income", $(p.noi), C.text, true],
         ...(p.debtYr > 0 ? [["Debt Service", "-" + $(p.debtYr), C.red]] : []),
         ["Cash Flow", $(p.cashFlow), cfC(p.cashFlow), true],
-        ["Post-Tax Cash Flow", $(p.postTax), cfC(p.postTax), true],
+        ["Post-Tax Cash Flow", $(p.postTax), cfC(p.postTax), true, `after ${asm.taxRate}% income tax`],
       ]}/>
 
       <Sec t="Tax Benefits & Deductions" rows={[
         ["Operating Expenses", $(p.opEx)],
         ...(p.interestYr > 0 ? [["Mortgage Interest", $(p.interestYr)]] : []),
-        ["Depreciation", $(p.depreciation)],
+        ["Depreciation", $(p.depreciation), null, false, "27.5-yr straight line, building at 80%"],
         ["hr"],
-        ["Total Deductions", $(p.totalDeductions), C.text, true],
+        ["Total Deductions", $(p.totalDeductions ?? (p.opEx + p.interestYr + p.depreciation)), C.text, true],
       ]} note={p.taxable < 0
-        ? `Paper loss of ${$(Math.abs(p.taxable))} this year — cash flow that the IRS sees as a loss. Talk to your CPA.`
+        ? `Paper loss of ${$(Math.abs(p.taxable))} this year — real cash flow the IRS sees as a loss. Talk to your CPA.`
         : `Taxable income after deductions: ${$(p.taxable)} at ${asm.taxRate ?? 24}%.`}/>
 
       <Sec t="Equity Accumulation" rows={[
-        [`Property Value (${asm.appreciation}% apprec.)`, $(p.value)],
+        ["Property Value", $(p.value), null, false, `${asm.appreciation}% appreciation`],
         ...(p.bal > 0 ? [["Loan Balance", "-" + $(p.bal), C.red]] : []),
         ["hr"],
         ["Total Equity", $(p.equity), C.cashPos, true],
-        [`Net Proceeds If Sold (${asm.sellingCosts}% costs)`, $(p.sellNet), cfC(p.sellNet), true],
-      ]} note="Projections run on the numbers saved with this deal. Re-save from the Deal Calculator after edits to refresh them."/>
+      ]}/>
+
+      <Sec t="Sale Analysis" rows={[
+        ["Equity", $(p.equity)],
+        ["Selling Costs", "-" + $(p.sellCosts), C.red, false, `${asm.sellingCosts}% of sale price`],
+        ["hr"],
+        ["Sale Proceeds", $(p.saleProceeds), C.text, true],
+        ["Cumulative Cash Flow", "+" + $(p.cumCF), cfC(p.cumCF)],
+        ["Total Cash Invested", "-" + $(p.invested), C.red],
+        ["hr"],
+        ["Total Profit", $(p.totalProfit), cfC(p.totalProfit), true, `if sold in year ${year}`],
+      ]}/>
+
+      <Sec t="Investment Returns" rows={[
+        ["Cap Rate (Purchase Price)", pct1(p.capPP), null, false, "NOI ÷ what you paid"],
+        ["Cap Rate (Market Value)", pct1(p.capMV), null, false, "NOI ÷ today's value"],
+        ["Cash on Cash Return", pct1(p.coc), null, false, "cash flow ÷ cash invested"],
+        ["Return on Equity", pct1(p.roe), null, false, "cash flow ÷ total equity"],
+        ["Return on Investment", pct1(p.roi), null, false, "total profit ÷ cash invested"],
+        ["Internal Rate of Return", p.irr == null ? "—" : pct1(p.irr), C.text, true, `annualized, sold in year ${year}`],
+      ]}/>
+
+      <Sec t="Financial Ratios" rows={[
+        ["Rent to Value", pct1(p.rentToValue), null, false, "monthly rent ÷ property value"],
+        ["Gross Rent Multiplier", (p.grm || 0).toFixed(2), null, false, "value ÷ gross annual rent"],
+        ["Equity Multiple", (p.equityMultiple || 0).toFixed(2), null, false, "(cash flow + proceeds) ÷ invested"],
+        ["Break Even Ratio", pct1(p.breakEven), null, false, "(expenses + debt) ÷ income"],
+      ]} note="Projections run on the numbers saved with this deal — re-save from the Deal Calculator after edits to refresh them."/>
     </SheetShell>
   );
 }
@@ -7204,7 +7340,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
     ? deal.photos
     : (deal.lat && deal.lng ? [svUrl(deal.lat, deal.lng, 900, 560)]
       : (deal.photo ? [deal.photo] : []));
-  const photos  = [...provided, ...uploads];
+  // The user's first upload leads — it's the deal's face everywhere. With no
+  // uploads, the straight-on Street View front shot takes over.
+  const photos  = [...uploads, ...provided];
   const visible = photos;
 
   useEffect(() => {
