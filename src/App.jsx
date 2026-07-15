@@ -279,7 +279,7 @@ const monthlyPI = (principal, rate, years=30) => {
 const newLoan = (n=1) => ({
   id: "l" + Date.now() + n,
   financeOf: "purchase",      // purchase | rehab | purchase_rehab | arv | custom
-  ltvPct: 80,                 // % of the financed base (ignored for custom)
+  ltvPct: 75,                 // % of the financed base (ignored for custom)
   customAmount: 0,
   loanType: "amortizing",     // amortizing | interest_only
   rate: 12,
@@ -294,7 +294,7 @@ const loanBase = (loan, p) =>
 const loanAmount = (loan, p) =>
   loan.financeOf === "custom"
     ? (loan.customAmount||0)
-    : Math.round(loanBase(loan, p) * ((loan.ltvPct ?? 80)/100));
+    : Math.round(loanBase(loan, p) * ((loan.ltvPct ?? 75)/100));
 const loanPayment = (amount, loan) =>
   loan.loanType === "interest_only"
     ? amount * ((loan.rate||12)/100/12)
@@ -405,7 +405,7 @@ const calc = (p) => {
     down   = Math.max(0, (p.purchasePrice||0) - loan);
   } else {
     // Legacy single-loan model.
-    down   = (p.purchasePrice||0) * (p.downPaymentPct||20)/100;
+    down   = (p.purchasePrice||0) * (p.downPaymentPct||25)/100;
     loan   = (p.purchasePrice||0) - down;
     mtg    = monthlyPI(loan, p.interestRate||7.5);
     finOOP = down + (p.repairCosts||0) + cc;
@@ -516,7 +516,7 @@ const newProp = (base={}) => ({
   homeValueLow:0, homeValueMedian:0, homeValueHigh:0,
   lotSize:0,
   repairLight:0, repairMedium:0, repairFull:0,
-  downPaymentPct:20, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
+  downPaymentPct:25, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
   brrrCashOut:0, flipSalePrice:0, agentFeePct:6,
@@ -535,7 +535,7 @@ const newDeal = () => ({
   repairLight:0, repairMedium:0, repairFull:0,
   purchasePrice:0, repairCosts:0, rentAmount:0,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
-  downPaymentPct:20, interestRate:7.5, closingCosts:null,
+  downPaymentPct:25, interestRate:7.5, closingCosts:null,
   loans:[], holdMonths:6, purchaseCostsPct:3,
   otherIncome:0, incomeItems:null, expenseItems:null,
   closingItems:null, repairItems:null,
@@ -2375,59 +2375,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
-        {/* Income — shared by both tabs (this used to hide on Finance) */}
-        <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
-          {p.rentEstimate > 0 && (
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
-              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
-              padding:"10px 12px", marginBottom:12}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
-                  Market Rent Estimate
-                </div>
-                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
-                  {$(p.rentEstimate)}/mo
-                  {(p.rentEstLow > 0 && p.rentEstHigh > 0) && (
-                    <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
-                  )}
-                </div>
-              </div>
-              {p.rentAmount !== p.rentEstimate && (
-                <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>Use</button>
-              )}
-            </div>
-          )}
-          <div style={{position:"relative"}}>
-            <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$"
-              suf={(rcOk(rcAuth) && apiLookup) ? "        " : undefined} mobile={mobile} />
-            {(rcOk(rcAuth) && apiLookup) && (
-              <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
-                title={p.address ? "Check rental comps" : "Enter the property address first"}
-                style={{
-                  position:"absolute", right:6, top: mobile ? 33 : 31, height: mobile ? 34 : 30,
-                  display:"inline-flex", alignItems:"center", gap:6, padding:"0 12px",
-                  background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 90%)`,
-                  border:"1px solid "+C.greenBorder, borderRadius:9999,
-                  color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F,
-                  cursor: p.address ? "pointer" : "default",
-                  opacity: p.address ? 1 : .5, boxShadow:C.sh1,
-                }}>
-                <I.search size={12} stroke={2.4}/> Comps
-              </button>
-            )}
-          </div>
-          <InputField label="Other Income / mo" val={p.otherIncome}
-            set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
-            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
-            mobile={mobile} />
-          <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
-            <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
-          </button>
-          <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
-          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
-          <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
-        </SectionBlock>
-
         {/* Financing — Finance tab only */}
         {s==="finance" && (
         <SectionBlock title="Financing" color={C.blue} icon={I.building}>
@@ -2508,6 +2455,59 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           )}
         </SectionBlock>
         )}
+
+        {/* Income — shared by both tabs (this used to hide on Finance) */}
+        <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
+          {p.rentEstimate > 0 && (
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
+              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
+              padding:"10px 12px", marginBottom:12}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
+                  Market Rent Estimate
+                </div>
+                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                  {$(p.rentEstimate)}/mo
+                  {(p.rentEstLow > 0 && p.rentEstHigh > 0) && (
+                    <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
+                  )}
+                </div>
+              </div>
+              {p.rentAmount !== p.rentEstimate && (
+                <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>Use</button>
+              )}
+            </div>
+          )}
+          <div style={{position:"relative"}}>
+            <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$"
+              suf={(rcOk(rcAuth) && apiLookup) ? "        " : undefined} mobile={mobile} />
+            {(rcOk(rcAuth) && apiLookup) && (
+              <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
+                title={p.address ? "Check rental comps" : "Enter the property address first"}
+                style={{
+                  position:"absolute", right:6, top: mobile ? 33 : 31, height: mobile ? 34 : 30,
+                  display:"inline-flex", alignItems:"center", gap:6, padding:"0 12px",
+                  background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 90%)`,
+                  border:"1px solid "+C.greenBorder, borderRadius:9999,
+                  color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F,
+                  cursor: p.address ? "pointer" : "default",
+                  opacity: p.address ? 1 : .5, boxShadow:C.sh1,
+                }}>
+                <I.search size={12} stroke={2.4}/> Comps
+              </button>
+            )}
+          </div>
+          <InputField label="Other Income / mo" val={p.otherIncome}
+            set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
+            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
+            mobile={mobile} />
+          <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+            <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
+          </button>
+          <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
+          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
+          <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
+        </SectionBlock>
 
         {/* Results — Finance tab only (cash results live in the Summary card) */}
         {s==="finance" && (
@@ -5322,7 +5322,7 @@ const classifyDeal = (deal) => {
     expManagement: Math.round(rent * 0.08), // 8% PM
     expUtilities:  0,
     vacancyRate:   5,
-    downPaymentPct: 20,
+    downPaymentPct: 25,
     interestRate:  7.5,
     closingCosts:  DEFAULT_CLOSING,
     chosenStrategy:"finance",
