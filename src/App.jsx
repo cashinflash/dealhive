@@ -300,6 +300,19 @@ const loanPayment = (amount, loan) =>
   loan.loanType === "interest_only"
     ? amount * ((loan.rate||12)/100/12)
     : monthlyPI(amount, loan.rate||12, loan.termYears||30);
+// Balance still owed after N monthly payments. Interest-only never amortizes;
+// amortizing loans pay principal down every month.
+const balanceAfter = (amount, loan, months) => {
+  if (loan.loanType === "interest_only") return amount;
+  const r = (loan.rate||12)/100/12;
+  const pmt = loanPayment(amount, loan);
+  let b = amount;
+  for (let i = 0; i < months && b > 0; i++) {
+    b = b + b*r - pmt;
+    if (b < 0.5) b = 0;
+  }
+  return b;
+};
 
 // -- Itemized costs --------------------------------------------------------------
 // Closing/repair costs can be itemized: [{id, name, type, value, rollIn}].
@@ -455,6 +468,11 @@ const calc = (p) => {
 
   // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
   const holdMonths  = p.holdMonths ?? 6;
+  // What's actually owed when the sale/refi closes — amortizing loans paid
+  // principal down during the hold months.
+  const loanPayoff = hasLoans
+    ? Math.round(loanBreakdown.reduce((t, b) => t + balanceAfter(b.amount, b.loan, holdMonths), 0))
+    : Math.round(balanceAfter(loan, {loanType:"amortizing", rate: p.interestRate||7.5, termYears:30}, holdMonths));
   const flipHolding = holdMonths * (carryMo + ownedPmt);
   const agentFee = (p.flipSalePrice||0) * (p.agentFeePct||6)/100;
   const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding - ownedBal;
@@ -464,12 +482,12 @@ const calc = (p) => {
   // paid off out of the sale, and ROI is measured on cash actually invested —
   // that's the leverage story.
   const finFlipHolding = holdMonths * (carryMo + mtg);
-  const finFlipProfit  = (p.flipSalePrice||0) - agentFee - finFlipHolding - loan - finOOP;
+  const finFlipProfit  = (p.flipSalePrice||0) - agentFee - finFlipHolding - loanPayoff - finOOP;
   const finFlipROI     = finOOP>0 ? (finFlipProfit/finOOP)*100 : 0;
 
   // Financed BRRRR: the refi pays off the existing loans first; what's left
   // is the cash that actually reaches your pocket.
-  const brrrNetCash = brrrCashNet - (owned ? ownedBal : loan);
+  const brrrNetCash = brrrCashNet - (owned ? ownedBal : loanPayoff);
 
   const s = p.chosenStrategy || "finance";
   // BRRRR carries the property through the rehab months before the refi —
@@ -481,7 +499,7 @@ const calc = (p) => {
     exp, noi, effectiveRent, carryMo, pointsTotal, cashOOP, cashCF, cashCoC, cashCap,
     owned, ownedBal, ownedPmt,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
-    rolledIn, loanBreakdown, holdMonths, flipHolding,
+    rolledIn, loanBreakdown, holdMonths, flipHolding, loanPayoff,
     finFlipHolding, finFlipProfit, finFlipROI, brrrNetCash,
     brrrCashOut, brrrMtg, brrrCF, agentFee, flipProfit, flipROI,
     brrrRefiCost, brrrCashNet, brrrHolding, brrrAllIn,
@@ -2116,7 +2134,7 @@ function DealSummaryBlock({p, m, exit}) {
       ["Agent Fee", $(m.agentFee), C.text],
       [`Holding Costs (${m.holdMonths} mo)`, $(holding), C.text],
       ...(m.owned && m.ownedBal > 0 ? [["Loan Payoff at Sale", $(m.ownedBal), C.text]]
-        : cash ? [] : [["Loan Payoff at Sale", $(m.loan), C.text]]),
+        : cash ? [] : [["Loan Payoff at Sale", $(m.loanPayoff), C.text]]),
       ["hr"],
       [m.owned ? "New Cash In (Rehab)" : "Out of Pocket", $(m.chosenOOP), C.text],
       [m.owned ? "Net Cash From Sale" : "Total Profit",  $(profit),      cfC(profit)],
@@ -2145,7 +2163,8 @@ function DealSummaryBlock({p, m, exit}) {
         : cash ? [] : [["Loan Payments / mo", $mo(m.mtg), C.text]]),
       ["Net Cash Flow / mo", $mo(m.chosenCF),  cfC(m.chosenCF)],
       ["NOI / yr",           $(m.noi*12),      C.text],
-      [m.owned ? "Return on New Cash" : "Cash-on-Cash", pct(m.chosenCoC), cfC(m.chosenCoC)],
+      [m.owned ? "Return on New Cash" : "Cash-on-Cash",
+        m.chosenOOP > 0 ? pct(m.chosenCoC) : "∞ — no cash in", cfC(m.chosenCF)],
       ["Cap Rate",           pct(m.chosenCap), C.text],
     ];
   }
@@ -2565,7 +2584,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               <DataRow label="Down Payment" value={$(m.down)} />
               <DataRow label="Loan Amount" value={$(m.loan)} />
               <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
-              <button onClick={()=>u("loans", [newLoan()])}
+              <button onClick={()=>u("loans", [{
+                  ...newLoan(),
+                  // Seed Loan 1 from the simple settings so opening Advanced
+                  // doesn't silently change a single number.
+                  financeOf: p.downPaymentAmt != null ? "custom" : "purchase",
+                  customAmount: p.downPaymentAmt != null
+                    ? Math.max((p.purchasePrice||0) - (p.downPaymentAmt||0), 0) : 0,
+                  ltvPct: Math.max(0, Math.min(100, 100 - (p.downPaymentPct||25))),
+                  loanType: "amortizing",
+                  rate: p.interestRate || 7.5,
+                  termYears: 30,
+                }])}
                 {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginTop:10})}>
                 <I.plus size={13}/> Advanced Loan Setup
               </button>
@@ -2649,13 +2679,13 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               Purchase + rehab + purchase costs, minus loan proceeds
             </div>
             <DataRow label="Cash Flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
-            <DataRow label="Cash-on-Cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
+            <DataRow label="Cash-on-Cash" value={m.finOOP > 0 ? pct(m.finCoC) : "∞ — no cash in"} color={cfC(m.finCF)} />
             <DataRow label="Cap Rate" value={pct(m.finCap)} />
             <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
             {m.pointsTotal > 0 && <DataRow label="Loan Points / Fees" value={$(m.pointsTotal)} />}
             <DataRow label="DSCR" value={m.mtg > 0 ? (m.noi / m.mtg).toFixed(2) : "—"}
               color={m.mtg > 0 ? (m.noi / m.mtg >= 1.2 ? C.cashPos : m.noi / m.mtg >= 1 ? C.text : C.red) : C.text} />
-            <DataRow label="Debt Yield" value={m.loan > 0 ? pct(m.noi * 12 / m.loan) : "—"} />
+            <DataRow label="Debt Yield" value={m.loan > 0 ? pct(m.noi * 12 / m.loan * 100) : "—"} />
           </SectionBlock>
         )}
 
@@ -2760,7 +2790,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <DataRow label="Refi Closing Costs" value={"-" + $(m.brrrRefiCost)} color={C.red} />
             {(s === "finance" || (m.owned && m.ownedBal > 0)) &&
               <DataRow label={m.owned ? "Pays Off Current Loan" : "Pays Off Existing Loans"}
-                value={"-" + $(m.owned ? m.ownedBal : m.loan)} color={C.red} />}
+                value={"-" + $(m.owned ? m.ownedBal : m.loanPayoff)} color={C.red} />}
             <DataRow label="Net Cash at Refi"
               value={$((s === "cash" && !m.owned) ? m.brrrCashNet : m.brrrNetCash)}
               color={cfC((s === "cash" && !m.owned) ? m.brrrCashNet : m.brrrNetCash)} />
@@ -2795,15 +2825,17 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 {m.owned && m.ownedBal > 0 && <DataRow label="Loan Payoff at Sale" value={$(m.ownedBal)} />}
                 <DataRow label={m.owned ? "Net Cash From Sale" : "Net Profit"} value={$(m.flipProfit)} color={cfC(m.flipProfit)} />
                 <DataRow label={m.owned ? "Return on New Cash" : "ROI"} value={pct(m.flipROI)} color={cfC(m.flipProfit)} />
+                <DataRow label="Annualized ROI" value={pct(m.flipROI * 12 / Math.max(m.holdMonths, 1))} color={cfC(m.flipProfit)} />
               </>
             ) : (
               <>
                 <DataRow label="Total Cash In" value={$(m.finOOP)} />
                 <DataRow label="Agent Fee" value={$(m.agentFee)} />
                 <DataRow label={"Holding Costs (" + m.holdMonths + " mo, incl. loan payments)"} value={$(m.finFlipHolding)} />
-                <DataRow label="Loan Payoff at Sale" value={$(m.loan)} />
+                <DataRow label="Loan Payoff at Sale" value={$(m.loanPayoff)} />
                 <DataRow label="Net Profit" value={$(m.finFlipProfit)} color={cfC(m.finFlipProfit)} />
                 <DataRow label="ROI on Cash" value={pct(m.finFlipROI)} color={cfC(m.finFlipProfit)} />
+                <DataRow label="Annualized ROI" value={pct(m.finFlipROI * 12 / Math.max(m.holdMonths, 1))} color={cfC(m.finFlipProfit)} />
               </>
             )}
           </SectionBlock>
@@ -8474,7 +8506,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {id:"rental", label:"Rental", rows:[
         ["Total Cash In", $(m.finOOP), C.text],
         ["Cash Flow / mo", $mo(m.finCF), cfC(m.finCF)],
-        ["Cash-on-Cash", pct(m.finCoC), C.text],
+        ["Cash-on-Cash", m.finOOP > 0 ? pct(m.finCoC) : "∞", C.text],
       ]},
       {id:"brrrr", label:"BRRRR", rows:[
         ["Total Invested", $(m.brrrAllIn), C.text],
