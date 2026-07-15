@@ -412,7 +412,7 @@ const calc = (p) => {
   const finCoC   = finOOP>0 ? (finCF*12/finOOP)*100 : 0;
   const finCap   = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
   const payoff   = (finCF>0 && finOOP>0) ? finOOP/(finCF*12) : 0;
-  const brrrCashOut = p.brrrCashOut || Math.round(((p.homeValueHigh || p.homeValueMedian || 0))*0.8);
+  const brrrCashOut = p.brrrCashOut || Math.round(((p.homeValueHigh || p.homeValueMedian || 0))*0.75);
   const brrrMtg  = monthlyPI(brrrCashOut, p.brrrRate||7.5, p.brrrTermYears||30);
   const brrrCF   = effectiveRent - exp - brrrMtg;
 
@@ -769,7 +769,7 @@ const applyRentcast = (prev, data, rates) => {
           * (INSURANCE_RATES[(prev.state||"").toUpperCase()] || DEFAULT_INS_RATE)) / 12),
     homeValueMedian: med, homeValueLow: lo, homeValueHigh: med || hi,
     flipSalePrice: med || hi || prev.flipSalePrice,
-    brrrCashOut:   med ? Math.round(med * 0.8) : prev.brrrCashOut,
+    brrrCashOut:   med ? Math.round(med * 0.75) : prev.brrrCashOut,
     repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
     repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
     repairFull:    sqft ? Math.round(sqft * r.full)   : prev.repairFull,
@@ -2171,7 +2171,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
       if (!med && !hi) { setAvmMsg({kind:"err", text:"No value estimate found for that address."}); }
       else {
         set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: med,
-          flipSalePrice: med, brrrCashOut: Math.round(med * 0.8)});
+          flipSalePrice: med, brrrCashOut: Math.round(med * 0.75)});
         setAvmMsg({kind:"ok", med, lo, hi});
       }
     } catch (e) {
@@ -2551,7 +2551,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
         <SectionBlock title="After Repair Value (ARV)" color={C.blue} icon={I.trendingUp}>
           <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
-            set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.8)}); }} pre="$"
+            set={v=>{ set({...p, homeValueHigh:v, flipSalePrice:v, brrrCashOut:Math.round(v*0.75)}); }} pre="$"
             note="What the property will be worth after repairs. Drives BRRRR and Fix & Flip below."
             mobile={mobile} />
           {(rcOk(rcAuth) && apiLookup) && (
@@ -2638,8 +2638,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 Enter an After Repair Value above to size the refinance.
               </div>
             )}
-            <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.8)}
-              set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 80% of your ARV" mobile={mobile} />
+            <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.75)}
+              set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 75% of your ARV" mobile={mobile} />
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
               <InputField label="Refi Interest Rate" val={p.brrrRate ?? 7.5} set={v=>u("brrrRate",v)} suf="%" mobile={mobile} />
               <InputField label="Refi Loan Term (Years)" val={p.brrrTermYears ?? 30} set={v=>u("brrrTermYears",v)} mobile={mobile} />
