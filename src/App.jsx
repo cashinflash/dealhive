@@ -535,6 +535,17 @@ const newDeal = () => ({
   chosenStrategy:null, notes:"", savedAt:""
 });
 
+// Body scroll lock with a counter, so stacked sheets (Deal View with a
+// research sheet on top) don't unlock the page when the top one closes.
+let dhScrollLocks = 0;
+const lockBodyScroll = () => {
+  if (++dhScrollLocks === 1) document.body.classList.add("dh-scroll-locked");
+};
+const unlockBodyScroll = () => {
+  dhScrollLocks = Math.max(0, dhScrollLocks - 1);
+  if (dhScrollLocks === 0) document.body.classList.remove("dh-scroll-locked");
+};
+
 // -- Responsive ----------------------------------------------------------------
 function useIsMobile() {
   const [m,setM] = useState(window.innerWidth < 768);
@@ -1617,9 +1628,13 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
   useEffect(() => () => dragEnd(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    lockBodyScroll();
     const handler = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      unlockBodyScroll();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [onClose]);
 
   const types = typeOptions || [
@@ -1651,9 +1666,9 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
     ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh",
-       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:560, maxHeight:"90dvh",
-       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
 
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
@@ -1803,9 +1818,13 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
   const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
 
   useEffect(() => {
+    lockBodyScroll();
     const handler = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      unlockBodyScroll();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -1818,8 +1837,8 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
           () => rcGet(`/avm/rent/long-term?address=${q}&bedrooms=${beds}`, rcAuth));
         let comps = [];
         try {
-          const listings = await apiLookup(lookupKey("rc-rentcomps-05", p.address, p.city, p.state, p.zip, beds),
-            () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=0.5&limit=12&status=Active`, rcAuth));
+          const listings = await apiLookup(lookupKey("rc-rentcomps-1mi", p.address, p.city, p.state, p.zip, beds),
+            () => rcGet(`/listings/rental/long-term?address=${q}&bedrooms=${beds}&radius=1&limit=12&status=Active`, rcAuth));
           comps = Array.isArray(listings) ? listings : [];
           // Nearest first — in comps, proximity is credibility.
           comps = comps.map(l => ({...l,
@@ -1852,10 +1871,10 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto",
+    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto", overscrollBehavior:"contain",
        padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:520, maxHeight:"88dvh",
-       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
 
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
@@ -1981,7 +2000,7 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                   margin:"20px 0 10px"}}>
                   <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
                     letterSpacing:".06em", textTransform:"uppercase"}}>
-                    Active Rentals Within 0.5 Mi
+                    Active Rentals Within 1 Mi
                   </span>
                   <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
                     {isPro ? st.comps.length : `showing ${visible.length} of ${st.comps.length}`}
@@ -2006,7 +2025,7 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                           display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
                           <I.lock size={12} stroke={2.6}/>
                         </span>
-                        {hidden} more comp{hidden===1?"":"s"} within half a mile
+                        {hidden} more comp{hidden===1?"":"s"} within a mile
                       </div>
                       {onUpgrade ? (
                         <button onClick={onUpgrade} {...btnStyle("primary","md")}>
@@ -5918,11 +5937,11 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
 
   // Escape closes; body scroll lock while open.
   useEffect(() => {
-    document.body.classList.add("dh-scroll-locked");
+    lockBodyScroll();
     const handler = e => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => {
-      document.body.classList.remove("dh-scroll-locked");
+      unlockBodyScroll();
       window.removeEventListener("keydown", handler);
     };
   }, [onClose]);
@@ -5940,9 +5959,9 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
     ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%",
-       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+       maxHeight:"92dvh", overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:640,
-       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+       maxHeight:"92dvh", overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
 
   const sectionPad = mobile ? "16px 18px" : "20px 24px";
 
@@ -6254,11 +6273,15 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
 
   // Escape closes only this sheet — capture phase beats the modal's listener.
   useEffect(() => {
+    lockBodyScroll();
     const handler = e => {
       if (e.key === "Escape") { e.stopPropagation(); onCancel(); }
     };
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      unlockBodyScroll();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [onCancel]);
 
   const options = [
@@ -6516,11 +6539,11 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
-    document.body.classList.add("dh-scroll-locked");
+    lockBodyScroll();
     const handler = e => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => {
-      document.body.classList.remove("dh-scroll-locked");
+      unlockBodyScroll();
       window.removeEventListener("keydown", handler);
     };
   }, [onClose]);
@@ -6532,9 +6555,9 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
     ? {background:C.card, width:"100%", height:"100%",
-       overflowY:"auto", WebkitOverflowScrolling:"touch"}
+       overflowY:"auto", overscrollBehavior:"contain", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:620,
-       maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+       maxHeight:"92dvh", overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
 
   const mapsHref  = deal.lat && deal.lng
     ? `https://maps.google.com/?q=${deal.lat},${deal.lng}`
@@ -6666,9 +6689,13 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
 // Shared bottom-sheet shell for the Deal View's research screens.
 function SheetShell({title, sub, onClose, mobile, children}) {
   useEffect(() => {
+    lockBodyScroll();
     const h = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", h, true);
-    return () => window.removeEventListener("keydown", h, true);
+    return () => {
+      unlockBodyScroll();
+      window.removeEventListener("keydown", h, true);
+    };
   }, [onClose]);
   const outer = mobile
     ? {position:"fixed", inset:0, background:C.card, zIndex:620}
@@ -6676,10 +6703,10 @@ function SheetShell({title, sub, onClose, mobile, children}) {
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const inner = mobile
-    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto",
+    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto", overscrollBehavior:"contain",
        padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
-       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
   return (
     <div style={outer} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={inner}>
@@ -7346,11 +7373,11 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   const visible = photos;
 
   useEffect(() => {
-    document.body.classList.add("dh-scroll-locked");
+    lockBodyScroll();
     const handler = e => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
     return () => {
-      document.body.classList.remove("dh-scroll-locked");
+      unlockBodyScroll();
       window.removeEventListener("keydown", handler);
     };
   }, [onClose]);
@@ -7416,9 +7443,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
     ? {background:C.bg, width:"100%", height:"100%",
-       overflowY:"auto", WebkitOverflowScrolling:"touch"}
+       overflowY:"auto", overscrollBehavior:"contain", WebkitOverflowScrolling:"touch"}
     : {background:C.bg, borderRadius:C.r5, width:"100%", maxWidth:640,
-       maxHeight:"93dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+       maxHeight:"93dvh", overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
 
   const pill = (label, bg, color, border, dot) => (
     <span key={label} style={{display:"inline-flex", alignItems:"center", gap:5,
@@ -9180,7 +9207,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.45)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh", overflowY:"auto",
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh", overflowY:"auto", overscrollBehavior:"contain",
        padding:"24px 20px calc(40px + env(safe-area-inset-bottom, 0px))",
        paddingLeft:"max(20px, calc(20px + env(safe-area-inset-left, 0px)))",
        paddingRight:"max(20px, calc(20px + env(safe-area-inset-right, 0px)))",
@@ -9591,8 +9618,9 @@ export default function App() {
   // sequences, or Safari quirks. The .dh-scroll-locked rule is injected
   // below alongside the rest of the global styles.
   useEffect(() => {
-    document.body.classList.toggle("dh-scroll-locked", showAdd);
-    return () => document.body.classList.remove("dh-scroll-locked");
+    if (!showAdd) return;
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, [showAdd]);
 
   // Global styles
@@ -9607,7 +9635,7 @@ export default function App() {
       body{margin:0;font-feature-settings:"cv11","ss01","ss03";-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;-webkit-tap-highlight-color:transparent;}
       /* Scroll lock used by the AddPropertyModal. Class-based so it can't
          leave body.style.overflow stuck. */
-      body.dh-scroll-locked{overflow:hidden;}
+      body.dh-scroll-locked{overflow:hidden;overscroll-behavior:none;}
       img{max-width:100%;height:auto;}
       input,select,textarea,button{font-family:inherit;}
       /* Prevent iOS from auto-zooming when focusing inputs — needs font-size >= 16px on the input. iS() already sets 16 on mobile, this is a safety net. */
