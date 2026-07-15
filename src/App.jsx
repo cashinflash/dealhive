@@ -5614,8 +5614,11 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   const photo = (Array.isArray(deal.userPhotos) && deal.userPhotos[0])
     || deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
 
-  const onPrimaryClick = isPro ? onAnalyze : onUpgrade;
-  const onSecondaryClick = isPro ? onSave : onUpgrade;
+  // The user's own saved deals (showAddress) always get working card actions
+  // and no Pro badge — the upgrade gate is for feed cards only.
+  const unlocked = isPro || showAddress;
+  const onPrimaryClick = unlocked ? onAnalyze : onUpgrade;
+  const onSecondaryClick = unlocked ? onSave : onUpgrade;
 
   return (
     <Card hover style={{display:"flex", flexDirection:"column", cursor: onOpen ? "pointer" : "default"}}
@@ -5661,7 +5664,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               </span>
             )}
           </span>
-          {!isPro && (
+          {!unlocked && (
             <span title="Upgrade to see full details"
               style={{display:"inline-flex", alignItems:"center", gap:4,
                 background:"rgba(9,9,11,.65)", color:"#fff", padding:"3px 8px",
@@ -5785,9 +5788,9 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
         <div style={{display:"flex", gap:8, marginTop:"auto"}}
           onClick={e => e.stopPropagation()}>
           <button onClick={onPrimaryClick} {...btnStyle("primary","md", {flex:1})}>
-            {isPro ? <><I.search size={13}/> {analyzeLabel}</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
+            {unlocked ? <><I.search size={13}/> {analyzeLabel}</> : <><I.lock size={12} stroke={2.4}/> Unlock with Pro</>}
           </button>
-          {isPro && (
+          {unlocked && (
             <button onClick={onSecondaryClick} {...btnStyle("secondary","md")} aria-label={saveAriaLabel}>
               {saveIcon || <I.plus size={13}/>} {saveLabel}
             </button>
