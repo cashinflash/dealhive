@@ -1847,14 +1847,13 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const outerStyle = mobile
-    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:600,
-       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    ? {position:"fixed", inset:0, background:C.card, zIndex:600}
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:600,
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"90dvh",
-       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto",
+       padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:520, maxHeight:"88dvh",
        overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
 
@@ -5603,7 +5602,7 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
                     analyzeLabel = "Analyze", hideSource = false,
-                    savedScenario = null, savedFinancing = null}) {
+                    savedScenario = null, savedFinancing = null, showAddress = false}) {
   const {c, isBrrrr, strat, heroNumber, secondaryMetrics} =
     dealHeroMetrics(deal, savedScenario, savedFinancing);
   // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
@@ -5699,7 +5698,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
       <div style={{padding:"14px 16px", display:"flex", flexDirection:"column", gap:12, flex:1}}>
         {/* Address — gated */}
         <div>
-          {isPro ? (
+          {(isPro || showAddress) ? (
             <div style={{fontSize:17.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
               textAlign:"center", lineHeight:1.3}}>
               {deal.address}
@@ -5715,7 +5714,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               <I.lock size={12} stroke={2.2}/> Address unlocked with Pro
             </div>
           )}
-          {!mobile && isPro && (deal.city || deal.state) && (
+          {!mobile && (isPro || showAddress) && (deal.city || deal.state) && (
             <div style={{fontSize:17.5, color:C.text, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:700, letterSpacing:"-0.02em"}}>
               {[deal.city, deal.state].filter(Boolean).join(", ")}
             </div>
@@ -6524,14 +6523,13 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
   }, [onClose]);
 
   const outerStyle = mobile
-    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
-       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    ? {position:"fixed", inset:0, background:C.bg, zIndex:500}
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%",
-       maxHeight:"93dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    ? {background:C.card, width:"100%", height:"100%",
+       overflowY:"auto", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:620,
        maxHeight:"92dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
 
@@ -6550,7 +6548,7 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
               style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
           </div>
           <button onClick={onClose} aria-label="Close"
-            style={{position:"absolute", top:14, right:14, width:38, height:38, borderRadius:"50%",
+            style={{position:"absolute", top:"calc(14px + env(safe-area-inset-top, 0px))", right:14, width:38, height:38, borderRadius:"50%",
               background:"rgba(255,255,255,.94)", border:"none", cursor:"pointer", color:C.text,
               display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh3}}>
             <I.x size={17}/>
@@ -6670,14 +6668,13 @@ function SheetShell({title, sub, onClose, mobile, children}) {
     return () => window.removeEventListener("keydown", h, true);
   }, [onClose]);
   const outer = mobile
-    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:620,
-       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    ? {position:"fixed", inset:0, background:C.card, zIndex:620}
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:620,
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const inner = mobile
-    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"88dvh",
-       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto",
+       padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
        overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
   return (
@@ -7167,7 +7164,7 @@ function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
       onClose={close} mobile={mobile}>
 
       {/* Year picker — sticky so you can flip years from anywhere on the page */}
-      <div style={{position:"sticky", top: mobile ? -20 : -22, zIndex:5,
+      <div style={{position:"sticky", top: mobile ? "calc(-16px - env(safe-area-inset-top, 0px))" : -22, zIndex:5,
         background:C.card, margin:"0 -6px", padding:"6px 6px 10px"}}>
         <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
           {PROJ_YEARS.map(y => {
@@ -7410,14 +7407,13 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   };
 
   const outerStyle = mobile
-    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
-       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    ? {position:"fixed", inset:0, background:C.bg, zIndex:500}
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const innerStyle = mobile
-    ? {background:C.bg, borderRadius:"18px 18px 0 0", width:"100%",
-       maxHeight:"94dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    ? {background:C.bg, width:"100%", height:"100%",
+       overflowY:"auto", WebkitOverflowScrolling:"touch"}
     : {background:C.bg, borderRadius:C.r5, width:"100%", maxWidth:640,
        maxHeight:"93dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
 
@@ -7473,7 +7469,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
               style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
           </div>
           <button onClick={onClose} aria-label="Close"
-            style={{position:"absolute", top:14, right:14, width:38, height:38, borderRadius:"50%",
+            style={{position:"absolute", top:"calc(14px + env(safe-area-inset-top, 0px))", right:14, width:38, height:38, borderRadius:"50%",
               background:"rgba(255,255,255,.94)", border:"none", cursor:"pointer", color:C.text,
               display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh3}}>
             <I.x size={17}/>
@@ -7706,10 +7702,13 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   );
 }
 
-function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, apiLookup, rcAuth, onUploadPhotos, onPatchDeal, mobile}) {
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, apiLookup, rcAuth, onUploadPhotos, onPatchDeal, openDealId, onConsumeOpenDeal, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(openDealId || null);
+  // Coming back from the analyzer reopens the deal that was being viewed;
+  // consume the hand-off so later visits start clean.
+  useEffect(() => { if (openDealId && onConsumeOpenDeal) onConsumeOpenDeal(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [strat, setStrat] = useState("all"); // all | buyhold | flip | wholesale
   const [confirmRemove, setConfirmRemove] = useState(null); // deal pending delete
 
@@ -7786,7 +7785,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
             saveIcon={<I.trash size={13}/>}
             saveAriaLabel="Remove from saved deals"
             analyzeLabel="View Deal"
-            hideSource
+            hideSource showAddress
             savedScenario={d.scenario || null}
             savedFinancing={d.financing || null}
             onUpgrade={onUpgrade}
@@ -7852,7 +7851,50 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
   );
 }
 
-function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
+// What free members see in place of the feed: a blurred sample-card preview
+// under a lock panel. The real gate is server-side — database rules refuse
+// the /deals read for non-Pro accounts — so dev tools can't peel this back.
+function DealsLockedPreview({mobile, isWide, onUpgrade}) {
+  return (
+    <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
+      <PageHeader title="Deals" subtitle="Fresh investment deals, sourced nightly across 31 metros"/>
+      <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden"}}>
+        <div aria-hidden="true" style={{
+          display:"grid", gap:16, filter:"blur(6px)", opacity:.8,
+          pointerEvents:"none", userSelect:"none",
+          gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
+        }}>
+          {SAMPLE_DEALS.slice(0, mobile ? 3 : 6).map(d => (
+            <DealCard key={d.id} deal={d} isPro={false} hideSource
+              onAnalyze={()=>{}} onSave={()=>{}} onUpgrade={()=>{}} mobile={mobile} />
+          ))}
+        </div>
+        <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
+          alignItems:"center", justifyContent:"center", gap:12, padding:"0 24px", textAlign:"center",
+          background:"linear-gradient(180deg, rgba(250,250,250,.35) 0%, rgba(250,250,250,.95) 80%)"}}>
+          <div style={{width:52, height:52, borderRadius:"50%",
+            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+            display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
+            <I.lock size={22} stroke={2.2}/>
+          </div>
+          <div style={{fontSize:20, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            The Deal Feed is a Pro feature
+          </div>
+          <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, lineHeight:1.6, maxWidth:400}}>
+            Wholesale, MLS, and off-market deals land here every night — exact
+            addresses, seller contacts, and the numbers already run.
+          </div>
+          <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:2})}>
+            <I.star size={14}/> Unlock the Deal Feed — $29.99/mo
+          </button>
+          <div style={{fontSize:12, color:C.textMuted, fontFamily:F}}>Cancel anytime.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, locked = false,
                     strategy: strategyProp, onStrategyChange}) {
   const [market, setMarket]     = useState("all");
   // Strategy can be driven from outside (dashboard shortcut cards set it
@@ -7877,6 +7919,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
   // the user's ID token. If the read fails or returns nothing, we show the
   // sample deals (and a "feed not seeded yet" indicator).
   useEffect(() => {
+    if (locked) return; // Pro-only: the server would refuse the read anyway
     let alive = true;
     (async () => {
       try {
@@ -7937,6 +7980,8 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
 
   const visible = isPro ? filtered : filtered.slice(0, FREE_PREVIEW_COUNT);
   const lockedCount = filtered.length - visible.length;
+
+  if (locked) return <DealsLockedPreview mobile={mobile} isWide={isWide} onUpgrade={onUpgrade} />;
 
   // KPI counts for the header chip.
   const buyHoldCount = filtered.filter(({c}) => c.tags.includes("buyhold")).length;
@@ -8100,7 +8145,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token,
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, initial, onConsumeInitial, onBackToDeals}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, initial, onConsumeInitial, onBackToDeals, backLabel}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
@@ -8429,7 +8474,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
       {fromDeals && onBackToDeals && (
         <button onClick={onBackToDeals} {...btnStyle("ghost","sm", {marginBottom:14, color:C.textSub, padding:"6px 10px"})}>
-          <I.arrowLeft size={14}/> Back to deals
+          <I.arrowLeft size={14}/> {backLabel || "Back to deals"}
         </button>
       )}
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
@@ -9440,6 +9485,8 @@ export default function App() {
   // DealAnalyzer consumes it on mount and clears it via onConsumeInitial so
   // a fresh visit later starts with a blank form.
   const [prefilledDeal, setPrefilledDeal] = useState(null);
+  const [analyzerReturn, setAnalyzerReturn] = useState(null); // {page, dealId}
+  const [reopenDealId, setReopenDealId]     = useState(null);
   const mobile = useIsMobile();
 
   // Always-current user for async cloud calls (avoids stale-closure tokens).
@@ -9789,8 +9836,11 @@ export default function App() {
     setToast("Deal added to My Properties! OK"); setTimeout(()=>setToast(""),2000);
   };
 
-  // Deals page → Analyzer: prefill the analyzer with the deal's numbers.
+  // Deals page / Deal View → Analyzer: prefill and remember where the user
+  // came from so the analyzer's back button returns there (and reopens the
+  // deal view they were reading).
   const analyzeDealFromMarket = deal => {
+    setAnalyzerReturn({page, dealId: deal.id || null});
     setPrefilledDeal(dealToProForma(deal));
     setPage("deal");
   };
@@ -9946,7 +9996,17 @@ export default function App() {
     onUpgrade: handleUpgrade,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
-    onBackToDeals:    () => setPage("deals"),
+    backLabel: analyzerReturn && analyzerReturn.page === "dashboard" ? "Back to saved deal" : "Back to deals",
+    onBackToDeals: () => {
+      const r = analyzerReturn;
+      setAnalyzerReturn(null);
+      if (r && r.page === "dashboard") {
+        if (r.dealId) setReopenDealId(r.dealId);
+        setPage("dashboard");
+      } else {
+        setPage("deals");
+      }
+    },
     ...sharedProps,
   };
 
@@ -9978,7 +10038,8 @@ export default function App() {
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
-                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
+                openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -9987,7 +10048,7 @@ export default function App() {
           <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
             strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
-            token={user.idToken} mobile={mobile} />
+            token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
         ) : page==="deal" ? (
           <DealAnalyzer {...dealAnalyzerProps} />
         ) : page==="comps" ? (
@@ -10007,7 +10068,8 @@ export default function App() {
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
-                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
+                openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
         )}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
@@ -10051,7 +10113,8 @@ export default function App() {
                     onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
                 onAnalyzeNew={()=>setPage("deal")}
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
-                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal} mobile={mobile} />
+                onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
+                openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
@@ -10060,7 +10123,7 @@ export default function App() {
               <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
                 strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
-                token={user.idToken} mobile={mobile} />
+                token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
             ) : page==="deal" ? (
               <DealAnalyzer {...dealAnalyzerProps} />
             ) : page==="comps" ? (
