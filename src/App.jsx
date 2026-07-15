@@ -562,6 +562,24 @@ const milesBetween = (lat1, lng1, lat2, lng2) => {
   return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 };
 
+// Branded loader — three hive hexes beating in sequence.
+function HexLoader({label = "Pulling property details…"}) {
+  return (
+    <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10, padding:"18px 0"}}>
+      <div style={{display:"flex", gap:6, alignItems:"center"}}>
+        {[C.green, C.sidebar, C.green].map((col, i) => (
+          <span key={i} style={{
+            width:15, height:17, background:col, display:"inline-block",
+            clipPath:"polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
+            animation:`dhHexBeat 1.05s ease-in-out ${i * 0.16}s infinite`,
+          }}/>
+        ))}
+      </div>
+      <span style={{fontSize:12.5, color:C.textSub, fontFamily:F, fontWeight:600}}>{label}</span>
+    </div>
+  );
+}
+
 const newProp = (base={}) => ({
   id:"p"+Date.now(), address:"", city:"", state:"", zip:"", lat:null, lng:null,
   llc:"", type:"", beds:0, baths:0, sqft:0, yearBuilt:0,
@@ -5971,8 +5989,8 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
           {(isPro || showAddress) ? (
             <div style={{fontSize:17.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
               textAlign:"center", lineHeight:1.3}}>
-              {deal.address}
-              {mobile && (deal.city || deal.state) && (
+              {deal.streetAddress || deal.address}
+              {mobile && !!deal.streetAddress && (deal.city || deal.state) && (
                 <span>
                   {", "}{[deal.city, deal.state].filter(Boolean).join(", ")}
                 </span>
@@ -5984,7 +6002,7 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               <I.lock size={12} stroke={2.2}/> Address unlocked with Pro
             </div>
           )}
-          {!mobile && (isPro || showAddress) && (deal.city || deal.state) && (
+          {!mobile && (isPro || showAddress) && !!deal.streetAddress && (deal.city || deal.state) && (
             <div style={{fontSize:17.5, color:C.text, fontFamily:F, marginTop:2, textAlign:"center", fontWeight:700, letterSpacing:"-0.02em"}}>
               {[deal.city, deal.state].filter(Boolean).join(", ")}
             </div>
@@ -6696,7 +6714,7 @@ function StrategyCards({active, counts, onSelect, mobile}) {
   ];
   return (
     <div style={{display:"grid", gap:12, marginBottom:20,
-      gridTemplateColumns: mobile ? "1fr" : "repeat(auto-fit, minmax(215px, 1fr))"}}>
+      gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(auto-fit, minmax(160px, 1fr))"}}>
       {cards.map(({id, Icon, title}) => {
         const isActive = active === id;
         const n = counts?.[id] ?? 0;
@@ -6704,36 +6722,34 @@ function StrategyCards({active, counts, onSelect, mobile}) {
           <button key={id} onClick={()=>onSelect(isActive ? "all" : id)}
             aria-pressed={isActive}
             style={{
-              display:"flex", alignItems:"center", gap:12, textAlign:"left",
+              display:"flex", flexDirection:"column", alignItems:"center", gap:9,
+              textAlign:"center", padding:"18px 10px 16px",
               background: isActive ? C.greenSubtle : C.card,
               border:"1.5px solid "+(isActive ? C.green : C.border),
-              borderRadius:C.r4, padding:"14px 16px", cursor:"pointer",
+              borderRadius:C.r4, cursor:"pointer",
               boxShadow: isActive ? C.sh3 : C.sh1,
               transition:"border-color .12s, box-shadow .12s, background .12s",
             }}
             onMouseEnter={e=>{ if(!isActive){ e.currentTarget.style.borderColor=C.greenBorder; e.currentTarget.style.boxShadow=C.sh3; } }}
             onMouseLeave={e=>{ if(!isActive){ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.boxShadow=C.sh1; } }}>
             <span style={{
-              width:38, height:38, borderRadius:C.r2, flexShrink:0,
+              width:46, height:46, borderRadius:14, flexShrink:0,
               background: isActive ? C.green : C.greenSubtle,
               border:"1px solid "+(isActive ? C.green : C.greenBorder),
               color: isActive ? "#fff" : C.greenDark,
               display:"inline-flex", alignItems:"center", justifyContent:"center",
               transition:"background .12s, color .12s",
             }}>
-              <Icon size={17}/>
+              <Icon size={21}/>
             </span>
-            <span style={{minWidth:0}}>
-              <span style={{display:"block", fontSize:14, fontWeight:700, color:C.text,
-                fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
-            </span>
+            <span style={{fontSize:14, fontWeight:700, color:C.text,
+              fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
             <span style={{
-              marginLeft:"auto", flexShrink:0, fontFamily:F,
-              fontSize:12, fontWeight:700, fontVariantNumeric:"tabular-nums",
+              fontFamily:F, fontSize:12, fontWeight:700, fontVariantNumeric:"tabular-nums",
               background: isActive ? C.green : C.bgSubtle,
               color: isActive ? "#fff" : C.textSub,
               border:"1px solid "+(isActive ? C.green : C.border),
-              borderRadius:9999, padding:"3px 9px",
+              borderRadius:9999, padding:"2px 12px",
             }}>{n}</span>
           </button>
         );
@@ -8313,17 +8329,6 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
               </span>
             )}
           </div>
-          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
-            {filtered.length === 0
-              ? "No deals match your filters right now."
-              : `${filtered.length} deal${filtered.length===1?"":"s"} across ${marketCountsByState.size} state${marketCountsByState.size===1?"":"s"}`}
-            {usingLive && feed?.updatedAt && (
-              <span style={{color:C.textMuted}}> · Updated {timeAgo(feed.updatedAt)}</span>
-            )}
-            {!usingLive && !feedErr && (
-              <span style={{color:C.textMuted}}> · Sample deals shown while the live feed warms up</span>
-            )}
-          </p>
         </div>
         {!isPro && (
           <button onClick={onUpgrade} {...btnStyle("primary","md")}>
@@ -8337,19 +8342,29 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
         {/* Strategy segmented control */}
         <StrategySegments value={strategy} onChange={setStrategy}/>
 
-        {/* Market dropdown — dynamic from actual deal states (InvestorLift goes nationwide). */}
-        <select value={market} onChange={e => setMarket(e.target.value)}
-          style={{...iS(mobile), maxWidth: mobile ? "100%" : 220, paddingRight:38}}>
-          <option value="all">All states</option>
-          {availableMarkets.map(m => (
-            <option key={m.id} value={m.id}>{m.label}</option>
-          ))}
-        </select>
+        {/* Market dropdown — pill control with a location cue */}
+        <div style={{position:"relative", flex: mobile ? 1 : "0 0 auto", minWidth:150, maxWidth: mobile ? "100%" : 210}}>
+          <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+            color:C.greenDark, display:"inline-flex", pointerEvents:"none", zIndex:1}}>
+            <I.pin size={13} stroke={2.2}/>
+          </span>
+          <select value={market} onChange={e => setMarket(e.target.value)}
+            style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:34, paddingRight:38,
+              fontWeight:600, color: market === "all" ? C.textSub : C.text,
+              background:C.card, boxShadow:C.sh1, marginBottom:0}}>
+            <option value="all">All states</option>
+            {availableMarkets.map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+        </div>
 
-        {/* Max price */}
-        <div style={{position:"relative", flex:1, minWidth:140}}>
-          <span style={{position:"absolute", left:12, top:"50%", transform:"translateY(-50%)",
-            color:C.textMuted, fontSize:14, fontFamily:F, pointerEvents:"none"}}>$</span>
+        {/* Max price — matching pill */}
+        <div style={{position:"relative", flex:1, minWidth:140, maxWidth: mobile ? "100%" : 210}}>
+          <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+            color:C.greenDark, display:"inline-flex", pointerEvents:"none"}}>
+            <I.dollar size={13} stroke={2.2}/>
+          </span>
           <input
             type="text" inputMode="decimal"
             value={maxPrice ? Number(maxPrice).toLocaleString() : ""}
@@ -8358,7 +8373,8 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
               setMaxPrice(raw === "" ? 0 : parseInt(raw, 10));
             }}
             placeholder="Max price"
-            style={{...iS(mobile), paddingLeft:24}} />
+            style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:32,
+              fontWeight:600, background:C.card, boxShadow:C.sh1, marginBottom:0}} />
         </div>
       </div>
 
@@ -8837,11 +8853,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
       {/* Property basics — auto-filled from records when an address is chosen */}
       {basicsLoading && !(d.beds || d.baths || d.sqft || d.yearBuilt) && (
-        <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:18,
-          fontSize:12.5, color:C.textSub, fontFamily:F}}>
-          <span style={{width:14, height:14, borderRadius:"50%", border:"2px solid "+C.border,
-            borderTopColor:C.green, animation:"dhSpin .8s linear infinite", display:"inline-block"}}/>
-          Pulling property details…
+        <div style={{marginBottom:18}}>
+          <HexLoader/>
         </div>
       )}
       {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
@@ -9957,6 +9970,7 @@ export default function App() {
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
       @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
+      @keyframes dhHexBeat{0%,100%{transform:scale(.72);opacity:.4}50%{transform:scale(1.12);opacity:1}}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
       input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
       input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
