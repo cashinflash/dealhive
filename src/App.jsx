@@ -363,13 +363,6 @@ const calc = (p) => {
   const exp  = expItemized != null ? expItemized
     : (p.expPropTax||0)+(p.expUtilities||0)+(p.expManagement||0)+(p.expInsurance||0);
   const noi  = effectiveRent - exp;
-  const cashOOP  = (owned ? 0 : (p.purchasePrice||0))+(p.repairCosts||0);
-  const cashCF   = effectiveRent - exp - ownedPmt;
-  const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
-  // Cap rate is NOI over purchase price (property metric); CoC is cash flow
-  // over cash invested (investor metric). Dividing cap by OOP made the two
-  // identical on cash deals.
-  const cashCap  = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
 
   // Purchase costs: itemized breakdown wins; otherwise a % of price (default
   // 3%); legacy saves that stored a flat $ amount keep honoring it.
@@ -380,6 +373,16 @@ const calc = (p) => {
     : (p.purchaseCostsPct != null || p.closingCosts == null)
       ? Math.round((p.purchasePrice||0) * ((p.purchaseCostsPct ?? 3) / 100))
       : p.closingCosts;
+
+  // Cash invested includes purchase costs — closing, lender, and title money
+  // leaves your pocket just as surely as the price does.
+  const cashOOP  = (owned ? 0 : (p.purchasePrice||0)) + (p.repairCosts||0) + cc;
+  const cashCF   = effectiveRent - exp - ownedPmt;
+  const cashCoC  = cashOOP>0 ? (cashCF*12/cashOOP)*100 : 0;
+  // Cap rate is NOI over purchase price (property metric); CoC is cash flow
+  // over cash invested (investor metric). Dividing cap by OOP made the two
+  // identical on cash deals.
+  const cashCap  = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
   const hasLoans = Array.isArray(p.loans) && p.loans.length > 0;
 
   let down, loan, mtg, finOOP, rolledIn = 0, loanBreakdown = [];
@@ -415,6 +418,9 @@ const calc = (p) => {
   const brrrCashOut = p.brrrCashOut || Math.round(((p.homeValueHigh || p.homeValueMedian || 0))*0.75);
   const brrrMtg  = monthlyPI(brrrCashOut, p.brrrRate||7.5, p.brrrTermYears||30);
   const brrrCF   = effectiveRent - exp - brrrMtg;
+  // Refinance closing costs come off the top of the new loan's proceeds.
+  const brrrRefiCost = Math.round(brrrCashOut * ((p.brrrRefiCostPct ?? 2) / 100));
+  const brrrCashNet  = brrrCashOut - brrrRefiCost;
 
   // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
   const holdMonths  = p.holdMonths ?? 6;
@@ -432,9 +438,14 @@ const calc = (p) => {
 
   // Financed BRRRR: the refi pays off the existing loans first; what's left
   // is the cash that actually reaches your pocket.
-  const brrrNetCash = brrrCashOut - (owned ? ownedBal : loan);
+  const brrrNetCash = brrrCashNet - (owned ? ownedBal : loan);
 
   const s = p.chosenStrategy || "finance";
+  // BRRRR carries the property through the rehab months before the refi —
+  // operating costs plus any purchase debt service, no rent assumed until
+  // the refinance.
+  const brrrHolding = holdMonths * (exp + (owned ? ownedPmt : (s === "cash" ? 0 : mtg)));
+  const brrrAllIn   = (s === "cash" ? cashOOP : finOOP) + brrrHolding;
   return {
     exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
     owned, ownedBal, ownedPmt,
@@ -442,6 +453,7 @@ const calc = (p) => {
     rolledIn, loanBreakdown, holdMonths, flipHolding,
     finFlipHolding, finFlipProfit, finFlipROI, brrrNetCash,
     brrrCashOut, brrrMtg, brrrCF, agentFee, flipProfit, flipROI,
+    brrrRefiCost, brrrCashNet, brrrHolding, brrrAllIn,
     chosenCF:  s==="cash" ? cashCF  : finCF,
     chosenCoC: s==="cash" ? cashCoC : finCoC,
     chosenCap: s==="cash" ? cashCap : finCap,
@@ -450,18 +462,17 @@ const calc = (p) => {
 };
 
 // BRRRR earns the recommendation only when it does what BRRRR is for:
-// returning most of your capital. The refi must hand back at least 70% of the
-// cash in the deal (net of ~2% refi closing costs on the new loan) and the
-// property must still clear $100/mo after the new payment. Mirrors the deal
-// feed's BRRRR tag gate in classifyDeal. When the gate fails, BRRRR's card
-// stays visible but it can't win, and `reason` powers the "Why not BRRRR"
-// line under the recommendation.
+// returning most of your capital. The refi must hand back at least 70% of
+// everything in the deal — purchase, purchase costs, rehab, and the rehab-
+// months holding costs — net of refi closing costs, and the property must
+// still clear $100/mo after the new payment. Mirrors the deal feed's BRRRR
+// tag gate in classifyDeal. When the gate fails, BRRRR's card stays visible
+// but it can't win, and `reason` powers the "Why not BRRRR" line.
+// Callers pass `spent` WITH m.brrrHolding and `backNet` as net proceeds.
 const BRRRR_MIN_RECOVERY = 0.7;
 const BRRRR_MIN_CF       = 100;
-const REFI_COST_PCT      = 0.02;
-const brrrrGate = (m, spent, backGross) => {
-  const refiCosts = Math.round((m.brrrCashOut || 0) * REFI_COST_PCT);
-  const back      = Math.max((backGross || 0) - refiCosts, 0);
+const brrrrGate = (m, spent, backNet) => {
+  const back      = Math.max(backNet || 0, 0);
   const recovery  = spent > 0 ? back / spent : 0;
   const leftIn    = Math.max(spent - back, 0);
   const cfOk      = m.brrrCF >= BRRRR_MIN_CF;
@@ -470,9 +481,9 @@ const brrrrGate = (m, spent, backGross) => {
     eligible: cfOk && recOk,
     score:    !(cfOk && recOk) ? 0 : leftIn > 0 ? (m.brrrCF * 12 / leftIn) * 100 : 999,
     reason:   !recOk
-      ? `after refi closing costs it would only return ${Math.round(recovery * 100)}% of your cash, and a solid BRRRR returns at least 70%`
+      ? `after refi costs and holding it would only return ${Math.round(recovery * 100)}% of your cash, and a solid BRRRR returns at least 70%`
       : `it wouldn't cash flow at least $${BRRRR_MIN_CF}/mo after the refinance`,
-    recovery, leftIn, refiCosts,
+    recovery, leftIn,
   };
 };
 
@@ -530,7 +541,7 @@ const newDeal = () => ({
   closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
   vacancyRate:5,
-  brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, flipSalePrice:0, agentFeePct:6,
+  brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, brrrRefiCostPct:2, flipSalePrice:0, agentFeePct:6,
   alreadyOwned:false, ownedLoanBalance:0, ownedLoanPayment:0,
   chosenStrategy:null, notes:"", savedAt:""
 });
@@ -2077,13 +2088,16 @@ function DealSummaryBlock({p, m, exit}) {
       [m.owned ? "Return on New Cash" : "Cash-on-Cash",  pct(roi),       cfC(profit)],
     ];
   } else if (exit === "brrrr") {
-    const refiCash = (cash && !m.owned) ? m.brrrCashOut : m.brrrNetCash;
-    // Cash that actually ends up in your pocket: refi proceeds beyond what
-    // you put in (zero when the refi returns less than your investment).
-    const inPocket = Math.max(Math.max(refiCash, 0) - m.chosenOOP, 0);
+    const refiCash = (cash && !m.owned) ? m.brrrCashNet : m.brrrNetCash;
+    const allIn    = m.chosenOOP + m.brrrHolding;
+    // Cash that actually ends up in your pocket: net refi proceeds beyond
+    // everything invested, including the rehab-months holding costs.
+    const inPocket = Math.max(Math.max(refiCash, 0) - allIn, 0);
     rows = [
       [m.owned ? "New Cash In (Rehab)" : "Out of Pocket", $(m.chosenOOP), C.text],
-      [(cash && !m.owned) ? "Cash Received at Refi" : "Net Cash at Refi", $(refiCash), cfC(refiCash)],
+      [`Holding Costs (${m.holdMonths} mo)`, $(m.brrrHolding), C.text],
+      ["Total Invested", $(allIn), C.text],
+      ["Net Cash at Refi", $(refiCash), cfC(refiCash)],
       ["hr"],
       ["Cash Flow / mo (After Refi)", $mo(m.brrrCF), cfC(m.brrrCF)],
       ["Cash in Pocket", $(inPocket), cfC(inPocket)],
@@ -2589,32 +2603,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           )}
           {p.homeValueMedian > 0 && <DataRow label="DealHive Estimate" value={$(p.homeValueMedian)} />}
           {p.taxValue > 0 && <DataRow label="Tax Value" value={$(p.taxValue)} />}
-          {/* Realtor.com and Zillow don't license their estimates to anyone,
-              so second opinions open on their sites, straight to the address. */}
-          {p.address && p.city && (() => {
-            const slug = s => String(s||"").trim().replace(/[^A-Za-z0-9 ]/g, "").replace(/\s+/g, "-");
-            const realtorHref = `https://www.realtor.com/realestateandhomes-search/${slug(p.address)}_${slug(p.city)}_${(p.state||"").toUpperCase()}_${p.zip||""}`;
-            const zillowHref  = `https://www.zillow.com/homes/${encodeURIComponent([p.address, p.city, p.state, p.zip].filter(Boolean).join(" "))}_rb/`;
-            return (
-              <div style={{marginTop:10}}>
-                <div style={{display:"flex", gap:10}}>
-                  <a href={realtorHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
-                    <span {...btnStyle("secondary","sm", {width:"100%", justifyContent:"center"})}>
-                      Realtor.com Estimate <I.externalLink size={11}/>
-                    </span>
-                  </a>
-                  <a href={zillowHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
-                    <span {...btnStyle("secondary","sm", {width:"100%", justifyContent:"center"})}>
-                      Zestimate <I.externalLink size={11}/>
-                    </span>
-                  </a>
-                </div>
-                <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
-                  Second opinions, one tap — their estimates open on their sites.
-                </div>
-              </div>
-            );
-          })()}
         </SectionBlock>
 
         {/* Summary — the analyzer relocates this to sit right above Notes */}
@@ -2670,17 +2658,18 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               <InputField label="Refi Interest Rate" val={p.brrrRate ?? 7.5} set={v=>u("brrrRate",v)} suf="%" mobile={mobile} />
               <InputField label="Refi Loan Term (Years)" val={p.brrrTermYears ?? 30} set={v=>u("brrrTermYears",v)} mobile={mobile} />
             </div>
+            <InputField label="Refi Closing Costs" val={p.brrrRefiCostPct ?? 2} set={v=>u("brrrRefiCostPct",v)} suf="%"
+              note={`= ${$(m.brrrRefiCost)} off your cash out`} mobile={mobile} />
+            <DataRow label="Refi Closing Costs" value={"-" + $(m.brrrRefiCost)} color={C.red} />
             {(s === "finance" || (m.owned && m.ownedBal > 0)) &&
               <DataRow label={m.owned ? "Pays Off Current Loan" : "Pays Off Existing Loans"}
-                value={$(m.owned ? m.ownedBal : m.loan)} />}
-            {(s === "finance" || (m.owned && m.ownedBal > 0)) && (
-              <DataRow label="Net Cash at Refi" value={$(m.brrrNetCash)} color={cfC(m.brrrNetCash)} />
-            )}
+                value={"-" + $(m.owned ? m.ownedBal : m.loan)} color={C.red} />}
+            <DataRow label="Net Cash at Refi"
+              value={$((s === "cash" && !m.owned) ? m.brrrCashNet : m.brrrNetCash)}
+              color={cfC((s === "cash" && !m.owned) ? m.brrrCashNet : m.brrrNetCash)} />
+            <DataRow label={"Holding Costs (" + m.holdMonths + " mo)"} value={"-" + $(m.brrrHolding)} color={C.red} />
             <DataRow label="Est. Mortgage / mo (After Refi)" value={$mo(m.brrrMtg)} />
             <DataRow label="BRRRR Cash Flow / mo" value={$mo(m.brrrCF)} color={cfC(m.brrrCF)} />
-            {s === "cash" && !(m.owned && m.ownedBal > 0) && (
-              <DataRow label="Cash Received at Refi" value={$(m.brrrCashOut)} color={cfC(m.brrrCashOut)} />
-            )}
             {(s === "finance" || m.owned) && m.brrrNetCash < 0 && (
               <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"8px 12px", borderRadius:C.r2, marginTop:8, fontFamily:F, lineHeight:1.5}}>
@@ -5610,7 +5599,7 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const a = savedScenario ? deal.analysis : null;
   // Cash the refi puts in your pocket beyond everything you spent (never
   // negative on the card — a shortfall just reads $0 in pocket).
-  const brrrrInPocket = a ? Math.max((a.brrrrNetCash || 0) - (a.oop || 0), 0) : 0;
+  const brrrrInPocket = a ? Math.max((a.brrrrNetCash || 0) - (a.brrrrAllIn ?? a.oop ?? 0), 0) : 0;
 
   const heroNumber =
     primary === "flip"      ? (a
@@ -5630,7 +5619,7 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
       ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], ["Total Spent", $(a.oop)]]
       : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]])
   : primary === "brrrr"     ? (a
-      ? [["Out of Pocket", $(a.oop), C.red],
+      ? [["Out of Pocket", $(a.brrrrAllIn ?? a.oop), C.red],
          ["Cash Out Refi", $(a.brrrrNetCash), C.cashPos],
          ["Cash in Pocket", $(brrrrInPocket), C.cashPos]]
       : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn), C.red]])
@@ -8291,16 +8280,16 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       // plus new rehab cash, not a purchase price. Score every exit on that.
       const equity   = d.alreadyOwned ? Math.max((d.purchasePrice||0) - (d.ownedLoanBalance||0), 0) : 0;
       const spent    = d.alreadyOwned ? equity + (d.repairCosts||0) : m.cashOOP;
-      const back     = d.alreadyOwned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
+      const back     = d.alreadyOwned ? Math.max(m.brrrNetCash, 0) : m.brrrCashNet;
       const flipGain = d.alreadyOwned ? m.flipProfit - equity : m.flipProfit;
-      const g        = brrrrGate(m, spent, back);
+      const g        = brrrrGate(m, spent + m.brrrHolding, back);
       scores = {
         base:  m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
         brrrr: !arvW ? 0 : g.score,
         flip:  !arvW || flipGain <= 0 ? 0 : spent > 0 ? (flipGain/spent)*100 / holdY : 0,
       };
     } else {
-      const g = brrrrGate(m, m.finOOP, Math.max(m.brrrNetCash, 0));
+      const g = brrrrGate(m, m.finOOP + m.brrrHolding, Math.max(m.brrrNetCash, 0));
       scores = {
         base:  m.finCF > 0 ? m.finCoC : 0,
         brrrr: !arvW ? 0 : g.score,
@@ -8325,7 +8314,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // the exit toggle.
   const finRecommendation = d.purchasePrice > 0 && (d.chosenStrategy||"finance") === "finance" && (() => {
     const arv = d.homeValueHigh || 0;
-    const g = brrrrGate(m, m.finOOP, Math.max(m.brrrNetCash, 0));
+    const g = brrrrGate(m, m.finOOP + m.brrrHolding, Math.max(m.brrrNetCash, 0));
     const holdYears = Math.max((m.holdMonths || 6) / 12, 0.25);
     const scores = {
       rental: m.finCF > 0 ? m.finCoC : 0,
@@ -8349,7 +8338,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         ["Cash-on-Cash", pct(m.finCoC), C.text],
       ]},
       {id:"brrrr", label:"BRRRR", rows:[
-        ["Total Cash In", $(m.finOOP), C.text],
+        ["Total Invested", $(m.brrrAllIn), C.text],
         ["Net Cash at Refi", $(m.brrrNetCash), cfC(m.brrrNetCash)],
         ["Cash Flow / mo", $mo(m.brrrCF), cfC(m.brrrCF)],
       ]},
@@ -8428,9 +8417,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         // owned mode the capital is existing equity plus new rehab cash.
         const equity     = m.owned ? Math.max((d.purchasePrice||0) - m.ownedBal, 0) : 0;
         const spent      = m.owned ? equity + (d.repairCosts||0) : m.cashOOP;
-        const back       = m.owned ? Math.max(m.brrrNetCash, 0) : m.brrrCashOut;
+        const back       = m.owned ? Math.max(m.brrrNetCash, 0) : m.brrrCashNet;
         const flipGain   = m.owned ? m.flipProfit - equity : m.flipProfit;
-        const g          = brrrrGate(m, spent, back);
+        const g          = brrrrGate(m, spent + m.brrrHolding, back);
         const holdYears  = Math.max((m.holdMonths || 6) / 12, 0.25);
         const scores = {
           buyhold: m.cashCF > 0 && spent > 0 ? (m.cashCF*12/spent)*100 : 0,
@@ -8455,10 +8444,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             ["Cap Rate", pct(m.cashCap), C.text],
           ]},
           {id:"brrrr", label:"BRRRR", rows:[
-            [oopLabel, $(m.cashOOP), C.text],
-            m.owned && m.ownedBal > 0
-              ? ["Net Cash at Refi", $(m.brrrNetCash), cfC(m.brrrNetCash)]
-              : ["Total Cash Out", $(m.brrrCashOut), C.text],
+            ["Total Invested", $(m.brrrAllIn), C.text],
+            ["Net Cash at Refi", $(m.owned ? m.brrrNetCash : m.brrrCashNet),
+              cfC(m.owned ? m.brrrNetCash : m.brrrCashNet)],
             ["Cash Flow / mo", $mo(m.brrrCF), cfC(m.brrrCF)],
           ]},
           {id:"flip", label:"Fix & Flip", rows:[
@@ -10033,7 +10021,8 @@ export default function App() {
             flipROI:      isCash ? mm.flipROI : mm.finFlipROI,
             brrrrCF:      Math.round(mm.brrrCF),
             brrrrCashOut: Math.round(mm.brrrCashOut),
-            brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashOut : mm.brrrNetCash),
+            brrrrNetCash: Math.round(isCash && !pf.alreadyOwned ? mm.brrrCashNet : mm.brrrNetCash),
+            brrrrAllIn:   Math.round(mm.brrrAllIn),
             arv:          pf.homeValueHigh || pf.flipSalePrice || 0,
             // Projection inputs captured at save time.
             expMo:        Math.round(mm.exp),
