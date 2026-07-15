@@ -2567,7 +2567,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               padding:"14px 16px", textAlign:"center", marginBottom:12, boxShadow:C.sh1,
             }}>
               <div style={{fontSize:10.5, fontWeight:700, color:C.blueDark, fontFamily:F,
-                letterSpacing:".07em", textTransform:"uppercase"}}>Current Value Estimate</div>
+                letterSpacing:".07em", textTransform:"uppercase"}}>DealHive Value Estimate</div>
               <div style={{fontSize:26, fontWeight:800, color:C.text, fontFamily:F,
                 fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em", marginTop:2}}>
                 {$(avmMsg.med)}
@@ -2587,8 +2587,34 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               {avmMsg.text}
             </div>
           )}
-          {p.homeValueMedian > 0 && <DataRow label="Current Value (Est.)" value={$(p.homeValueMedian)} />}
+          {p.homeValueMedian > 0 && <DataRow label="DealHive Estimate" value={$(p.homeValueMedian)} />}
           {p.taxValue > 0 && <DataRow label="Tax Value" value={$(p.taxValue)} />}
+          {/* Realtor.com and Zillow don't license their estimates to anyone,
+              so second opinions open on their sites, straight to the address. */}
+          {p.address && p.city && (() => {
+            const slug = s => String(s||"").trim().replace(/[^A-Za-z0-9 ]/g, "").replace(/\s+/g, "-");
+            const realtorHref = `https://www.realtor.com/realestateandhomes-search/${slug(p.address)}_${slug(p.city)}_${(p.state||"").toUpperCase()}_${p.zip||""}`;
+            const zillowHref  = `https://www.zillow.com/homes/${encodeURIComponent([p.address, p.city, p.state, p.zip].filter(Boolean).join(" "))}_rb/`;
+            return (
+              <div style={{marginTop:10}}>
+                <div style={{display:"flex", gap:10}}>
+                  <a href={realtorHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
+                    <span {...btnStyle("secondary","sm", {width:"100%", justifyContent:"center"})}>
+                      Realtor.com Estimate <I.externalLink size={11}/>
+                    </span>
+                  </a>
+                  <a href={zillowHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
+                    <span {...btnStyle("secondary","sm", {width:"100%", justifyContent:"center"})}>
+                      Zestimate <I.externalLink size={11}/>
+                    </span>
+                  </a>
+                </div>
+                <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
+                  Second opinions, one tap — their estimates open on their sites.
+                </div>
+              </div>
+            );
+          })()}
         </SectionBlock>
 
         {/* Summary — the analyzer relocates this to sit right above Notes */}
@@ -2639,7 +2665,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               </div>
             )}
             <InputField label="Cash Out Amount" val={p.brrrCashOut || Math.round((p.homeValueHigh||0)*0.75)}
-              set={v=>u("brrrCashOut",v)} pre="$" note="Pre-filled at 75% of your ARV" mobile={mobile} />
+              set={v=>u("brrrCashOut",v)} pre="$" note="75% of your ARV" mobile={mobile} />
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
               <InputField label="Refi Interest Rate" val={p.brrrRate ?? 7.5} set={v=>u("brrrRate",v)} suf="%" mobile={mobile} />
               <InputField label="Refi Loan Term (Years)" val={p.brrrTermYears ?? 30} set={v=>u("brrrTermYears",v)} mobile={mobile} />
