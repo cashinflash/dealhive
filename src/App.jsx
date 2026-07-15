@@ -752,6 +752,7 @@ const I = {
   chevronDown: p => <IconSvg {...p} d="M6 9l6 6 6-6"/>,
   trash:       p => <IconSvg {...p} d={<g><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></g>}/>,
   menu:        p => <IconSvg {...p} d={<g><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></g>}/>,
+  user:        p => <IconSvg {...p} d={<g><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></g>}/>,
   edit:        p => <IconSvg {...p} d={<g><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></g>}/>,
   alert:       p => <IconSvg {...p} d={<g><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></g>}/>,
   check:       p => <IconSvg {...p} d="M20 6L9 17l-5-5"/>,
@@ -1846,10 +1847,12 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                 padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
                 Range {$(st.low)} – {$(st.high)}
               </div>
-              <button onClick={()=>onUseRent(st.rent, st.low, st.high)}
-                {...btnStyle("primary","lg", {marginTop:14, justifyContent:"center", width:"100%"})}>
-                <I.check size={14}/> Use {$(st.rent)}/mo as Monthly Rent
-              </button>
+              {onUseRent && (
+                <button onClick={()=>onUseRent(st.rent, st.low, st.high)}
+                  {...btnStyle("primary","lg", {marginTop:14, justifyContent:"center", width:"100%"})}>
+                  <I.check size={14}/> Use {$(st.rent)}/mo as Monthly Rent
+                </button>
+              )}
             </div>
 
             {st.comps.length > 0 && (() => {
@@ -5465,17 +5468,11 @@ function StrategySegments({value, onChange, counts}) {
     </div>
   );
 }
-function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
-                    saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
-                    analyzeLabel = "Analyze", hideSource = false,
-                    savedScenario = null, savedFinancing = null}) {
+// Metrics for a saved/feed deal — shared by the dashboard card and the Deal
+// View page so the two can never disagree. Analyzer saves carry an `analysis`
+// snapshot (displayed verbatim); feed deals fall back to the classifier.
+const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const c = classifyDeal(deal);
-  // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
-  // there — but user-filed watchlist deals (analyzer saves, manual entries)
-  // can miss both pro forma gates. If the user chose a scenario at save time,
-  // always render the card their way; only auto-classified feed cards bail.
-  if (c.tags.length === 0 && !savedScenario) return null;
-
   // BRRRR is an overlay: it never drives the primary badge (that stays a
   // buyhold/flip/multi call) — it gets its own chip beside the primary.
   const coreTags = c.tags.filter(t => t !== "brrrr");
@@ -5494,9 +5491,6 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
   const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
   const cashMode = savedFinancing === "cash" || savedFinancing === "owned";
 
-  // User-filed deals saved from the analyzer carry an `analysis` snapshot of
-  // the exact numbers the analyzer showed; the card displays those verbatim.
-  // Feed deals (no snapshot) fall back to the classifier's estimates.
   const a = savedScenario ? deal.analysis : null;
   // Cash the refi puts in your pocket beyond everything you spent (never
   // negative on the card — a shortfall just reads $0 in pocket).
@@ -5530,6 +5524,21 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
       : cashMode
         ? [["Cap rate", pct(c.buyHold.cashCap)], ["CoC", pct(c.buyHold.cashCoC), null, true], ["Total Spent", $(c.buyHold.cashOOP)]]
         : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC), null, true], ["Down", $(c.buyHold.down)]]);
+
+  return {c, isBrrrr, primary, strat, cashMode, heroNumber, secondaryMetrics};
+};
+
+function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
+                    saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
+                    analyzeLabel = "Analyze", hideSource = false,
+                    savedScenario = null, savedFinancing = null}) {
+  const {c, isBrrrr, strat, heroNumber, secondaryMetrics} =
+    dealHeroMetrics(deal, savedScenario, savedFinancing);
+  // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
+  // there — but user-filed watchlist deals (analyzer saves, manual entries)
+  // can miss both pro forma gates. If the user chose a scenario at save time,
+  // always render the card their way; only auto-classified feed cards bail.
+  if (c.tags.length === 0 && !savedScenario) return null;
 
   const photo = deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
 
@@ -6316,7 +6325,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
             background:C.amberSubtle, border:"1px solid "+C.amberBorder, borderRadius:C.r2,
             padding:"10px 12px", fontSize:13, color:C.amberDark, fontFamily:F, lineHeight:1.5}}>
             <I.alert size={14} style={{flexShrink:0, marginTop:1}}/>
-            <span>The Free plan holds 5 saved deals. Upgrade to Pro in Settings for unlimited saves.</span>
+            <span>The Free plan holds 15 saved deals. Upgrade to Pro in Settings for unlimited saves.</span>
           </div>
         )}
         <button onClick={()=>{ const r = onConfirm(scenario, financing); setResult(r === "updated" ? "updated" : r === "limit" ? "limit" : r ? "saved" : "dupe"); }}
@@ -6579,7 +6588,489 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
   );
 }
 
-function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, mobile}) {
+// -- Deal View sub-sheets --------------------------------------------------------
+// Shared bottom-sheet shell for the Deal View's research screens.
+function SheetShell({title, sub, onClose, mobile, children}) {
+  useEffect(() => {
+    const h = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, [onClose]);
+  const outer = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:620,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:620,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const inner = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"88dvh",
+       overflowY:"auto", boxShadow:C.sh4, padding:"20px 16px 30px", WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
+       overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+  return (
+    <div style={outer} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={inner}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:14}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{title}</div>
+            {sub && (
+              <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:2,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{sub}</div>
+            )}
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            style={{width:32, height:32, borderRadius:"50%", background:C.bgSubtle, border:"none",
+              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+            <I.x size={15}/>
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// County-record fetch shared by Owner Lookup and Property Records. Uses the
+// same cache key as the analyzer's property pull, so any address that's been
+// analyzed opens instantly with no extra lookup spent.
+function usePropertyRecord(deal, apiLookup, rcAuth, enabled = true) {
+  const [st, setSt] = useState({loading: !!enabled, err: null, rec: null});
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    (async () => {
+      try {
+        if (!rcOk(rcAuth) || !apiLookup) throw new Error("unavailable");
+        const key  = lookupKey("rc-detail", deal.address, deal.city, deal.state, deal.zip);
+        const data = await apiLookup(key, () => rentcastFetch(deal.address, deal.city, deal.state, deal.zip, rcAuth));
+        if (!alive) return;
+        const rec = (data && data.property) || null;
+        setSt({loading:false, err: rec ? null : "No county records found for this address yet.", rec});
+      } catch (e) {
+        if (!alive) return;
+        setSt({loading:false, err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Lookup failed. Try again in a moment.", rec:null});
+      }
+    })();
+    return () => { alive = false; };
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  return st;
+}
+
+const sheetSpinner = (text) => (
+  <div style={{padding:"32px 0", textAlign:"center", color:C.textSub, fontSize:13.5, fontFamily:F}}>{text}</div>
+);
+const sheetError = (text) => (
+  <div style={{display:"flex", gap:8, alignItems:"flex-start", background:C.redSubtle,
+    border:"1px solid "+C.redBorder, borderRadius:C.r2, padding:"12px 14px",
+    fontSize:13, color:C.redDark, fontFamily:F, lineHeight:1.55}}>
+    <I.alert size={15} style={{flexShrink:0, marginTop:1}}/> {text}
+  </div>
+);
+
+function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
+  const st  = usePropertyRecord(deal, apiLookup, rcAuth, isPro);
+  const rec = st.rec || {};
+  const names = (rec.owner && Array.isArray(rec.owner.names) ? rec.owner.names : []).filter(Boolean);
+  const mail  = rec.owner && rec.owner.mailingAddress;
+  const mailStr = mail
+    ? (mail.formattedAddress || [mail.addressLine1, mail.city,
+        [mail.state, mail.zipCode].filter(Boolean).join(" ")].filter(Boolean).join(", "))
+    : null;
+  const occupied = rec.ownerOccupied === true;
+  const absentee = rec.ownerOccupied === false;
+  return (
+    <SheetShell title="Owner Lookup" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={onClose} mobile={mobile}>
+      {!isPro ? (
+        <div style={{textAlign:"center", padding:"10px 4px 4px"}}>
+          <div style={{width:52, height:52, borderRadius:"50%", margin:"0 auto 12px",
+            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+            display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <I.user size={22} stroke={2}/>
+          </div>
+          <div style={{fontSize:16, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+            Who owns this property?
+          </div>
+          <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6, marginTop:6, maxWidth:340, margin:"6px auto 0"}}>
+            Pro reveals the owner's name, the mailing address where their tax bill goes,
+            and whether they're an absentee owner — straight from county records.
+          </div>
+          {onUpgrade && (
+            <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:16, justifyContent:"center", width:"100%"})}>
+              <I.star size={14}/> Unlock with Pro
+            </button>
+          )}
+        </div>
+      ) : st.loading ? sheetSpinner("Pulling county records…")
+        : st.err ? sheetError(st.err)
+        : (
+        <>
+          <div style={{
+            background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
+            border:"1px solid "+C.greenBorder, borderRadius:C.r4,
+            padding:"16px", textAlign:"center", boxShadow:C.sh1, marginBottom:14,
+          }}>
+            <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
+              letterSpacing:".07em", textTransform:"uppercase"}}>Owner of Record</div>
+            <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F,
+              letterSpacing:"-0.02em", marginTop:4, lineHeight:1.3}}>
+              {names.length ? names.join(" & ") : "Not disclosed in records"}
+            </div>
+            {(absentee || occupied) && (
+              <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:8,
+                padding:"3px 11px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+                background: absentee ? C.amberSubtle : C.greenSubtle,
+                border: "1px solid " + (absentee ? C.amberBorder : C.greenBorder),
+                color: absentee ? C.amberDark : C.greenDark}}>
+                <span style={{width:6, height:6, borderRadius:"50%",
+                  background: absentee ? C.amber : C.green}}/>
+                {absentee ? "Absentee Owner" : "Owner Occupied"}
+              </div>
+            )}
+          </div>
+          {mailStr && <DataRow label="Mailing Address" value={mailStr} />}
+          {rec.county && <DataRow label="County" value={rec.county} />}
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
+            From county assessor records. Names can lag a recent sale by a few weeks.
+            {absentee ? " Absentee owners are often the most open to offers." : ""}
+          </div>
+        </>
+      )}
+    </SheetShell>
+  );
+}
+
+function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
+  const st  = usePropertyRecord(deal, apiLookup, rcAuth, true);
+  const rec = st.rec || {};
+  const assess = rcLatestYear(rec.taxAssessments);
+  const taxes  = rcLatestYear(rec.propertyTaxes);
+  const saleDate = rec.lastSaleDate
+    ? new Date(rec.lastSaleDate).toLocaleDateString("en-US", {month:"short", year:"numeric"})
+    : null;
+  return (
+    <SheetShell title="Property Records" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={onClose} mobile={mobile}>
+      {st.loading ? sheetSpinner("Pulling county records…")
+        : st.err ? sheetError(st.err)
+        : (
+        <>
+          {(rec.lastSalePrice || saleDate) &&
+            <DataRow label={`Last Sale${saleDate ? ` (${saleDate})` : ""}`}
+              value={rec.lastSalePrice ? $(rec.lastSalePrice) : "Price not disclosed"} />}
+          {assess && assess.value > 0 &&
+            <DataRow label={`Assessed Value${assess.year ? ` (${assess.year})` : ""}`} value={$(assess.value)} />}
+          {taxes && taxes.total > 0 &&
+            <DataRow label={`Property Tax${taxes.year ? ` (${taxes.year})` : ""}`} value={$(taxes.total) + "/yr"} />}
+          {(rec.assessorID || deal.parcelId) && <DataRow label="Parcel ID" value={rec.assessorID || deal.parcelId} />}
+          {rec.county && <DataRow label="County" value={rec.county} />}
+          {rec.zoning && <DataRow label="Zoning" value={rec.zoning} />}
+          {(rec.yearBuilt || deal.yearBuilt) > 0 && <DataRow label="Year Built" value={rec.yearBuilt || deal.yearBuilt} />}
+          {(rec.squareFootage || deal.sqft) > 0 && <DataRow label="Square Footage" value={(rec.squareFootage || deal.sqft).toLocaleString() + " sqft"} />}
+          {(rec.lotSize || deal.lotSize) > 0 && <DataRow label="Lot Size" value={(rec.lotSize || deal.lotSize).toLocaleString() + " sqft"} />}
+          {(rec.propertyType || deal.type) && <DataRow label="Property Type" value={rec.propertyType || deal.type} />}
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
+            Public records from county assessor data. Figures update as counties publish.
+          </div>
+        </>
+      )}
+    </SheetShell>
+  );
+}
+
+// -- Deal View -------------------------------------------------------------------
+// The home of a saved deal: hero gallery, the saved verdict numbers up top,
+// then a grouped hub of everything else. Opens from any saved-deal card.
+function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, apiLookup, rcAuth, mobile}) {
+  const {strat, heroNumber, secondaryMetrics} =
+    dealHeroMetrics(deal, deal.scenario || null, deal.financing || null);
+  const [idx, setIdx]     = useState(0);
+  const [sheet, setSheet] = useState(null); // null | "comps" | "owner" | "records"
+  const [shared, setShared] = useState(false);
+
+  const photos = Array.isArray(deal.photos) && deal.photos.length
+    ? deal.photos
+    : (deal.lat && deal.lng ? svAngles(deal.lat, deal.lng) : (deal.photo ? [deal.photo] : []));
+  const visible = isPro ? photos : photos.slice(0, 5);
+  const locked  = photos.length - visible.length;
+
+  useEffect(() => {
+    document.body.classList.add("dh-scroll-locked");
+    const handler = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => {
+      document.body.classList.remove("dh-scroll-locked");
+      window.removeEventListener("keydown", handler);
+    };
+  }, [onClose]);
+
+  const mapsHref = deal.lat && deal.lng
+    ? `https://maps.google.com/?q=${deal.lat},${deal.lng}`
+    : `https://maps.google.com/?q=${encodeURIComponent([deal.address, deal.city, deal.state].filter(Boolean).join(", "))}`;
+  const zillowHref = `https://www.zillow.com/homes/${encodeURIComponent([deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(" "))}_rb/`;
+
+  const finLabel = deal.financing === "owned" ? "Owned"
+    : deal.financing === "cash" ? "Cash"
+    : deal.financing === "finance" ? "Finance" : null;
+
+  const share = async () => {
+    const text = `${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")} — ${$(deal.price)} · ${heroNumber.label}: ${heroNumber.value} · analyzed on DealHive (dealhive.io)`;
+    try {
+      if (navigator.share) { await navigator.share({title: deal.address, text}); }
+      else { await navigator.clipboard.writeText(text); setShared(true); setTimeout(()=>setShared(false), 2200); }
+    } catch { /* user cancelled the share sheet */ }
+  };
+
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.bg, borderRadius:"18px 18px 0 0", width:"100%",
+       maxHeight:"94dvh", overflowY:"auto", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.bg, borderRadius:C.r5, width:"100%", maxWidth:640,
+       maxHeight:"93dvh", overflowY:"auto", boxShadow:C.sh4, border:"1px solid "+C.border};
+
+  const pill = (label, bg, color, border, dot) => (
+    <span key={label} style={{display:"inline-flex", alignItems:"center", gap:5,
+      background:bg, color, border:"1px solid "+border,
+      padding:"4px 11px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+      letterSpacing:"-0.005em"}}>
+      {dot && <span style={{width:6, height:6, borderRadius:"50%", background:dot}}/>}
+      {label}
+    </span>
+  );
+
+  const Row = ({Ic, label, note, pro, onClick, last}) => (
+    <button onClick={onClick} style={{display:"flex", alignItems:"center", gap:12, width:"100%",
+      padding:"13px 14px", background:"#fff", border:"none", cursor:"pointer", textAlign:"left",
+      borderBottom: last ? "none" : "1px solid "+C.border, fontFamily:F}}>
+      <span style={{width:32, height:32, borderRadius:9, flexShrink:0, background:C.greenSubtle,
+        border:"1px solid "+C.greenBorder, color:C.greenDark, display:"inline-flex",
+        alignItems:"center", justifyContent:"center"}}><Ic size={15} stroke={2}/></span>
+      <span style={{flex:1, minWidth:0}}>
+        <span style={{display:"flex", alignItems:"center", gap:7, fontSize:14, fontWeight:600,
+          color:C.text, letterSpacing:"-0.01em"}}>
+          {label}
+          {pro && !isPro && (
+            <span style={{fontSize:9.5, fontWeight:800, color:C.greenDark, background:C.greenSubtle,
+              border:"1px solid "+C.greenBorder, borderRadius:9999, padding:"1.5px 7px",
+              letterSpacing:".05em"}}>PRO</span>
+          )}
+        </span>
+        {note && <span style={{display:"block", fontSize:11.5, color:C.textSub, marginTop:1.5}}>{note}</span>}
+      </span>
+      <span style={{color:C.textMuted, flexShrink:0, display:"inline-flex"}}>
+        <I.chevronRight size={15} stroke={2.2}/>
+      </span>
+    </button>
+  );
+  const Group = ({title, children}) => (
+    <div style={{marginTop:16}}>
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".07em",
+        textTransform:"uppercase", margin:"0 2px 7px"}}>{title}</div>
+      <div style={{border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden",
+        boxShadow:C.sh1, background:"#fff"}}>
+        {children}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        {/* Gallery */}
+        <div style={{position:"relative", background:C.bgSubtle}}>
+          <div style={{height: mobile ? 235 : 300, overflow:"hidden"}}>
+            <SafeImg src={visible[idx] || visible[0]} fallback={imgPlaceholder(36)}
+              style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            style={{position:"absolute", top:14, right:14, width:38, height:38, borderRadius:"50%",
+              background:"rgba(255,255,255,.94)", border:"none", cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh3}}>
+            <I.x size={17}/>
+          </button>
+          {visible.length > 1 && (
+            <div style={{position:"absolute", bottom:12, right:12, background:"rgba(9,9,11,.65)",
+              color:"#fff", padding:"3px 10px", borderRadius:9999, fontSize:11.5, fontWeight:700,
+              fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+              {idx+1} / {visible.length}
+            </div>
+          )}
+        </div>
+        {(visible.length > 1 || locked > 0) && (
+          <div style={{display:"flex", gap:8, padding:"12px 16px 4px", overflowX:"auto"}}>
+            {visible.map((src, i) => (
+              <button key={i} onClick={()=>setIdx(i)}
+                style={{width:64, height:46, borderRadius:8, overflow:"hidden", padding:0, flexShrink:0,
+                  border: i === idx ? "2px solid "+C.green : "1px solid "+C.border,
+                  cursor:"pointer", background:C.bgSubtle}}>
+                <SafeImg src={src.replace("size=900x560","size=200x140")} fallback={imgPlaceholder(14)}
+                  style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+              </button>
+            ))}
+            {locked > 0 && (
+              <button onClick={onUpgrade} title="Unlock all photos with Pro"
+                style={{width:64, height:46, borderRadius:8, flexShrink:0, cursor:"pointer",
+                  border:"1px dashed "+C.greenBorder, background:C.greenSubtle,
+                  display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                  color:C.greenDark, fontSize:10, fontWeight:800, fontFamily:F, gap:2}}>
+                <I.lock size={13} stroke={2.4}/> +{locked} Pro
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Address + pills */}
+        <div style={{padding:"16px 20px 0", textAlign:"center"}}>
+          <div style={{display:"inline-flex", gap:7, flexWrap:"wrap", justifyContent:"center", marginBottom:9}}>
+            {pill($(deal.price), C.sidebar, "#fff", C.sidebar, null)}
+            {pill(strat.label, strat.bg, strat.color, strat.border, strat.dot)}
+            {finLabel && pill(finLabel, "#fff", C.text, C.border, null)}
+          </div>
+          <div style={{fontSize:20, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em", lineHeight:1.25}}>
+            {deal.address}
+          </div>
+          {(deal.city || deal.state) && (
+            <div style={{fontSize:14, color:C.textSub, fontFamily:F, fontWeight:600, marginTop:2}}>
+              {[deal.city, [deal.state, deal.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+            </div>
+          )}
+        </div>
+
+        {/* Saved verdict — same numbers as the card, always visible */}
+        <div style={{padding:"14px 16px 0"}}>
+          <div style={{
+            display:"grid", gridTemplateColumns:"1fr 1fr", gap:1,
+            background:C.border, border:"1px solid "+C.border,
+            borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1,
+          }}>
+            {[[heroNumber.label, heroNumber.value, heroNumber.color, false, true],
+              ...secondaryMetrics.map(([l, v, vColor, keepCase]) => [l, v, vColor, keepCase, false])]
+              .map(([l, v, vColor, keepCase, isHero]) => (
+              <div key={l} style={{
+                background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+                padding:"13px 10px 15px", textAlign:"center",
+              }}>
+                <div style={{display:"inline-flex", alignItems:"center", gap:5,
+                  fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F,
+                  letterSpacing:".07em", textTransform: keepCase ? "none" : "uppercase"}}>
+                  <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
+                    background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
+                  {l}
+                </div>
+                <div style={{fontSize: isHero ? 21 : 18, fontWeight:500,
+                  color: vColor || (isHero ? heroNumber.color : C.text), fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4}}>
+                  {v}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Facts */}
+        {(deal.beds > 0 || deal.baths > 0 || deal.sqft > 0 || deal.yearBuilt > 0) && (
+          <div style={{padding:"14px 16px 0"}}>
+            <div style={{display:"grid", gridTemplateColumns: mobile ? "repeat(3, 1fr)" : "repeat(6, 1fr)",
+              gap:1, background:C.border, border:"1px solid "+C.border,
+              borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+              {[
+                ["Beds",  deal.beds || "—",  I.bed],
+                ["Baths", deal.baths || "—", I.bath],
+                ["Sqft",  deal.sqft ? deal.sqft.toLocaleString() : "—", I.ruler],
+                ["Lot",   deal.lotSize ? deal.lotSize.toLocaleString() : "—", I.parcel],
+                ["Year",  deal.yearBuilt || "—", I.calendar],
+                ["Type",  deal.type || "—", I.home],
+              ].map(([l, v, Ic]) => (
+                <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+                  padding:"11px 6px", textAlign:"center"}}>
+                  <div style={{width:28, height:28, borderRadius:8, margin:"0 auto 5px",
+                    background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                    display:"flex", alignItems:"center", justifyContent:"center"}}>
+                    <Ic size={13} stroke={2}/>
+                  </div>
+                  <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F,
+                    fontVariantNumeric:"tabular-nums",
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+                  <div style={{fontSize:9.5, color:C.textSub, fontFamily:F, fontWeight:700,
+                    letterSpacing:".06em", textTransform:"uppercase", marginTop:1}}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Hub */}
+        <div style={{padding:"0 16px"}}>
+          <Group title="Analysis">
+            <Row Ic={I.chart} label="Full Analysis" note="Open in the Deal Analyzer to review or edit any number"
+              onClick={()=>{ onClose(); onAnalyze(deal); }} last/>
+          </Group>
+          <Group title="Research">
+            <Row Ic={I.dollar} label="Rental Comps & Rent" note="Market rent estimate + active rentals within 0.5 mi"
+              onClick={()=>setSheet("comps")}/>
+            <Row Ic={I.user} label="Owner Lookup" note="Owner name, mailing address, absentee status" pro
+              onClick={()=>setSheet("owner")}/>
+            <Row Ic={I.receipt} label="Property Records" note="Last sale, assessed value, taxes, parcel"
+              onClick={()=>setSheet("records")} last/>
+          </Group>
+          <Group title="Tools">
+            <Row Ic={I.externalLink} label="Share Deal"
+              note={shared ? "Copied to clipboard!" : "Send the address and headline numbers anywhere"}
+              onClick={share} last/>
+          </Group>
+        </div>
+
+        {/* Map + external links */}
+        {deal.lat && deal.lng && (
+          <div style={{padding:"16px 16px 0"}}>
+            <MiniMap lat={deal.lat} lng={deal.lng}/>
+          </div>
+        )}
+        <div style={{padding:"12px 16px 0", display:"flex", gap:10}}>
+          <a href={mapsHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
+            <span {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+              <I.pin size={13}/> Open in Maps
+            </span>
+          </a>
+          <a href={zillowHref} target="_blank" rel="noreferrer" style={{flex:1, textDecoration:"none"}}>
+            <span {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+              <I.externalLink size={13}/> View on Zillow
+            </span>
+          </a>
+        </div>
+
+        {/* Remove */}
+        <div style={{padding:"14px 16px 24px"}}>
+          <button onClick={()=>onRemove(deal)}
+            {...btnStyle("danger","md", {width:"100%", justifyContent:"center"})}>
+            <I.trash size={13}/> Remove from Saved Deals
+          </button>
+        </div>
+      </div>
+
+      {sheet === "comps" && (
+        <RentCompsSheet p={deal} apiLookup={apiLookup} rcAuth={rcAuth}
+          tier={isPro ? "pro" : "free"} onUpgrade={onUpgrade}
+          onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "owner" && (
+        <OwnerLookupSheet deal={deal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+          onUpgrade={onUpgrade} onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "records" && (
+        <RecordsSheet deal={deal} apiLookup={apiLookup} rcAuth={rcAuth}
+          onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+    </div>
+  );
+}
+
+function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRemove, onBrowse, onBrowseStrategy, onAnalyzeNew, apiLookup, rcAuth, mobile}) {
   const isPro  = tier === "pro";
   const isWide = useIsWide();
   const [selectedId, setSelectedId] = useState(null);
@@ -6653,7 +7144,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         gap:16}}>
         {shown.map(({d}) => (
           <DealCard key={d.id} deal={d} isPro={isPro}
-            onAnalyze={() => onAnalyze(d)}
+            onAnalyze={() => setSelectedId(d.id)}
             onSave={() => setConfirmRemove(d)}
             saveLabel="Remove"
             saveIcon={<I.trash size={13}/>}
@@ -6673,10 +7164,13 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         const d = ordered.map(x => x.d).find(x => x.id === selectedId);
         if (!d) return null;
         return (
-          <PropertyModal
+          <DealViewPage
             deal={d} isPro={isPro}
             onClose={() => setSelectedId(null)}
             onAnalyze={onAnalyze}
+            onRemove={dd => { setSelectedId(null); setConfirmRemove(dd); }}
+            onUpgrade={onUpgrade}
+            apiLookup={apiLookup} rcAuth={rcAuth}
             mobile={mobile} />
         );
       })()}
@@ -8686,8 +9180,8 @@ export default function App() {
     const fin = financing === "owned" ? "already owned" : financing === "cash" ? "all cash" : "financed";
     const match = existing.find(x => x.id === deal.id ||
       (deal.address && x.address === deal.address && x.city === deal.city));
-    if (!match && (data.tier||"free") !== "pro" && existing.length >= 5) {
-      setToast("Free plan holds 5 saved deals — upgrade to Pro for unlimited");
+    if (!match && (data.tier||"free") !== "pro" && existing.length >= 15) {
+      setToast("Free plan holds 15 saved deals — upgrade to Pro for unlimited");
       setTimeout(()=>setToast(""), 2600);
       return "limit";
     }
@@ -8821,7 +9315,8 @@ export default function App() {
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
-                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
+                onAnalyzeNew={()=>setPage("deal")}
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -8848,7 +9343,8 @@ export default function App() {
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
-                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
+                onAnalyzeNew={()=>setPage("deal")}
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
         )}
       </ErrorBoundary>
       <MobileNav page={showProp?"dashboard":page} setPage={p=>{setPage(p);setPropId(null);}} alertCount={alerts} isAdmin={isAdmin} />
@@ -8890,7 +9386,8 @@ export default function App() {
                     onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                     onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
-                onAnalyzeNew={()=>setPage("deal")} mobile={mobile} />
+                onAnalyzeNew={()=>setPage("deal")}
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
