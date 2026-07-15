@@ -281,9 +281,10 @@ const newLoan = (n=1) => ({
   financeOf: "purchase",      // purchase | rehab | purchase_rehab | arv | custom
   ltvPct: 75,                 // % of the financed base (ignored for custom)
   customAmount: 0,
-  loanType: "amortizing",     // amortizing | interest_only
+  loanType: "interest_only",  // hard-money default for the purchase phase
   rate: 12,
   termYears: 30,
+  pointsPct: 0,               // lender points/fees, paid at closing
 });
 const loanBase = (loan, p) =>
   loan.financeOf === "purchase"       ? (p.purchasePrice||0)
@@ -323,13 +324,21 @@ const INCOME_PREFILL = () => [
 const EXPENSES_PREFILL = p => [
   {id:"ex1", name:"Property Taxes",       type:"year",     value:(p.expPropTax||0)*12,   rollIn:false},
   {id:"ex2", name:"Insurance",            type:"year",     value:(p.expInsurance||0)*12, rollIn:false},
-  {id:"ex3", name:"Property Management",  type:"pct_rent", value:(p.rentAmount||0)>0 ? Math.round(((p.expManagement||0)/(p.rentAmount||1))*100) : 8, rollIn:false},
-  {id:"ex4", name:"Maintenance",          type:"pct_rent", value:10, rollIn:false},
-  {id:"ex5", name:"Capital Expenditures", type:"pct_rent", value:5,  rollIn:false},
-  {id:"ex6", name:"HOA Fees",             type:"amount",   value:0,  rollIn:false},
+  // Quick-path management is % of COLLECTED rent; itemized pct_rent applies
+  // to gross. Seed the gross-equivalent so itemizing doesn't move the total.
+  {id:"ex3", name:"Property Management",  type:"pct_rent",
+   value: (() => {
+     const basePct = p.expMgmtPct ?? ((p.rentAmount||0) > 0 && (p.expManagement||0) > 0
+       ? ((p.expManagement||0)/(p.rentAmount||1))*100 / Math.max(1-(p.vacancyRate||0)/100, 0.01)
+       : 8);
+     return Math.round(basePct * (1-(p.vacancyRate||0)/100) * 10) / 10;
+   })(), rollIn:false},
+  {id:"ex4", name:"Maintenance",          type:"pct_rent", value:p.expMaintPct ?? 5, rollIn:false},
+  {id:"ex5", name:"Capital Expenditures", type:"pct_rent", value:p.expCapexPct ?? 5, rollIn:false},
+  {id:"ex6", name:"HOA Fees",             type:"amount",   value:p.expHoa||0, rollIn:false},
   {id:"ex7", name:"Utilities",            type:"amount",   value:p.expUtilities||0, rollIn:false},
-  {id:"ex8", name:"Landscaping",          type:"amount",   value:0,  rollIn:false},
-  {id:"ex9", name:"Accounting & Legal",   type:"amount",   value:0,  rollIn:false},
+  {id:"ex8", name:"Landscaping",          type:"amount",   value:p.expLandscaping||0, rollIn:false},
+  {id:"ex9", name:"Accounting & Legal",   type:"amount",   value:p.expAcctLegal||0, rollIn:false},
 ];
 const EXPENSE_TYPES = [
   {value:"amount",   label:"$ Per Month",  input:"$"},
@@ -356,12 +365,29 @@ const calc = (p) => {
   const ownedBal = owned ? (p.ownedLoanBalance||0) : 0;
   const ownedPmt = owned ? (p.ownedLoanPayment||0) : 0;
   const vacancyFactor = 1 - ((p.vacancyRate||0)/100);
-  const effectiveRent = (p.rentAmount||0) * vacancyFactor + (p.otherIncome||0);
+  const rentGross     = (p.rentAmount||0);
+  const rentAfterVac  = rentGross * vacancyFactor;
+  const effectiveRent = rentAfterVac + (p.otherIncome||0);
   const expItemized = Array.isArray(p.expenseItems) && p.expenseItems.length
-    ? Math.round(p.expenseItems.reduce((t, it) => t + expenseMonthly(it, p.rentAmount||0), 0))
+    ? Math.round(p.expenseItems.reduce((t, it) => t + expenseMonthly(it, rentGross), 0))
     : null;
-  const exp  = expItemized != null ? expItemized
-    : (p.expPropTax||0)+(p.expUtilities||0)+(p.expManagement||0)+(p.expInsurance||0);
+  // Quick-path operating expenses — the full nine categories. Management is
+  // a % of rent actually collected (after vacancy); maintenance and capital
+  // expenditures are % of gross rent. Legacy saves with a flat $ management
+  // keep honoring it until the user switches to %.
+  const mgmtMo  = p.expMgmtPct != null ? rentAfterVac * (p.expMgmtPct/100) : (p.expManagement||0);
+  const maintMo = rentGross * ((p.expMaintPct ?? 0)/100);
+  const capexMo = rentGross * ((p.expCapexPct ?? 0)/100);
+  const fixedMo = (p.expPropTax||0) + (p.expInsurance||0) + (p.expHoa||0)
+                + (p.expUtilities||0) + (p.expLandscaping||0) + (p.expAcctLegal||0);
+  const exp = expItemized != null ? expItemized
+    : Math.round(fixedMo + mgmtMo + maintMo + capexMo);
+  // Carrying cost while there's no tenant (the rehab hold): the fixed bills
+  // keep coming, but rent-based costs (management/maintenance/capex) don't.
+  const carryMo = Array.isArray(p.expenseItems) && p.expenseItems.length
+    ? Math.round(p.expenseItems.reduce((t, it) =>
+        t + (it.type === "pct_rent" ? 0 : expenseMonthly(it, rentGross)), 0))
+    : Math.round(fixedMo);
   const noi  = effectiveRent - exp;
 
   // Purchase costs: itemized breakdown wins; otherwise a % of price (default
@@ -385,7 +411,7 @@ const calc = (p) => {
   const cashCap  = (p.purchasePrice||0)>0 ? (noi*12/(p.purchasePrice||0))*100 : 0;
   const hasLoans = Array.isArray(p.loans) && p.loans.length > 0;
 
-  let down, loan, mtg, finOOP, rolledIn = 0, loanBreakdown = [];
+  let down, loan, mtg, finOOP, rolledIn = 0, pointsTotal = 0, loanBreakdown = [];
   if (hasLoans) {
     // New model: sum every loan; costs marked "roll into loan" ride on top of
     // the first loan (financed, not paid up front).
@@ -401,11 +427,16 @@ const calc = (p) => {
       amount: baseAmounts[i] + (i===0 ? rolledIn : 0),
       payment: loanPayment(baseAmounts[i] + (i===0 ? rolledIn : 0), l),
     }));
-    finOOP = Math.max(0, (p.purchasePrice||0) + (p.repairCosts||0) + cc - loan);
+    // Points/underwriting fees are paid at closing on each loan's amount.
+    pointsTotal = Math.round(p.loans.reduce((t, l, i) =>
+      t + (baseAmounts[i] + (i === 0 ? rolledIn : 0)) * ((l.pointsPct||0)/100), 0));
+    finOOP = Math.max(0, (p.purchasePrice||0) + (p.repairCosts||0) + cc + pointsTotal - loan);
     down   = Math.max(0, (p.purchasePrice||0) - loan);
   } else {
     // Legacy single-loan model.
-    down   = (p.purchasePrice||0) * (p.downPaymentPct||25)/100;
+    down   = p.downPaymentAmt != null
+      ? (p.downPaymentAmt||0)
+      : (p.purchasePrice||0) * (p.downPaymentPct||25)/100;
     loan   = (p.purchasePrice||0) - down;
     mtg    = monthlyPI(loan, p.interestRate||7.5);
     finOOP = down + (p.repairCosts||0) + cc;
@@ -424,7 +455,7 @@ const calc = (p) => {
 
   // Fix & flip: holding costs accrue for the hold period (rehab + sale time).
   const holdMonths  = p.holdMonths ?? 6;
-  const flipHolding = holdMonths * (exp + ownedPmt);
+  const flipHolding = holdMonths * (carryMo + ownedPmt);
   const agentFee = (p.flipSalePrice||0) * (p.agentFeePct||6)/100;
   const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding - ownedBal;
   const flipROI  = cashOOP>0 ? (flipProfit/cashOOP)*100 : 0;
@@ -432,7 +463,7 @@ const calc = (p) => {
   // Financed flip: carrying costs include the debt service, the loan gets
   // paid off out of the sale, and ROI is measured on cash actually invested —
   // that's the leverage story.
-  const finFlipHolding = holdMonths * (exp + mtg);
+  const finFlipHolding = holdMonths * (carryMo + mtg);
   const finFlipProfit  = (p.flipSalePrice||0) - agentFee - finFlipHolding - loan - finOOP;
   const finFlipROI     = finOOP>0 ? (finFlipProfit/finOOP)*100 : 0;
 
@@ -444,10 +475,10 @@ const calc = (p) => {
   // BRRRR carries the property through the rehab months before the refi —
   // operating costs plus any purchase debt service, no rent assumed until
   // the refinance.
-  const brrrHolding = holdMonths * (exp + (owned ? ownedPmt : (s === "cash" ? 0 : mtg)));
+  const brrrHolding = holdMonths * (carryMo + (owned ? ownedPmt : (s === "cash" ? 0 : mtg)));
   const brrrAllIn   = (s === "cash" ? cashOOP : finOOP) + brrrHolding;
   return {
-    exp, noi, effectiveRent, cashOOP, cashCF, cashCoC, cashCap,
+    exp, noi, effectiveRent, carryMo, pointsTotal, cashOOP, cashCF, cashCoC, cashCap,
     owned, ownedBal, ownedPmt,
     down, loan, mtg, cc, finOOP, finCF, finCoC, finCap, payoff,
     rolledIn, loanBreakdown, holdMonths, flipHolding,
@@ -518,7 +549,9 @@ const newProp = (base={}) => ({
   repairLight:0, repairMedium:0, repairFull:0,
   downPaymentPct:25, interestRate:7.5, closingCosts:DEFAULT_CLOSING,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
-  vacancyRate:5,
+  expMgmtPct:8, expMaintPct:5, expCapexPct:5,
+  expHoa:0, expLandscaping:0, expAcctLegal:0,
+  vacancyRate:8,
   brrrCashOut:0, flipSalePrice:0, agentFeePct:6,
   rentEstimate:0, rentEstLow:0, rentEstHigh:0,
   chosenStrategy:"finance",
@@ -540,7 +573,9 @@ const newDeal = () => ({
   otherIncome:0, incomeItems:null, expenseItems:null,
   closingItems:null, repairItems:null,
   expPropTax:0, expUtilities:0, expManagement:0, expInsurance:0,
-  vacancyRate:5,
+  expMgmtPct:8, expMaintPct:5, expCapexPct:5,
+  expHoa:0, expLandscaping:0, expAcctLegal:0,
+  vacancyRate:8,
   brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, brrrRefiCostPct:2, flipSalePrice:0, agentFeePct:6,
   alreadyOwned:false, ownedLoanBalance:0, ownedLoanPayment:0,
   chosenStrategy:null, notes:"", savedAt:""
@@ -2307,9 +2342,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           </button>
         </div>
       ) : (
-      <div style={{display:"flex", gap:0, marginBottom:18, padding:4,
-        background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border,
-        ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
+      <div style={{marginBottom:18, ...(mobile && stickyTop ? {position:"sticky", top:stickyTop, zIndex:40} : {})}}>
+      <div style={{display:"flex", gap:0, padding:4,
+        background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
         {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
           const active = s===id;
           return (
@@ -2327,6 +2362,29 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             </button>
           );
         })}
+      </div>
+      {/* The key result rides along while the inputs scroll */}
+      {p.purchasePrice > 0 && (() => {
+        const isFlip  = xtra === "flip";
+        const isBrrrr = xtra === "brrrr";
+        const val   = isFlip ? (s === "cash" ? m.flipProfit : m.finFlipProfit)
+          : isBrrrr ? m.brrrCF : m.chosenCF;
+        const label = isFlip ? "Net Profit" : isBrrrr ? "CF/mo After Refi" : "Cash Flow";
+        return (
+          <div style={{marginTop:6, display:"flex", justifyContent:"center"}}>
+            <div style={{display:"inline-flex", alignItems:"center", gap:8,
+              background:"rgba(255,255,255,.97)", border:"1px solid "+C.border, borderRadius:9999,
+              padding:"5px 14px", fontFamily:F, boxShadow:C.sh2}}>
+              <span style={{color:C.textSub, letterSpacing:".04em", textTransform:"uppercase",
+                fontSize:10.5, fontWeight:700}}>{label}</span>
+              <span style={{color:cfC(val), fontSize:13.5, fontWeight:700,
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>
+                {isFlip ? $(val) : $mo(val)}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
       </div>
       )}
 
@@ -2375,12 +2433,134 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
+        {/* Income — shared by both tabs (this used to hide on Finance) */}
+        <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
+          {p.rentEstimate > 0 && (
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
+              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
+              padding:"10px 12px", marginBottom:12}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
+                  Market Rent Estimate
+                </div>
+                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                  {$(p.rentEstimate)}/mo
+                  {(p.rentEstLow > 0 && p.rentEstHigh > 0) && (
+                    <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
+                  )}
+                </div>
+              </div>
+              {p.rentAmount !== p.rentEstimate && (
+                <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>Use</button>
+              )}
+            </div>
+          )}
+          <div style={{position:"relative"}}>
+            <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$"
+              suf={(rcOk(rcAuth) && apiLookup) ? "        " : undefined} mobile={mobile} />
+            {(rcOk(rcAuth) && apiLookup) && (
+              <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
+                title={p.address ? "Check rental comps" : "Enter the property address first"}
+                style={{
+                  position:"absolute", right:6, top: mobile ? 33 : 31, height: mobile ? 34 : 30,
+                  display:"inline-flex", alignItems:"center", gap:6, padding:"0 12px",
+                  background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 90%)`,
+                  border:"1px solid "+C.greenBorder, borderRadius:9999,
+                  color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F,
+                  cursor: p.address ? "pointer" : "default",
+                  opacity: p.address ? 1 : .5, boxShadow:C.sh1,
+                }}>
+                <I.search size={12} stroke={2.4}/> Comps
+              </button>
+            )}
+          </div>
+          <InputField label="Other Income / mo" val={p.otherIncome}
+            set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
+            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
+            mobile={mobile} />
+          <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+            <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
+          </button>
+          <InputField label="Vacancy Rate" val={p.vacancyRate ?? 8} set={v=>u("vacancyRate",v)} suf="%" note="Expected share of the year without a tenant" mobile={mobile} />
+          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
+          <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
+        </SectionBlock>
+
+        {/* Monthly expenses — shared */}
+        <SectionBlock title="Monthly Expenses" color={C.amber} icon={I.receipt}>
+          {Array.isArray(p.expenseItems) && p.expenseItems.length ? (
+            <>
+              {p.expenseItems.map(it => (
+                <DataRow key={it.id} label={it.name}
+                  value={$(Math.round(expenseMonthly(it, p.rentAmount||0))) + "/mo"} />
+              ))}
+              <div style={{display:"flex", gap:8, margin:"12px 0"}}>
+                <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {flex:1, justifyContent:"center"})}>
+                  <I.edit size={12}/> Edit Items
+                </button>
+                <button onClick={()=>u("expenseItems", null)}
+                  style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
+                    fontSize:12, fontFamily:F, padding:"4px 8px"}}>
+                  Switch to Simple
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 10px"}}>
+                <InputField label="Property Tax / mo" val={p.expPropTax}
+                  set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
+                <InputField label="Insurance / mo" val={p.expInsurance}
+                  set={v=>set({...p, expInsurance:v, expInsuranceAuto:false})} pre="$" mobile={mobile} />
+              </div>
+              {(p.expMgmtPct == null && (p.expManagement||0) > 0) ? (
+                <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$"
+                  note="Flat amount from an earlier save — managers usually charge % of rent" mobile={mobile} />
+              ) : (
+                <InputField label="Property Management" val={p.expMgmtPct ?? 0}
+                  set={v=>set({...p, expMgmtPct:v, expManagement:0})} suf="%"
+                  note={`of collected rent = ${$(Math.round((p.rentAmount||0) * (1-(p.vacancyRate||0)/100) * ((p.expMgmtPct ?? 0)/100)))}/mo`}
+                  mobile={mobile} />
+              )}
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 10px"}}>
+                <InputField label="Maintenance" val={p.expMaintPct ?? 0} set={v=>u("expMaintPct",v)} suf="%"
+                  note={`= ${$(Math.round((p.rentAmount||0)*((p.expMaintPct ?? 0)/100)))}/mo`} mobile={mobile} />
+                <InputField label="CapEx" val={p.expCapexPct ?? 0} set={v=>u("expCapexPct",v)} suf="%"
+                  note={`= ${$(Math.round((p.rentAmount||0)*((p.expCapexPct ?? 0)/100)))}/mo`} mobile={mobile} />
+              </div>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 10px"}}>
+                <InputField label="HOA / mo" val={p.expHoa} set={v=>u("expHoa",v)} pre="$" mobile={mobile} />
+                <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
+                <InputField label="Landscaping / mo" val={p.expLandscaping} set={v=>u("expLandscaping",v)} pre="$" mobile={mobile} />
+                <InputField label="Legal & Acct / mo" val={p.expAcctLegal} set={v=>u("expAcctLegal",v)} pre="$" mobile={mobile} />
+              </div>
+              <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {marginBottom:12})}>
+                <I.edit size={12}/> Itemize Expenses
+              </button>
+            </>
+          )}
+          <DataRow label="Total Expenses / mo" value={$(m.exp)} />
+          <DataRow label="NOI / yr" value={$(m.noi*12)} />
+        </SectionBlock>
+
         {/* Financing — Finance tab only */}
         {s==="finance" && (
         <SectionBlock title="Financing" color={C.blue} icon={I.building}>
           {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
             <>
-              <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
+              {p.downPaymentAmt != null ? (
+                <InputField label="Down Payment" val={p.downPaymentAmt} set={v=>u("downPaymentAmt",v)} pre="$" mobile={mobile} />
+              ) : (
+                <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
+              )}
+              <button onClick={()=> p.downPaymentAmt != null
+                  ? set({...p, downPaymentAmt: null})
+                  : set({...p, downPaymentAmt: Math.round(m.down)})}
+                style={{background:"none", border:"none", cursor:"pointer", padding:"0 0 12px",
+                  fontSize:12, fontWeight:600, color:C.blueDark, fontFamily:F,
+                  textDecoration:"underline", textUnderlineOffset:2}}>
+                {p.downPaymentAmt != null ? "Enter as % of price instead" : "Enter as $ amount instead"}
+              </button>
               <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
               <DataRow label="Down Payment" value={$(m.down)} />
               <DataRow label="Loan Amount" value={$(m.loan)} />
@@ -2433,6 +2613,9 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                       <InputField label="Interest Rate" val={ln.rate} set={v=>setLn({rate:v})} suf="%" mobile={mobile} />
                       <InputField label="Loan Term (Years)" val={ln.termYears} set={v=>setLn({termYears:v})} mobile={mobile} />
                     </div>
+                    <InputField label="Points / Lender Fees" val={ln.pointsPct} set={v=>setLn({pointsPct:v})} suf="%"
+                      note={(ln.pointsPct||0) > 0 ? `= ${$(Math.round(amt * (ln.pointsPct||0)/100))} paid at closing` : "Optional — added to cash needed"}
+                      mobile={mobile} />
                     <DataRow label={"Loan " + (i+1) + " Payment / mo"} value={$mo(loanPayment(amt, ln))} />
                     {i === 0 && m.rolledIn > 0 && (
                       <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"0 0 8px"}}>
@@ -2456,59 +2639,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
         )}
 
-        {/* Income — shared by both tabs (this used to hide on Finance) */}
-        <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
-          {p.rentEstimate > 0 && (
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10,
-              background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r2,
-              padding:"10px 12px", marginBottom:12}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
-                  Market Rent Estimate
-                </div>
-                <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
-                  {$(p.rentEstimate)}/mo
-                  {(p.rentEstLow > 0 && p.rentEstHigh > 0) && (
-                    <span style={{fontSize:11.5, color:C.textSub, fontWeight:500}}> · {$(p.rentEstLow)} – {$(p.rentEstHigh)}</span>
-                  )}
-                </div>
-              </div>
-              {p.rentAmount !== p.rentEstimate && (
-                <button onClick={()=>u("rentAmount", p.rentEstimate)} {...btnStyle("primary","sm")}>Use</button>
-              )}
-            </div>
-          )}
-          <div style={{position:"relative"}}>
-            <InputField label="Monthly Rent" val={p.rentAmount} set={v=>u("rentAmount",v)} pre="$"
-              suf={(rcOk(rcAuth) && apiLookup) ? "        " : undefined} mobile={mobile} />
-            {(rcOk(rcAuth) && apiLookup) && (
-              <button onClick={()=>setCompsOpen(true)} disabled={!p.address}
-                title={p.address ? "Check rental comps" : "Enter the property address first"}
-                style={{
-                  position:"absolute", right:6, top: mobile ? 33 : 31, height: mobile ? 34 : 30,
-                  display:"inline-flex", alignItems:"center", gap:6, padding:"0 12px",
-                  background:`linear-gradient(135deg, ${C.greenSubtle} 0%, #fff 90%)`,
-                  border:"1px solid "+C.greenBorder, borderRadius:9999,
-                  color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F,
-                  cursor: p.address ? "pointer" : "default",
-                  opacity: p.address ? 1 : .5, boxShadow:C.sh1,
-                }}>
-                <I.search size={12} stroke={2.4}/> Comps
-              </button>
-            )}
-          </div>
-          <InputField label="Other Income / mo" val={p.otherIncome}
-            set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
-            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
-            mobile={mobile} />
-          <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
-            <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
-          </button>
-          <InputField label="Vacancy Rate" val={p.vacancyRate ?? 5} set={v=>u("vacancyRate",v)} suf="%" note="5% ≈ 18 vacant days/yr" mobile={mobile} />
-          {(p.vacancyRate||0) > 0 && <DataRow label="Effective Rent / mo" value={$(m.effectiveRent)} color={C.textSub} />}
-          <DataRow label="Yearly Rent (Gross)" value={$((p.rentAmount||0)*12)} />
-        </SectionBlock>
-
         {/* Results — Finance tab only (cash results live in the Summary card) */}
         {s==="finance" && (
           <SectionBlock title="Financed Results" color={C.green} icon={I.chart}>
@@ -2522,45 +2652,12 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <DataRow label="Cash-on-Cash" value={pct(m.finCoC)} color={cfC(m.finCoC)} />
             <DataRow label="Cap Rate" value={pct(m.finCap)} />
             <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
+            {m.pointsTotal > 0 && <DataRow label="Loan Points / Fees" value={$(m.pointsTotal)} />}
+            <DataRow label="DSCR" value={m.mtg > 0 ? (m.noi / m.mtg).toFixed(2) : "—"}
+              color={m.mtg > 0 ? (m.noi / m.mtg >= 1.2 ? C.cashPos : m.noi / m.mtg >= 1 ? C.text : C.red) : C.text} />
+            <DataRow label="Debt Yield" value={m.loan > 0 ? pct(m.noi * 12 / m.loan) : "—"} />
           </SectionBlock>
         )}
-
-        {/* Monthly expenses — shared */}
-        <SectionBlock title="Monthly Expenses" color={C.amber} icon={I.receipt}>
-          {Array.isArray(p.expenseItems) && p.expenseItems.length ? (
-            <>
-              {p.expenseItems.map(it => (
-                <DataRow key={it.id} label={it.name}
-                  value={$(Math.round(expenseMonthly(it, p.rentAmount||0))) + "/mo"} />
-              ))}
-              <div style={{display:"flex", gap:8, margin:"12px 0"}}>
-                <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {flex:1, justifyContent:"center"})}>
-                  <I.edit size={12}/> Edit Items
-                </button>
-                <button onClick={()=>u("expenseItems", null)}
-                  style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
-                    fontSize:12, fontFamily:F, padding:"4px 8px"}}>
-                  Switch to Simple
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <InputField label="Property Tax / mo" val={p.expPropTax}
-                set={v=>set({...p, expPropTax:v, expPropTaxAuto:false})} pre="$" mobile={mobile} />
-              <InputField label="Utilities / mo" val={p.expUtilities} set={v=>u("expUtilities",v)} pre="$" mobile={mobile} />
-              <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$" mobile={mobile} />
-              <InputField label="Insurance / mo" val={p.expInsurance}
-                set={v=>set({...p, expInsurance:v, expInsuranceAuto:false})} pre="$"
-                note="Estimated from the address — adjust anytime" mobile={mobile} />
-              <button onClick={()=>setItemize("expenses")} {...btnStyle("secondary","sm", {marginBottom:12})}>
-                <I.edit size={12}/> Itemize Expenses
-              </button>
-            </>
-          )}
-          <DataRow label="Total Expenses / mo" value={$(m.exp)} />
-          <DataRow label="NOI / yr" value={$(m.noi*12)} />
-        </SectionBlock>
 
         {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
         <SectionBlock title="After Repair Value (ARV)" color={C.blue} icon={I.trendingUp}>
@@ -5319,9 +5416,11 @@ const classifyDeal = (deal) => {
     rentAmount:    rent,
     expPropTax:    monthlyTax,
     expInsurance:  100,
-    expManagement: Math.round(rent * 0.08), // 8% PM
+    expMgmtPct:    8,
+    expMaintPct:   5,
+    expCapexPct:   5,
     expUtilities:  0,
-    vacancyRate:   5,
+    vacancyRate:   8,
     downPaymentPct: 25,
     interestRate:  7.5,
     closingCosts:  DEFAULT_CLOSING,
@@ -5347,7 +5446,9 @@ const classifyDeal = (deal) => {
   const recoveredPct = allIn > 0 ? Math.min(100, Math.round((refiLoan / allIn) * 100)) : 0;
   const refiMonthly  = 7.5 / 100 / 12; // same rate assumption as the buy-hold model
   const refiPmt      = Math.round(refiLoan * refiMonthly / (1 - Math.pow(1 + refiMonthly, -360)));
-  const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.08) + Math.round(rent * 0.05);
+  // Taxes + insurance + 8% management on collected rent + 5% maintenance +
+  // 5% capex — same operating model as the analyzer's defaults.
+  const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.92 * 0.08) + Math.round(rent * 0.10);
   const brrrrCF      = rent - brrrrOpEx - refiPmt;
 
   // Tighter gates — no $30/mo cash-flow noise. Only "good" deals pass.
@@ -5396,8 +5497,16 @@ const proFormaToFeedDeal = pf => ({
   expPropTax:    pf.expPropTax    || 0,
   expInsurance:  pf.expInsurance  || 0,
   expManagement: pf.expManagement || 0,
+  expMgmtPct:    pf.expMgmtPct ?? null,
+  expMaintPct:   pf.expMaintPct ?? null,
+  expCapexPct:   pf.expCapexPct ?? null,
+  expHoa:         pf.expHoa || 0,
+  expLandscaping: pf.expLandscaping || 0,
+  expAcctLegal:   pf.expAcctLegal || 0,
   expUtilities:  pf.expUtilities  || 0,
-  vacancyRate:   pf.vacancyRate ?? 5,
+  expenseItems:  Array.isArray(pf.expenseItems) && pf.expenseItems.length ? pf.expenseItems : null,
+  incomeItems:   Array.isArray(pf.incomeItems)  && pf.incomeItems.length  ? pf.incomeItems  : null,
+  vacancyRate:   pf.vacancyRate ?? 8,
   otherIncome:   pf.otherIncome   || 0,
   source: "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
@@ -5447,9 +5556,19 @@ const dealToProForma = (deal) => {
     flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
     expPropTax:      deal.expPropTax    || Math.round((deal.price || 0) * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12),
     expInsurance:    deal.expInsurance  || 100,
-    expManagement:   deal.expManagement ?? Math.round((deal.rent || 0) * 0.08),
+    expManagement:   deal.expManagement || 0,
+    // Legacy saves that used flat-$ management keep their numbers (pct null,
+    // maint/capex 0); everything else gets the honest % defaults.
+    expMgmtPct:      deal.expMgmtPct ?? ((deal.expManagement||0) > 0 ? null : 8),
+    expMaintPct:     deal.expMaintPct ?? ((deal.expMgmtPct == null && (deal.expManagement||0) > 0) ? 0 : 5),
+    expCapexPct:     deal.expCapexPct ?? ((deal.expMgmtPct == null && (deal.expManagement||0) > 0) ? 0 : 5),
+    expHoa:          deal.expHoa || 0,
+    expLandscaping:  deal.expLandscaping || 0,
+    expAcctLegal:    deal.expAcctLegal || 0,
     expUtilities:    deal.expUtilities  || 0,
-    vacancyRate:     deal.vacancyRate ?? 5,
+    expenseItems:    (Array.isArray(deal.expenseItems) && deal.expenseItems.length) ? deal.expenseItems : null,
+    incomeItems:     (Array.isArray(deal.incomeItems)  && deal.incomeItems.length)  ? deal.incomeItems  : null,
+    vacancyRate:     deal.vacancyRate ?? 8,
     otherIncome:     deal.otherIncome   || 0,
     // Photos the analyzer should display in its own carousel.
     photos:          [
@@ -7062,14 +7181,30 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
 function projectHold(deal, asm, year) {
   const price  = deal.price || 0;
   const snap   = deal.analysis || {};
-  const vacPct = deal.vacancyRate ?? 5;
+  const vacPct = deal.vacancyRate ?? 8;
   const rent0  = (deal.rent || 0) * 12;
   const other0 = (deal.otherIncome || 0) * 12;
-  const taxMo  = deal.expPropTax   || Math.round(price * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12);
-  const insMo  = deal.expInsurance || Math.round(price * (INSURANCE_RATES[deal.state] || DEFAULT_INS_RATE) / 12);
-  const mgmtMo = deal.expManagement ?? Math.round((deal.rent || 0) * 0.08);
-  const utilMo = deal.expUtilities || 0;
-  const knownMo    = taxMo + insMo + mgmtMo + utilMo;
+  const taxMo   = deal.expPropTax   || Math.round(price * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12);
+  const insMo   = deal.expInsurance || Math.round(price * (INSURANCE_RATES[deal.state] || DEFAULT_INS_RATE) / 12);
+  const utilMo  = deal.expUtilities || 0;
+  const hoaMo   = deal.expHoa || 0;
+  const landMo  = deal.expLandscaping || 0;
+  const acctMo  = deal.expAcctLegal || 0;
+  const rent0Mo = deal.rent || 0;
+  // Deals saved straight off the market feed carry no expense fields and no
+  // analyzer snapshot — project those with the honest defaults instead of
+  // pretending management/maintenance/capex are free. Analyzer saves keep
+  // their exact (possibly deliberate zero) values.
+  const fromFeed    = !deal.analysis;
+  const mgmtPctEff  = deal.expMgmtPct  ?? (((deal.expManagement||0) > 0) ? null : (fromFeed ? 8 : 0));
+  const maintPctEff = deal.expMaintPct ?? (fromFeed ? 5 : 0);
+  const capexPctEff = deal.expCapexPct ?? (fromFeed ? 5 : 0);
+  const mgmtMo0  = mgmtPctEff != null
+    ? rent0Mo * (1 - vacPct/100) * (mgmtPctEff/100)
+    : (deal.expManagement || 0);
+  const maintMo0 = rent0Mo * (maintPctEff/100);
+  const capexMo0 = rent0Mo * (capexPctEff/100);
+  const knownMo    = taxMo + insMo + utilMo + hoaMo + landMo + acctMo + mgmtMo0 + maintMo0 + capexMo0;
   const otherExpMo = Math.max((snap.expMo || knownMo) - knownMo, 0);
   const invested   = snap.oop ?? (price + (deal.repair || 0));
 
@@ -7090,13 +7225,15 @@ function projectHold(deal, asm, year) {
     const lines = [
       ["Property Taxes",       taxMo  * 12 * ge],
       ["Insurance",            insMo  * 12 * ge],
-      ["Property Management",  mgmtMo * 12 * ge],
-      ["Maintenance",          (asm.maintenancePct || 0) / 100 * rentYr],
-      ["Capital Expenditures", (asm.capexPct || 0) / 100 * rentYr],
-      ["HOA Fees",             0],
+      ["Property Management",  mgmtPctEff != null
+        ? rentYr * (1 - vacPct/100) * (mgmtPctEff/100)
+        : (deal.expManagement || 0) * 12 * ge],
+      ["Maintenance",          rentYr * (maintPctEff/100)],
+      ["Capital Expenditures", rentYr * (capexPctEff/100)],
+      ["HOA Fees",             hoaMo  * 12 * ge],
       ["Utilities",            utilMo * 12 * ge],
-      ["Landscaping",          0],
-      ["Accounting & Legal",   0],
+      ["Landscaping",          landMo * 12 * ge],
+      ["Accounting & Legal",   acctMo * 12 * ge],
       ...(otherExpMo > 0 ? [["Other Expenses", otherExpMo * 12 * ge]] : []),
     ];
     const opEx = lines.reduce((s, x) => s + x[1], 0);
@@ -7141,6 +7278,8 @@ function projectHold(deal, asm, year) {
         grm: gross > 0 ? value / gross : 0,
         equityMultiple: invested > 0 ? (cumCF + saleProceeds) / invested : 0,
         breakEven: gross > 0 ? (opEx + debtYr) / gross * 100 : 0,
+        dscr:      debtYr > 0 ? noi / debtYr : null,
+        debtYield: bal > 0 ? noi / bal * 100 : null,
       };
     }
   }
@@ -7158,8 +7297,7 @@ function projectHold(deal, asm, year) {
   return out;
 }
 
-const PROJ_DEFAULTS = {appreciation:3, incomeGrowth:2, expenseGrowth:2, sellingCosts:6,
-  maintenancePct:5, capexPct:5, taxRate:24};
+const PROJ_DEFAULTS = {appreciation:3, incomeGrowth:2, expenseGrowth:2, sellingCosts:6, taxRate:24};
 const PROJ_YEARS    = [1, 2, 3, 5, 10, 15, 20, 30];
 
 function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
@@ -7281,8 +7419,6 @@ function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
               <InputField label="Income Increase / Yr" val={asm.incomeGrowth} set={v=>setA("incomeGrowth", v)} suf="%" mobile={mobile}/>
               <InputField label="Expense Increase / Yr" val={asm.expenseGrowth} set={v=>setA("expenseGrowth", v)} suf="%" mobile={mobile}/>
               <InputField label="Selling Costs" val={asm.sellingCosts} set={v=>setA("sellingCosts", v)} suf="%" mobile={mobile}/>
-              <InputField label="Maintenance (% of Rent)" val={asm.maintenancePct} set={v=>setA("maintenancePct", v)} suf="%" mobile={mobile}/>
-              <InputField label="CapEx (% of Rent)" val={asm.capexPct} set={v=>setA("capexPct", v)} suf="%" mobile={mobile}/>
               <InputField label="Income Tax Rate" val={asm.taxRate} set={v=>setA("taxRate", v)} suf="%" mobile={mobile}/>
             </div>
           </div>
@@ -7356,6 +7492,9 @@ function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
         ["Gross Rent Multiplier", (p.grm || 0).toFixed(2), null, false, "value ÷ gross annual rent"],
         ["Equity Multiple", (p.equityMultiple || 0).toFixed(2), null, false, "(cash flow + proceeds) ÷ invested"],
         ["Break Even Ratio", pct1(p.breakEven), null, false, "(expenses + debt) ÷ income"],
+        ...(p.dscr != null ? [["Debt Coverage Ratio (DSCR)", p.dscr.toFixed(2),
+          p.dscr >= 1.2 ? C.cashPos : p.dscr >= 1 ? null : C.red, false, "NOI ÷ annual debt service"]] : []),
+        ...(p.debtYield != null ? [["Debt Yield", pct1(p.debtYield), null, false, "NOI ÷ loan balance"]] : []),
       ]} note="Projections run on the numbers saved with this deal — re-save from the Deal Calculator after edits to refresh them."/>
     </SheetShell>
   );
