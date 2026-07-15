@@ -476,14 +476,18 @@ const calc = (p) => {
   const flipHolding = holdMonths * (carryMo + ownedPmt);
   const agentFee = (p.flipSalePrice||0) * (p.agentFeePct||6)/100;
   const flipProfit = (p.flipSalePrice||0) - cashOOP - agentFee - flipHolding - ownedBal;
-  const flipROI  = cashOOP>0 ? (flipProfit/cashOOP)*100 : 0;
+  // ROI convention: profit over ALL cash the flip consumed, holding months
+  // included — matches DealCheck's denominator.
+  const flipAllIn = cashOOP + flipHolding;
+  const flipROI  = flipAllIn>0 ? (flipProfit/flipAllIn)*100 : 0;
 
   // Financed flip: carrying costs include the debt service, the loan gets
   // paid off out of the sale, and ROI is measured on cash actually invested —
   // that's the leverage story.
   const finFlipHolding = holdMonths * (carryMo + mtg);
   const finFlipProfit  = (p.flipSalePrice||0) - agentFee - finFlipHolding - loanPayoff - finOOP;
-  const finFlipROI     = finOOP>0 ? (finFlipProfit/finOOP)*100 : 0;
+  const finFlipAllIn   = finOOP + finFlipHolding;
+  const finFlipROI     = finFlipAllIn>0 ? (finFlipProfit/finFlipAllIn)*100 : 0;
 
   // Financed BRRRR: the refi pays off the existing loans first; what's left
   // is the cash that actually reaches your pocket.
@@ -2394,7 +2398,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         const isBrrrr = xtra === "brrrr";
         const val   = isFlip ? (s === "cash" ? m.flipProfit : m.finFlipProfit)
           : isBrrrr ? m.brrrCF : m.chosenCF;
-        const label = isFlip ? "Net Profit" : isBrrrr ? "CF/mo After Refi" : "Cash Flow";
+        const label = isFlip ? "Net Profit" : isBrrrr ? "Cash Flow (After Refi)" : "Cash Flow";
         return (
           <div style={{marginTop:6, display:"flex", justifyContent:"center"}}>
             <div style={{display:"inline-flex", alignItems:"center", gap:8,
@@ -2709,11 +2713,13 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             <DataRow label="Cash Flow / mo" value={$mo(m.finCF)} color={cfC(m.finCF)} />
             <DataRow label="Cash-on-Cash" value={m.finOOP > 0 ? pct(m.finCoC) : "∞ — no cash in"} color={cfC(m.finCF)} />
             <DataRow label="Cap Rate" value={pct(m.finCap)} />
-            <DataRow label="Years to Payoff" value={m.payoff>0 ? m.payoff.toFixed(1)+" yrs" : "—"} />
             {m.pointsTotal > 0 && <DataRow label="Loan Points / Fees" value={$(m.pointsTotal)} />}
             <DataRow label="DSCR" value={m.mtg > 0 ? (m.noi / m.mtg).toFixed(2) : "—"}
               color={m.mtg > 0 ? (m.noi / m.mtg >= 1.2 ? C.cashPos : m.noi / m.mtg >= 1 ? C.text : C.red) : C.text} />
             <DataRow label="Debt Yield" value={m.loan > 0 ? pct(m.noi * 12 / m.loan * 100) : "—"} />
+            <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"2px 0 6px", lineHeight:1.5}}>
+              DSCR = NOI ÷ loan payments (lenders want 1.2+). Debt Yield = yearly NOI ÷ loan amount.
+            </div>
           </SectionBlock>
         )}
 
@@ -6691,7 +6697,7 @@ function StrategyCards({active, counts, onSelect, mobile}) {
   return (
     <div style={{display:"grid", gap:12, marginBottom:20,
       gridTemplateColumns: mobile ? "1fr" : "repeat(auto-fit, minmax(215px, 1fr))"}}>
-      {cards.map(({id, Icon, title, line}) => {
+      {cards.map(({id, Icon, title}) => {
         const isActive = active === id;
         const n = counts?.[id] ?? 0;
         return (
@@ -6720,9 +6726,6 @@ function StrategyCards({active, counts, onSelect, mobile}) {
             <span style={{minWidth:0}}>
               <span style={{display:"block", fontSize:14, fontWeight:700, color:C.text,
                 fontFamily:F, letterSpacing:"-0.01em"}}>{title}</span>
-              <span style={{display:"block", fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
-                {line}
-              </span>
             </span>
             <span style={{
               marginLeft:"auto", flexShrink:0, fontFamily:F,
@@ -8241,8 +8244,17 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
   // Build the market dropdown options from the actual data — InvestorLift
   // goes nationwide, so hardcoding 6 markets would hide most of the feed.
   // Group by state, prefer the curated label if we have one.
+  // Strategy filter first — the state dropdown should only offer states that
+  // actually have deals under the selected tab.
+  const strategyPassed = classified.filter(({d, c}) => {
+    if (strategy === "buyhold"   && !c.tags.includes("buyhold")) return false;
+    if (strategy === "brrrr"     && !c.tags.includes("brrrr"))   return false;
+    if (strategy === "flip"      && !c.tags.includes("flip"))    return false;
+    if (strategy === "wholesale" && !isWholesaleDeal(d))         return false;
+    return true;
+  });
   const marketCountsByState = new Map();
-  classified.forEach(({d}) => {
+  strategyPassed.forEach(({d}) => {
     const key = (d.state || "").toUpperCase();
     if (!key) return;
     marketCountsByState.set(key, (marketCountsByState.get(key) || 0) + 1);
@@ -8253,13 +8265,9 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
     .map(([state, count]) => ({id: state, label: state, count}))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const filtered = classified.filter(({d, c}) => {
+  const filtered = strategyPassed.filter(({d}) => {
     if (market !== "all" && (d.state || "").toUpperCase() !== market) return false;
     if (maxPrice > 0 && d.price > maxPrice) return false;
-    if (strategy === "buyhold"   && !c.tags.includes("buyhold")) return false;
-    if (strategy === "brrrr"     && !c.tags.includes("brrrr"))   return false;
-    if (strategy === "flip"      && !c.tags.includes("flip"))    return false;
-    if (strategy === "wholesale" && !isWholesaleDeal(d))         return false;
     return true;
   });
 
@@ -8274,10 +8282,6 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
   const lockedCount = filtered.length - visible.length;
 
   if (locked) return <DealsLockedPreview mobile={mobile} isWide={isWide} onUpgrade={onUpgrade} />;
-
-  // KPI counts for the header chip.
-  const buyHoldCount = filtered.filter(({c}) => c.tags.includes("buyhold")).length;
-  const flipCount    = filtered.filter(({c}) => c.tags.includes("flip")).length;
 
   return (
     <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
@@ -8312,7 +8316,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
           <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
             {filtered.length === 0
               ? "No deals match your filters right now."
-              : `${filtered.length} deal${filtered.length===1?"":"s"} across cash-flow markets · ${buyHoldCount} rental${buyHoldCount===1?"":"s"} · ${flipCount} flip${flipCount===1?"":"s"}`}
+              : `${filtered.length} deal${filtered.length===1?"":"s"} across ${marketCountsByState.size} state${marketCountsByState.size===1?"":"s"}`}
             {usingLive && feed?.updatedAt && (
               <span style={{color:C.textMuted}}> · Updated {timeAgo(feed.updatedAt)}</span>
             )}
@@ -8437,11 +8441,13 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, initial, onConsumeInitial, onBackToDeals, backLabel}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, assumptions, initial, onConsumeInitial, onBackToDeals, backLabel}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
-  const [d, setD]       = useState(() => initial ? {...newDeal(), ...initial} : newDeal());
+  // The user's Settings defaults ride under any prefill.
+  const seedDeal = () => ({...newDeal(), ...(assumptions || {})});
+  const [d, setD]       = useState(() => initial ? {...seedDeal(), ...initial} : seedDeal());
   const [loading, setL] = useState(false);
   const [err, setErr]   = useState("");
   // Capture "came from Deals" at mount time. We use this to decide whether to
@@ -8508,7 +8514,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
     onSave([...deals.filter(x => x.id !== d.id), {...d, savedAt:new Date().toISOString()}]);
-    setD(newDeal()); setErr("");
+    setD(seedDeal()); setErr("");
   };
 
   const m = calc(d);
@@ -8785,7 +8791,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </button>
       )}
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
-        action={<button onClick={()=>{setD(newDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
+        action={<button onClick={()=>{setD(seedDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
       {/* Property — photo up top, then the address fields together */}
       <SectionBlock title="Property" color={C.green} icon={I.home}>
@@ -9357,7 +9363,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade, billing=null, billingBusy=false, isAdmin=false}) {
+function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade, billing=null, billingBusy=false, isAdmin=false, assumptions={}, onSaveAssumptions}) {
   const isPro = tier === "pro";
   const periodEnd = billing && billing.currentPeriodEnd
     ? new Date(billing.currentPeriodEnd).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})
@@ -9435,6 +9441,31 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
             </button>
           )}
         </div>
+      </SectionBlock>
+
+      <SectionBlock title="Analyzer Defaults" color={C.blue} icon={I.settings}>
+        <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:14}}>
+          Every new analysis starts with these numbers. Deals you've already
+          saved keep their own.
+        </div>
+        {(() => {
+          const A  = assumptions || {};
+          const up = patch => onSaveAssumptions && onSaveAssumptions(patch);
+          return (
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px"}}>
+              <InputField label="Vacancy Rate" val={A.vacancyRate ?? 8} set={v=>up({vacancyRate:v})} suf="%" mobile={mobile}/>
+              <InputField label="Property Management" val={A.expMgmtPct ?? 8} set={v=>up({expMgmtPct:v})} suf="%" mobile={mobile}/>
+              <InputField label="Maintenance" val={A.expMaintPct ?? 5} set={v=>up({expMaintPct:v})} suf="%" mobile={mobile}/>
+              <InputField label="CapEx" val={A.expCapexPct ?? 5} set={v=>up({expCapexPct:v})} suf="%" mobile={mobile}/>
+              <InputField label="Purchase Costs" val={A.purchaseCostsPct ?? 3} set={v=>up({purchaseCostsPct:v})} suf="%" mobile={mobile}/>
+              <InputField label="Agent Fee (Sale)" val={A.agentFeePct ?? 6} set={v=>up({agentFeePct:v})} suf="%" mobile={mobile}/>
+              <InputField label="Refi Interest Rate" val={A.brrrRate ?? 7.5} set={v=>up({brrrRate:v})} suf="%" mobile={mobile}/>
+              <InputField label="Refi Closing Costs" val={A.brrrRefiCostPct ?? 2} set={v=>up({brrrRefiCostPct:v})} suf="%" mobile={mobile}/>
+              <InputField label="Hold Period (Months)" val={A.holdMonths ?? 6} set={v=>up({holdMonths:v})} mobile={mobile}/>
+              <InputField label="Simple Loan Rate" val={A.interestRate ?? 7.5} set={v=>up({interestRate:v})} suf="%" mobile={mobile}/>
+            </div>
+          );
+        })()}
       </SectionBlock>
 
       <div style={{display:"flex", gap:16, justifyContent:"center", padding:"6px 0 0"}}>
@@ -10269,6 +10300,7 @@ export default function App() {
     // the analyzer already knows the exit (Save button names it) and the
     // purchase method, so the save is one tap. The Deals-page save keeps its
     // sheet since market cards carry no user choice yet.
+    assumptions: data.assumptions || null,
     onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
       const isCash = pf.chosenStrategy === "cash";
       const res = saveDealToWatchlist(
@@ -10335,7 +10367,7 @@ export default function App() {
         ) : page==="projects" && isAdmin ? (
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deals" ? (
-          <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
+          <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
             strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
             token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
@@ -10346,7 +10378,9 @@ export default function App() {
         ) : page==="settings" ? (
           <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
             tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
-            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} />
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin}
+            assumptions={data.assumptions || {}}
+            onSaveAssumptions={patch => persist({...data, assumptions: {...(data.assumptions||{}), ...patch}})} />
         ) : (
           // Fallback for non-admins who somehow land on an admin-only page —
           // bounce them to their dashboard.
@@ -10410,7 +10444,7 @@ export default function App() {
             ) : page==="projects" && isAdmin ? (
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deals" ? (
-              <DealsPage tier={data.tier||"free"} onUpgrade={handleUpgrade}
+              <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
                 strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
                 token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
@@ -10421,7 +10455,9 @@ export default function App() {
             ) : page==="settings" ? (
               <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
                 tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
-            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} />
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin}
+            assumptions={data.assumptions || {}}
+            onSaveAssumptions={patch => persist({...data, assumptions: {...(data.assumptions||{}), ...patch}})} />
             ) : null}
           </ErrorBoundary>
         </div>
