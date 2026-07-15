@@ -1528,7 +1528,7 @@ const USE_CASES = {
     sub: "Buy, rehab, rent, refinance: sized against your ARV with the refi math investors actually use.",
     intro: "The BRRRR question is simple: how much of my money comes back at the refinance, and does the property still cash flow on the new loan? DealHive sizes the cash-out at your ARV, nets it against any loans it has to pay off, and shows the cash that actually lands in your pocket.",
     rows: [
-      ["Cash-out sized from ARV", "The refinance pre-fills at 80% of your after-repair value, with your own refi rate and term."],
+      ["Cash-out sized from ARV", "The refinance pre-fills at 75% of your after-repair value, with your own refi rate and term."],
       ["Loan payoffs handled", "Financed purchases net the refi against existing loans, so Net Cash at Refi is the real number."],
       ["Post-refi cash flow", "Rent minus expenses minus the new payment, so you know the hold still works after the cash-out."],
       ["Cash in Pocket", "The headline BRRRR number: what the refinance returns beyond your total investment."],
