@@ -66,11 +66,12 @@ const RESIDENTIAL_TYPES = new Set([
 //                           below plus this hard cap
 const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
 const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
-// FSBO.com drives a real browser: the run gets a server-side kill switch
-// (timeout= on the run start) and we poll its status up to FSBO_WAIT_MS
-// before the pipeline moves on without it.
-const FSBO_RUN_TIMEOUT_S = 400;
-const FSBO_WAIT_MS       = 420 * 1000;
+// FSBO.com (real browser) and Zillow (44 zips) both outgrow run-sync's
+// 300s ceiling, so they run start -> poll -> collect: the run gets a
+// server-side kill switch (timeout= on the run start) and we poll up to
+// LONG_RUN_WAIT_MS before the pipeline moves on with the partial harvest.
+const LONG_RUN_TIMEOUT_S = 400;
+const LONG_RUN_WAIT_MS   = 420 * 1000;
 // DealHive 4 (Zillow FSBO by ZIP): pay-per-result actor (~$2.70/1k), so
 // spend ≈ zips × per-zip cap. 14-day window keeps the feed stocked even
 // though we rebuild it nightly.
@@ -296,35 +297,28 @@ function mapApifyDeal(raw) {
 // the API-style sources it can outlive run-sync's 300s ceiling: start the
 // run, poll its status, then fetch the dataset. Input mirrors the actor's
 // published JSON example.
-async function pullFromFsbo(token, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "dainty_screw~real-estate-fsbo-com-data-scraper";
+// Start an actor run, poll to a terminal state (or our own deadline), then
+// collect whatever the dataset holds — a TIMED-OUT run still yields its
+// partial harvest.
+async function apifyRunCollect(token, actor, input, {memory, timeoutS, waitMs}) {
   let run;
   try {
     const res = await fetch(
-      `https://api.apify.com/v2/acts/${actor}/runs?token=${token}&memory=4096&timeout=${FSBO_RUN_TIMEOUT_S}`, {
+      `https://api.apify.com/v2/acts/${actor}/runs?token=${token}&memory=${memory}&timeout=${timeoutS}`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          searchQueries:       FSBO_LOCATIONS,
-          distanceMiles:       100,
-          headless:            true,
-          stopOnDuplicatePage: true,
-          debugLogPages:       false,
-          proxyConfiguration:  {apifyProxyGroups: ["RESIDENTIAL"]},
-        }),
+        body: JSON.stringify(input),
       });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.data || !body.data.id) {
-      return {items: [], debug: {httpStatus: res.status, body: JSON.stringify(body).slice(0, 400)}, ok: false};
+      return {parsed: null, status: null, debug: {httpStatus: res.status, body: JSON.stringify(body).slice(0, 400)}};
     }
     run = body.data;
   } catch (e) {
-    return {items: [], debug: {error: `run start threw: ${e.message}`}, ok: false};
+    return {parsed: null, status: null, debug: {error: `run start threw: ${e.message}`}};
   }
 
-  // Poll to a terminal state or our own deadline, whichever comes first.
-  const deadline = Date.now() + FSBO_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   let status = run.status;
   while (!["SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"].includes(status)) {
     if (Date.now() > deadline) break;
@@ -336,7 +330,6 @@ async function pullFromFsbo(token, maxItems) {
     } catch { /* transient poll failure — keep waiting */ }
   }
 
-  // A TIMED-OUT run still leaves a partial dataset — use whatever landed.
   let parsed = [];
   try {
     const r = await fetch(
@@ -344,18 +337,48 @@ async function pullFromFsbo(token, maxItems) {
     if (r.ok) parsed = await r.json();
   } catch { /* fall through with empty */ }
   if (!Array.isArray(parsed)) parsed = [];
+  return {parsed, status, debug: {runId: run.id, runStatus: status}};
+}
+
+// Long runs process their target list in order, so a timed-out night would
+// starve the tail of the list forever. Rotating the starting point daily
+// makes weekly coverage complete even when individual runs get cut short.
+function rotateDaily(list) {
+  if (!list.length) return list;
+  const off = Math.floor(Date.now() / 86400000) % list.length;
+  return [...list.slice(off), ...list.slice(0, off)];
+}
+
+async function pullFromFsbo(token, maxItems) {
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
+  const {parsed, status, debug} = await apifyRunCollect(
+    token, "dainty_screw~real-estate-fsbo-com-data-scraper", {
+      searchQueries:       rotateDaily(FSBO_LOCATIONS),
+      distanceMiles:       100,
+      headless:            true,
+      stopOnDuplicatePage: true,
+      debugLogPages:       false,
+      proxyConfiguration:  {apifyProxyGroups: ["RESIDENTIAL"]},
+    }, {memory: 4096, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
+  if (!parsed) return {items: [], debug, ok: false};
 
   const items = parsed.map(mapFsboDeal).filter(Boolean).slice(0, maxItems);
+  const first = parsed[0];
   return {
     items,
     debug: {
-      runId:        run.id,
-      runStatus:    status,
+      ...debug,
       rawCount:     parsed.length,
       mappedCount:  items.length,
       droppedCount: parsed.length - items.length,
-      sampleKeys:   parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [],
-      sampleValues: parsed[0] ? sampleValuePeek(parsed[0]) : null,
+      sampleKeys:   first ? Object.keys(first).slice(0, 60) : [],
+      sampleValues: first ? sampleValuePeek(first) : null,
+      // Image-element shape probe: string URLs vs {url:...} objects.
+      sampleImage:  first && Array.isArray(first.images) && first.images.length
+        ? (typeof first.images[0] === "string"
+          ? first.images[0].slice(0, 140)
+          : Object.keys(first.images[0] || {}).slice(0, 8))
+        : null,
     },
     ok: status === "SUCCEEDED" || items.length > 0,
   };
@@ -373,21 +396,28 @@ function mapFsboDeal(raw) {
     return null;
   };
   const price      = parseLoose(pick("price", "listPrice", "askingPrice", "listingPrice"));
-  const addrText   = pick("address", "fullAddress", "addressFull", "streetAddress", "location");
+  const addrText   = pick("address1", "address", "fullAddress", "addressFull", "streetAddress", "location");
   const parsedAddr = splitAddress(typeof addrText === "string" ? addrText : "");
   const city  = pick("city") || parsedAddr.city;
   const state = normalizeState(pick("state", "stateCode") || parsedAddr.state);
   if (!price || !city || !state) return null;
 
-  const street = pick("streetAddress", "street") || parsedAddr.street;
+  const street = pick("address1", "streetAddress", "street") || parsedAddr.street;
   const photos = pickPhotos(raw);
   const beds   = int(pick("beds", "bedrooms"));
   // FSBO.com is overwhelmingly single-family; the default keeps
   // isResidential from dropping rows if the run reveals no type field.
   const type   = normalizeType(pick("propertyType", "homeType", "type") || "Single Family");
-  const phone  = pick("phone", "phoneNumber", "contactPhone", "sellerPhone", "ownerPhone");
-  const name   = pick("contactName", "sellerName", "ownerName", "listedBy");
-  const email  = pick("email", "contactEmail");
+  // fsbo.com sends `seller` as the owner's display name; tolerate an
+  // object shape too since the schema is actor-defined.
+  const sellerRaw = raw.seller;
+  const name  = (typeof sellerRaw === "string" && sellerRaw.trim())
+    || (sellerRaw && typeof sellerRaw === "object" && (sellerRaw.name || sellerRaw.fullName))
+    || pick("contactName", "sellerName", "ownerName", "listedBy");
+  const phone = pick("phone", "phoneNumber", "contactPhone", "sellerPhone", "ownerPhone")
+    || (sellerRaw && typeof sellerRaw === "object" ? sellerRaw.phone : null);
+  const email = pick("email", "contactEmail")
+    || (sellerRaw && typeof sellerRaw === "object" ? sellerRaw.email : null);
 
   return {
     id:        "f2-" + hashId(`${street || (typeof addrText === "string" ? addrText : "")}|${city}|${state}`),
@@ -398,12 +428,16 @@ function mapFsboDeal(raw) {
     streetAddress: street,
     city,
     state,
-    zip:       String(pick("zip", "zipCode", "postalCode") || parsedAddr.zip || ""),
+    zip:       String(pick("zip", "zipcode", "zipCode", "postalCode") || parsedAddr.zip || ""),
     lat:       num(pick("latitude", "lat")),
     lng:       num(pick("longitude", "lng", "lon")),
     type,
     beds,
-    baths:     num(pick("baths", "bathrooms")),
+    baths:     (() => {
+      const full = num(pick("baths", "bathrooms", "bathroomsFull"));
+      const half = num(raw.bathroomsHalf);
+      return full || half ? (full || 0) + (half || 0) * 0.5 : null;
+    })(),
     sqft:      int(pick("sqft", "squareFeet", "squareFootage", "livingArea")),
     yearBuilt: int(pick("yearBuilt", "year_built")),
     lotSize:   int(pick("lotSize", "lotSqft", "lot_sqft")),
@@ -422,7 +456,9 @@ function mapFsboDeal(raw) {
       email:   typeof email === "string" ? email.slice(0, 120) : null,
     } : null,
     market:      marketIdForState(state),
-    description: null, // owner-written blurbs are unedited — keep cards clean
+    // Unlike InvestorLift's, fsbo.com blurbs are the owner's own pitch for
+    // their house — real Deal View context. Same 500-char cap as the rest.
+    description: raw.description ? String(raw.description).slice(0, 500) : null,
   };
 }
 
@@ -443,13 +479,13 @@ function pickPhotos(raw) {
 }
 function photoUrl(p) { return typeof p === "string" ? p : (p && (p.url || p.src || p.href)) || null; }
 
-// Strip values to a safe slice (first ~10 fields, truncated strings) for the
+// Strip values to a safe slice (first ~40 fields, truncated strings) for the
 // debug payload — enough to debug schema/coercion without leaking large blobs.
 function sampleValuePeek(obj) {
   const out = {};
   let n = 0;
   for (const k of Object.keys(obj)) {
-    if (n++ >= 12) break;
+    if (n++ >= 40) break;
     const v = obj[k];
     if (v == null) { out[k] = v; continue; }
     if (typeof v === "string") out[k] = v.slice(0, 80);
@@ -619,6 +655,8 @@ function normalizeType(s) {
       || v.includes("multi") || v.includes("2-4") || v.includes("2 to 4"))           return "Multi-Family";
   if (v.includes("town"))                                                            return "Townhouse";
   if (v.includes("condo"))                                                           return "Condo";
+  // fsbo.com-style labels ("House", "Home") — townhouse is already caught.
+  if (v.includes("house") || v === "home" || v.includes("residential"))              return "Single Family";
   // Land, Commercial, Apartment (5+), Manufactured — leave as-is and let
   // isResidential() drop them.
   return s;
@@ -645,50 +683,31 @@ function hashId(s) {
 // page. Sticking to the exclusive InvestorLift Network feed only.
 // -- Source: DealHive 4 (ayk_6789/zillow-new-listings-scraper via Apify) -------
 // Zillow FSBO listings by ZIP — the address-rich, photo-rich off-market
-// source. Schema verified against a live run on 2026-07-16.
+// source. 44 zips outgrow run-sync's 300s ceiling, so it goes through the
+// same start -> poll -> collect runner as FSBO.com.
 async function pullFromZillow(token, maxItems) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "ayk_6789~zillow-new-listings-scraper";
-  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
-  let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        zipCodes:           ZILLOW_ZIPS,
-        listingTypes:       ["fsbo"],
-        maxListingAgeHours: ZILLOW_MAX_AGE_H,
-        maxListingsPerZip:  ZILLOW_PER_ZIP,
-        deduplicateResults: true,
-      }),
-    });
-  } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
-  }
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
-  }
-  let parsed;
-  try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
-  }
-  if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
-  }
-  const sampleKeys = parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [];
+  const {parsed, status, debug} = await apifyRunCollect(
+    token, "ayk_6789~zillow-new-listings-scraper", {
+      zipCodes:           rotateDaily(ZILLOW_ZIPS),
+      listingTypes:       ["fsbo"],
+      maxListingAgeHours: ZILLOW_MAX_AGE_H,
+      maxListingsPerZip:  ZILLOW_PER_ZIP,
+      deduplicateResults: true,
+    }, {memory: 1024, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
+  if (!parsed) return {items: [], debug, ok: false};
+
   const items = parsed.map(mapZillowDeal).filter(Boolean).slice(0, maxItems);
   return {
     items,
     debug: {
-      httpStatus:   res.status,
+      ...debug,
       rawCount:     parsed.length,
       mappedCount:  items.length,
       droppedCount: parsed.length - items.length,
-      sampleKeys,
+      sampleKeys:   parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [],
     },
-    ok: true,
+    ok: status === "SUCCEEDED" || items.length > 0,
   };
 }
 
