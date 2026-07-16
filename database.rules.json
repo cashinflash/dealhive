@@ -7,7 +7,21 @@
       }
     },
     "deals": {
-      ".read":  "auth != null",
+      ".read":  "auth != null && (auth.token.email === 'harut@ymail.com' || root.child('billing').child(auth.uid).child('tier').val() === 'pro' || root.child('users').child(auth.uid).child('data').child('role').val() === 'admin')",
+      ".write": false
+    },
+    "billing": {
+      "$uid": {
+        ".read":  "$uid === auth.uid",
+        ".write": false
+      }
+    },
+    "stripeCustomers": {
+      ".read":  false,
+      ".write": false
+    },
+    "rcUsage": {
+      ".read":  false,
       ".write": false
     }
   }
