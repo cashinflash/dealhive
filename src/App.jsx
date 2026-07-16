@@ -6197,7 +6197,7 @@ function PhotoCarousel({photos = [], fallbackLat, fallbackLng, height = 280, mob
   );
 }
 
-function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile}) {
+function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile, apiLookup, rcAuth}) {
   const c        = classifyDeal(deal);
   const coreTags = c.tags.filter(t => t !== "brrrr");
   const isBrrrr  = c.tags.includes("brrrr");
@@ -6210,6 +6210,8 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
         : coreTags[0] || "buyhold";
   let strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
   if (deal.source === "DealHive 2" && coreTags.length === 0) strat = STRATEGY_LABELS.byowner;
+  // "Find the Owner" — county-records owner lookup, one tap from the feed.
+  const [showOwner, setShowOwner] = useState(false);
 
   // Escape closes; body scroll lock while open.
   useEffect(() => {
@@ -6510,6 +6512,12 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
                 {...btnStyle("secondary","md", {flex:1})}>
                 <I.plus size={13}/> Save to portfolio
               </button>
+              {deal.streetAddress && (
+                <button onClick={() => setShowOwner(true)}
+                  {...btnStyle("secondary","md", {width:"100%"})}>
+                  <I.user size={13}/> Find the Owner
+                </button>
+              )}
             </>
           ) : (
             <button onClick={onUpgrade} {...btnStyle("primary","md", {width:"100%"})}>
@@ -6517,6 +6525,12 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
             </button>
           )}
         </div>
+        {showOwner && (
+          <OwnerLookupSheet
+            deal={{...deal, address: deal.streetAddress || deal.address}}
+            isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+            onUpgrade={onUpgrade} onClose={() => setShowOwner(false)} mobile={mobile} />
+        )}
       </div>
     </div>
   );
@@ -8216,7 +8230,7 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
 }
 
 function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, locked = false,
-                    strategy: strategyProp, onStrategyChange}) {
+                    strategy: strategyProp, onStrategyChange, apiLookup, rcAuth}) {
   const [market, setMarket]     = useState("all");
   // Strategy can be driven from outside (dashboard shortcut cards set it
   // before navigating here); otherwise it's plain local state.
@@ -8482,6 +8496,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
             onAnalyze={onAnalyzeDeal}
             onSave={onSaveDeal}
             onUpgrade={onUpgrade}
+            apiLookup={apiLookup} rcAuth={rcAuth}
             mobile={mobile}
           />
         );
@@ -10455,6 +10470,7 @@ export default function App() {
           <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
             strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
+            apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
             token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
         ) : page==="deal" ? (
           <DealAnalyzer {...dealAnalyzerProps} />
@@ -10533,6 +10549,7 @@ export default function App() {
               <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
                 strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
+                apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
                 token={user.idToken} locked={!isAdmin && (data.tier||"free") !== "pro"} mobile={mobile} />
             ) : page==="deal" ? (
               <DealAnalyzer {...dealAnalyzerProps} />

@@ -377,6 +377,10 @@ async function pullFromFsbo(token, maxItems) {
       mappedCount:  mapped.length,
       keptCount:    items.length,
       droppedCount: parsed.length - mapped.length,
+      // Direct-contact coverage — how many shipped listings carry the
+      // owner's phone/email (drives the tap-to-call experience).
+      withPhone:    items.filter(i => i.seller && i.seller.phone).length,
+      withEmail:    items.filter(i => i.seller && i.seller.email).length,
       sampleKeys:   first ? Object.keys(first).slice(0, 60) : [],
       sampleValues: first ? sampleValuePeek(first) : null,
       // Image-element shape probe: string URLs vs {url:...} objects.
