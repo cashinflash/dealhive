@@ -60,15 +60,17 @@ const RESIDENTIAL_TYPES = new Set([
   "Single Family", "Multi-Family", "Townhouse", "Condo",
 ]);
 
-// Pull caps — volume scales with DEAL_LOCATIONS length:
-//   InvestorLift (Apify):  50 raw / day (nationwide, own cap)
-//   DealHive 2 (realtor):  REALTOR_PER_LOCATION × locations (25 × 31 ≈ 775 raw/day)
-//   DealHive 3 (propwire): 100 raw / day total
-// All override-able via env vars for live tuning without redeploy. Apify spend
-// on the realtor actor scales linearly with locations × per-location cap.
+// Pull caps — env-tunable for live tuning without redeploy:
+//   InvestorLift (Apify):   50 raw / day (nationwide, own cap)
+//   DealHive 2 (FSBO.com):  browser actor — volume bounded by the metro list
+//                           below plus this hard cap
 const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
-const REALTOR_PER_LOCATION = parseInt(process.env.REALTOR_PER_LOCATION || "25", 10);
-const PROPWIRE_MAX      = parseInt(process.env.PROPWIRE_MAX      || "100", 10);
+const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
+// FSBO.com drives a real browser: the run gets a server-side kill switch
+// (timeout= on the run start) and we poll its status up to FSBO_WAIT_MS
+// before the pipeline moves on without it.
+const FSBO_RUN_TIMEOUT_S = 400;
+const FSBO_WAIT_MS       = 420 * 1000;
 // DealHive 4 (Zillow FSBO by ZIP): pay-per-result actor (~$2.70/1k), so
 // spend ≈ zips × per-zip cap. 14-day window keeps the feed stocked even
 // though we rebuild it nightly.
@@ -76,80 +78,25 @@ const ZILLOW_MAX        = parseInt(process.env.ZILLOW_MAX        || "300", 10);
 const ZILLOW_PER_ZIP    = parseInt(process.env.ZILLOW_PER_ZIP    || "15",  10);
 const ZILLOW_MAX_AGE_H  = parseInt(process.env.ZILLOW_MAX_AGE_H  || "336", 10);
 
-// Locations the Realtor/Propwire actors scan (they require explicit
-// "City, State" strings). Nationwide-leaning coverage of the strongest
-// cash-flow metros; volume (and Apify spend) scales linearly with this
-// list × REALTOR_PER_LOCATION, so tune with the env overrides.
-const DEAL_LOCATIONS = (process.env.DEAL_LOCATIONS || [
-  "Cleveland, OH",
-  "Columbus, OH",
-  "Toledo, OH",
-  "Dayton, OH",
-  "Detroit, MI",
-  "Flint, MI",
+// Metros the FSBO.com actor searches ("City, ST", 100-mile radius each) — a
+// dozen well-spread hubs blanket the same cash-flow geography the old
+// 31-city list did. Browser-scraping cost scales with this list, and it's
+// env-tunable for live adjustment.
+const FSBO_LOCATIONS = (process.env.FSBO_LOCATIONS || [
+  "Cleveland, OH",     // + Akron / Canton / Youngstown
+  "Columbus, OH",      // + Dayton / Cincinnati
+  "Detroit, MI",       // + Flint / Toledo
   "Memphis, TN",
-  "Chattanooga, TN",
-  "Birmingham, AL",
-  "Huntsville, AL",
-  "Montgomery, AL",
+  "Birmingham, AL",    // + Huntsville
   "Indianapolis, IN",
-  "Fort Wayne, IN",
   "Kansas City, MO",
   "St. Louis, MO",
   "Pittsburgh, PA",
-  "Philadelphia, PA",
+  "Philadelphia, PA",  // + Baltimore
   "Milwaukee, WI",
-  "Baltimore, MD",
-  "Jacksonville, FL",
-  "Tampa, FL",
-  "Oklahoma City, OK",
-  "Tulsa, OK",
-  "Louisville, KY",
-  "Little Rock, AR",
-  "Greensboro, NC",
-  "Fayetteville, NC",
-  "Augusta, GA",
-  "Macon, GA",
-  "San Antonio, TX",
-  "Austin, TX",
+  "Tampa, FL",         // + Orlando / St. Pete
+  "San Antonio, TX",   // + Austin
 ].join("|")).split("|").map(s => s.trim()).filter(Boolean);
-
-// Investor-grade ZIPs for the Zillow FSBO actor — it's ZIP-driven, unlike
-// the city-driven actors above. Two-ish zips per cash-flow metro; spend
-// scales with this list × ZILLOW_PER_ZIP.
-const ZILLOW_ZIPS = (process.env.ZILLOW_ZIPS || [
-  "44105","44110","44120",      // Cleveland
-  "43211","43207",              // Columbus
-  "43605","43608",              // Toledo
-  "45402","45417",              // Dayton
-  "48205","48227","48224",      // Detroit
-  "48503",                      // Flint
-  "38109","38127","38118",      // Memphis
-  "37411",                      // Chattanooga
-  "35208","35218",              // Birmingham
-  "35805",                      // Huntsville
-  "36108",                      // Montgomery
-  "46201","46218",              // Indianapolis
-  "46806",                      // Fort Wayne
-  "64130","64128",              // Kansas City
-  "63115","63120",              // St. Louis
-  "15210","15221",              // Pittsburgh
-  "19132","19140",              // Philadelphia
-  "53206","53216",              // Milwaukee
-  "21215","21223",              // Baltimore
-  "32209",                      // Jacksonville
-  "33612",                      // Tampa
-  "73111",                      // Oklahoma City
-  "74106",                      // Tulsa
-  "40211",                      // Louisville
-  "72204",                      // Little Rock
-  "27405",                      // Greensboro
-  "28301",                      // Fayetteville
-  "30901",                      // Augusta
-  "31206",                      // Macon
-  "78207","78228",              // San Antonio
-  "78744",                      // Austin
-].join(",")).split(",").map(s => s.trim()).filter(Boolean);
 
 // Effective property-tax rates by state (annual % of value). Used by
 // classifyDeal — the previous code applied Ohio's 2.33% to every deal, which
@@ -305,217 +252,148 @@ function mapApifyDeal(raw) {
   };
 }
 
-// -- Source: DealHive 2 (coder_luffy/realtor-scraper via Apify) ----------------
-// Realtor.com scrapers commonly take a list of "City, State" search terms or
-// search URLs. We send `locations` as the first guess; the debug payload
-// (sampleKeys + sampleValues + httpStatus body) on the first run tells us
-// the actual input shape so we can refine.
-async function pullFromRealtor(token, locations, maxPerLocation) {
+// -- Source: DealHive 2 (dainty_screw/real-estate-fsbo-com-data-scraper) ------
+// FSBO.com by-owner listings around our target metros — thin inventory per
+// city, but sellers publish their own contact info, which is the whole draw.
+// Browser-based actor (headless Chromium + residential proxies), so unlike
+// the API-style sources it can outlive run-sync's 300s ceiling: start the
+// run, poll its status, then fetch the dataset. Input mirrors the actor's
+// published JSON example.
+async function pullFromFsbo(token, maxItems) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "coder_luffy~realtor-scraper";
-  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
-  let res;
+  const actor = "dainty_screw~real-estate-fsbo-com-data-scraper";
+  let run;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        locations,
-        maxItems:                 locations.length * maxPerLocation,
-        max_results_per_location: maxPerLocation,
-      }),
-    });
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${actor}/runs?token=${token}&memory=4096&timeout=${FSBO_RUN_TIMEOUT_S}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          searchQueries:       FSBO_LOCATIONS,
+          distanceMiles:       100,
+          headless:            true,
+          stopOnDuplicatePage: true,
+          debugLogPages:       false,
+          proxyConfiguration:  {apifyProxyGroups: ["RESIDENTIAL"]},
+        }),
+      });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.data || !body.data.id) {
+      return {items: [], debug: {httpStatus: res.status, body: JSON.stringify(body).slice(0, 400)}, ok: false};
+    }
+    run = body.data;
   } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
+    return {items: [], debug: {error: `run start threw: ${e.message}`}, ok: false};
   }
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
+
+  // Poll to a terminal state or our own deadline, whichever comes first.
+  const deadline = Date.now() + FSBO_WAIT_MS;
+  let status = run.status;
+  while (!["SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"].includes(status)) {
+    if (Date.now() > deadline) break;
+    await new Promise(resolve => setTimeout(resolve, 10 * 1000));
+    try {
+      const r = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+      const b = await r.json();
+      status = (b.data && b.data.status) || status;
+    } catch { /* transient poll failure — keep waiting */ }
   }
-  let parsed;
-  try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
-  }
-  if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
-  }
-  const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
-  const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
-  const items = parsed.map(mapRealtorDeal).filter(Boolean);
+
+  // A TIMED-OUT run still leaves a partial dataset — use whatever landed.
+  let parsed = [];
+  try {
+    const r = await fetch(
+      `https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items?token=${token}&clean=true&format=json`);
+    if (r.ok) parsed = await r.json();
+  } catch { /* fall through with empty */ }
+  if (!Array.isArray(parsed)) parsed = [];
+
+  const items = parsed.map(mapFsboDeal).filter(Boolean).slice(0, maxItems);
   return {
     items,
     debug: {
-      httpStatus:   res.status,
+      runId:        run.id,
+      runStatus:    status,
       rawCount:     parsed.length,
       mappedCount:  items.length,
       droppedCount: parsed.length - items.length,
-      sampleKeys, sampleValues,
+      sampleKeys:   parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [],
+      sampleValues: parsed[0] ? sampleValuePeek(parsed[0]) : null,
     },
-    ok: true,
+    ok: status === "SUCCEEDED" || items.length > 0,
   };
 }
 
-function mapRealtorDeal(raw) {
-  // Realtor.com MLS feeds usually expose list_price, address, city/state/zip,
-  // beds/baths, sqft, year_built, photos[], listing/MLS IDs. Defensive over
-  // common field-name variants — first response will tell us what's actually
-  // there so we can lock the mapper down.
-  const price = parseLoose(raw.list_price || raw.listPrice || raw.price || raw.askingPrice);
-  const city  = raw.city || "";
-  const state = normalizeState(raw.state || raw.state_code || raw.state_abbreviation);
-  if (!price || !city) return null;
+// FSBO.com's detail schema gets confirmed by the first live run (sampleKeys/
+// sampleValues in the debug payload). Until then this mapper probes the
+// common field spellings and drops anything it can't price and place.
+function mapFsboDeal(raw) {
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = raw[k];
+      if (v != null && v !== "") return v;
+    }
+    return null;
+  };
+  const price      = parseLoose(pick("price", "listPrice", "askingPrice", "listingPrice"));
+  const addrText   = pick("address", "fullAddress", "addressFull", "streetAddress", "location");
+  const parsedAddr = splitAddress(typeof addrText === "string" ? addrText : "");
+  const city  = pick("city") || parsedAddr.city;
+  const state = normalizeState(pick("state", "stateCode") || parsedAddr.state);
+  if (!price || !city || !state) return null;
 
+  const street = pick("streetAddress", "street") || parsedAddr.street;
   const photos = pickPhotos(raw);
-  const beds   = int(raw.bedrooms || raw.beds);
-  const type   = normalizeType(raw.property_type || raw.propertyType || raw.type);
-  const streetAddress = raw.address || raw.street_address || raw.formatted_address || raw.line || null;
+  const beds   = int(pick("beds", "bedrooms"));
+  // FSBO.com is overwhelmingly single-family; the default keeps
+  // isResidential from dropping rows if the run reveals no type field.
+  const type   = normalizeType(pick("propertyType", "homeType", "type") || "Single Family");
+  const phone  = pick("phone", "phoneNumber", "contactPhone", "sellerPhone", "ownerPhone");
+  const name   = pick("contactName", "sellerName", "ownerName", "listedBy");
+  const email  = pick("email", "contactEmail");
 
   return {
-    id:        "r2-" + (raw.listing_id || raw.mls_id || raw.id || raw.property_id || hashId(`${streetAddress || ""}|${city}|${state}`)),
-    source:    "DealHive 2", // coder_luffy/realtor-scraper via Apify
+    id:        "f2-" + hashId(`${street || (typeof addrText === "string" ? addrText : "")}|${city}|${state}`),
+    source:    "DealHive 2", // FSBO.com
     sourceUrl: null, // never link out
     sourcedAt: today(),
     address:       generateDealTitle({beds, type, city, state}),
-    streetAddress,
+    streetAddress: street,
     city,
     state,
-    zip:       String(raw.zip || raw.zipcode || raw.zip_code || raw.postal_code || ""),
-    lat:       num(raw.latitude  || raw.lat),
-    lng:       num(raw.longitude || raw.lng || raw.lon),
+    zip:       String(pick("zip", "zipCode", "postalCode") || parsedAddr.zip || ""),
+    lat:       num(pick("latitude", "lat")),
+    lng:       num(pick("longitude", "lng", "lon")),
     type,
     beds,
-    baths:     num(raw.bathrooms || raw.baths),
-    sqft:      int(raw.sqft || raw.square_footage || raw.livingArea || raw.living_area || raw.building_size),
-    yearBuilt: int(raw.year_built || raw.yearBuilt),
+    baths:     num(pick("baths", "bathrooms")),
+    sqft:      int(pick("sqft", "squareFeet", "squareFootage", "livingArea")),
+    yearBuilt: int(pick("yearBuilt", "year_built")),
+    lotSize:   int(pick("lotSize", "lotSqft", "lot_sqft")),
     price,
-    repair:    0, // retail MLS listings; classifyDeal applies the 15%-of-ARV default
-    rent:      int(raw.rent_estimate || raw.estimated_rent),
-    arv:       int(raw.arv || raw.estimated_value || raw.zestimate),
+    repair:    0, // owner listings; classifyDeal applies its default rehab
+    rent:      0, // classifyDeal's 1% rule fallback scores buy & hold
+    arv:       0, // classifyDeal falls back to price × 1.30
     photo:     photos[0] || null,
     photos,
-    seller: {
-      // Realtor.com listings often carry the listing agent + brokerage. Surface
-      // them for Pro members if present.
-      name:    raw.agent_name   || raw.listing_agent || raw.agentName    || null,
-      company: raw.brokerage    || raw.broker_name   || raw.brokerName   || raw.office_name || null,
-      phone:   raw.agent_phone  || raw.agentPhone    || raw.office_phone || null,
-      email:   raw.agent_email  || raw.agentEmail    || null,
-    },
-    market:      marketIdForState(state),
-    description: raw.description ? String(raw.description).slice(0, 500) : null,
-  };
-}
-
-// -- Source: DealHive 3 (crawlerbros/propwire-leads-scraper via Apify) --------
-async function pullFromPropwire(token, locations, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "crawlerbros~propwire-leads-scraper";
-  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
-  let res;
-  try {
-    // Best-guess input — adjust once we see the actor's schema on first run.
-    res = await fetch(url, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({locations, maxItems}),
-    });
-  } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
-  }
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
-  }
-  let parsed;
-  try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
-  }
-  if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
-  }
-  const sampleKeys   = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
-  const sampleValues = parsed[0] ? sampleValuePeek(parsed[0]) : null;
-  const items = parsed.map(mapPropwireDeal).filter(Boolean);
-  return {
-    items,
-    debug: {
-      httpStatus:   res.status,
-      rawCount:     parsed.length,
-      mappedCount:  items.length,
-      droppedCount: parsed.length - items.length,
-      sampleKeys, sampleValues,
-    },
-    ok: true,
-  };
-}
-
-function mapPropwireDeal(raw) {
-  // propwire surfaces both MLS-listed and pure off-market leads. For the deal
-  // feed we need a price to compute spreads, so we prefer the MLS list price,
-  // fall back to the estimated value when the property isn't actively listed.
-  const price = parseLoose(raw.mlsListPrice || raw.estimatedValue || raw.price);
-  const city  = raw.city || "";
-  const state = normalizeState(raw.state || raw.state_code);
-  if (!price || !city) return null;
-
-  const photos = pickPhotos(raw);
-  const beds   = int(raw.bedrooms);
-  const type   = normalizeType(raw.propertyType || raw.property_type);
-
-  // propwire gives us an actual street address — surface it in description
-  // for Pro members. Keep `address` as the consistent generated title so all
-  // sources render uniformly on the card.
-  const ownerBlurb = [
-    raw.ownerName     && `Owner: ${raw.ownerName}`,
-    raw.yearsOfOwnership && `Owned ${raw.yearsOfOwnership}+ yrs`,
-    raw.estimatedEquityPercentage && `${Math.round(raw.estimatedEquityPercentage)}% equity`,
-    raw.daysOnMarket  > 0 && `${raw.daysOnMarket} DOM`,
-  ].filter(Boolean).join(" · ");
-  const desc = [
-    raw.address && `${raw.address}, ${city}${state ? `, ${state}` : ""}${raw.zip ? ` ${raw.zip}` : ""}`,
-    ownerBlurb,
-    raw.description,
-  ].filter(Boolean).join("\n\n").slice(0, 800);
-
-  return {
-    id:        "s3-" + (raw.id || hashId(`${raw.address || ""}|${city}|${state}`)),
-    source:    "DealHive 3", // propwire via Apify (crawlerbros~propwire-leads-scraper)
-    sourceUrl: null,
-    sourcedAt: today(),
-    // `address` is the clean display title; `streetAddress` is the real
-    // physical address used to prefill the Deal Analyzer.
-    address:       generateDealTitle({beds, type, city, state}),
-    streetAddress: raw.address || null,
-    city,
-    state,
-    zip:       String(raw.zip || ""),
-    lat:       num(raw.latitude),
-    lng:       num(raw.longitude),
-    type,
-    beds,
-    baths:     num(raw.bathrooms),
-    sqft:      int(raw.livingAreaSf || raw.buildingAreaSf),
-    yearBuilt: int(raw.yearBuilt),
-    price,
-    repair:    0, // propwire doesn't publish a rehab estimate; classifyDeal defaults
-    rent:      0, // 1% rule fallback in classifyDeal handles buyhold scoring
-    // estimatedValue is propwire's current-value AVM — used as ARV proxy when
-    // available; classifyDeal falls back to price × 1.30 if it's missing.
-    arv:       int(raw.estimatedValue),
-    photo:     photos[0] || null,
-    photos,
-    seller: {
-      // The "owner" on propwire IS the current homeowner — Pro users can
-      // cold-call/direct-mail them. No phone/email exposed by this actor.
-      name:    raw.ownerName || null,
+    // By-owner: the seller IS the owner, and FSBO.com sellers publish their
+    // own contact — the reason this source earns its slot.
+    seller: (phone || name || email) ? {
+      name:    typeof name === "string" ? name.slice(0, 80) : null,
       company: null,
-      phone:   null,
-      email:   null,
-    },
+      phone:   phone != null ? String(phone).slice(0, 30) : null,
+      email:   typeof email === "string" ? email.slice(0, 120) : null,
+    } : null,
     market:      marketIdForState(state),
-    description: desc || null,
-    daysListed:  int(raw.daysOnMarket),
+    description: null, // owner-written blurbs are unedited — keep cards clean
   };
+}
+
+// "123 Main St, Tampa, FL 33604" / "Tampa, FL" → address parts.
+function splitAddress(s) {
+  const m = String(s).match(/^\s*(?:(.*?),\s*)?([A-Za-z .'-]+),\s*([A-Za-z]{2})\b\s*(\d{5})?/);
+  if (!m) return {street: null, city: null, state: null, zip: null};
+  return {street: m[1] || null, city: m[2] ? m[2].trim() : null, state: m[3] || null, zip: m[4] || null};
 }
 
 // Shared photo-extraction across the new sources (schemas vary; try common shapes).
@@ -833,18 +711,18 @@ function mapZillowDeal(raw) {
 }
 
 async function runPipeline(apifyKey, _rentcastKey) {
-  const sources = {investorlift: 0, dealhive2: 0, dealhive3: 0, dealhive4: 0};
-  const errors  = {investorlift: false, dealhive2: false, dealhive3: false, dealhive4: false};
+  const sources = {investorlift: 0, dealhive2: 0, dealhive4: 0};
+  const errors  = {investorlift: false, dealhive2: false, dealhive4: false};
   const debug   = {};
   const raw     = [];
 
-  // Pulls run in parallel. Each Apify actor takes 1-3 minutes, so sequential
-  // would push the total runtime past the timeout safe Safari can hold the
-  // /pullDealsNow URL open for. 4 parallel × 1GB memory each = 4GB, well
-  // under Apify's 8GB account ceiling.
+  // Pulls run in parallel. The API-style actors take 1-3 minutes; FSBO.com
+  // drives a real browser and polls up to ~7, all inside this function's
+  // 540s ceiling. Combined actor memory (1 + 4 + 1 GB) stays well under
+  // Apify's 8GB account ceiling.
   if (!apifyKey) {
-    errors.investorlift = errors.dealhive2 = errors.dealhive3 = errors.dealhive4 = true;
-    debug.apify = debug.realtor = debug.propwire = debug.zillow = {error: "APIFY_API_KEY not set"};
+    errors.investorlift = errors.dealhive2 = errors.dealhive4 = true;
+    debug.apify = debug.fsbo = debug.zillow = {error: "APIFY_API_KEY not set"};
   } else {
     const sourceTasks = [
       {
@@ -855,15 +733,9 @@ async function runPipeline(apifyKey, _rentcastKey) {
       },
       {
         name:     "dealhive2",
-        debugKey: "realtor",
-        label:    "Realtor (DealHive 2)",
-        run:      () => pullFromRealtor(apifyKey, DEAL_LOCATIONS, REALTOR_PER_LOCATION),
-      },
-      {
-        name:     "dealhive3",
-        debugKey: "propwire",
-        label:    "propwire (DealHive 3)",
-        run:      () => pullFromPropwire(apifyKey, DEAL_LOCATIONS, PROPWIRE_MAX),
+        debugKey: "fsbo",
+        label:    "FSBO.com (DealHive 2)",
+        run:      () => pullFromFsbo(apifyKey, FSBO_MAX),
       },
       {
         name:     "dealhive4",
