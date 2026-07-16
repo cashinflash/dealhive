@@ -848,16 +848,24 @@ async function runPipeline(apifyKey, _rentcastKey) {
     return {written: 0, raw: 0, sources, debug, skipped: true};
   }
 
+  // `sources` counts RAW pulls; written-per-source is what actually shipped
+  // to the page — the number to check when a source seems missing.
+  const writtenBySource = {};
+  deduped.forEach(d => {
+    const k = d.source || "unknown";
+    writtenBySource[k] = (writtenBySource[k] || 0) + 1;
+  });
   const itemsMap = Object.fromEntries(deduped.map(d => [d.id, d]));
   await admin.database().ref("/deals").set({
     updatedAt: Date.now(),
     count:     deduped.length,
     sources,
+    writtenBySource,
     items:     itemsMap,
   });
 
-  logger.info(`✓ Wrote ${deduped.length} deals (raw ${raw.length})`, sources);
-  return {written: deduped.length, raw: raw.length, sources, debug, skipped: false};
+  logger.info(`✓ Wrote ${deduped.length} deals (raw ${raw.length})`, {sources, writtenBySource});
+  return {written: deduped.length, raw: raw.length, sources, writtenBySource, debug, skipped: false};
 }
 
 // -- Triggers -----------------------------------------------------------------
