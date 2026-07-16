@@ -78,6 +78,10 @@ const LONG_RUN_WAIT_MS   = 420 * 1000;
 const ZILLOW_MAX        = parseInt(process.env.ZILLOW_MAX        || "300", 10);
 const ZILLOW_PER_ZIP    = parseInt(process.env.ZILLOW_PER_ZIP    || "15",  10);
 const ZILLOW_MAX_AGE_H  = parseInt(process.env.ZILLOW_MAX_AGE_H  || "336", 10);
+// The actor can't work all ~44 zips inside one 400s run (a full-list night
+// yielded 0 items), so each night takes a 12-zip bite of the daily-rotated
+// list — the whole list gets swept every ~4 nights.
+const ZILLOW_ZIPS_PER_RUN = parseInt(process.env.ZILLOW_ZIPS_PER_RUN || "12", 10);
 
 // Metros the FSBO.com actor searches ("City, ST", 100-mile radius each) — a
 // dozen well-spread hubs blanket the same cash-flow geography the old
@@ -362,15 +366,17 @@ async function pullFromFsbo(token, maxItems) {
     }, {memory: 4096, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
   if (!parsed) return {items: [], debug, ok: false};
 
-  const items = parsed.map(mapFsboDeal).filter(Boolean).slice(0, maxItems);
-  const first = parsed[0];
+  const mapped = parsed.map(mapFsboDeal).filter(Boolean);
+  const items  = mapped.slice(0, maxItems);
+  const first  = parsed[0];
   return {
     items,
     debug: {
       ...debug,
       rawCount:     parsed.length,
-      mappedCount:  items.length,
-      droppedCount: parsed.length - items.length,
+      mappedCount:  mapped.length,
+      keptCount:    items.length,
+      droppedCount: parsed.length - mapped.length,
       sampleKeys:   first ? Object.keys(first).slice(0, 60) : [],
       sampleValues: first ? sampleValuePeek(first) : null,
       // Image-element shape probe: string URLs vs {url:...} objects.
@@ -689,7 +695,7 @@ async function pullFromZillow(token, maxItems) {
   if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
   const {parsed, status, debug} = await apifyRunCollect(
     token, "ayk_6789~zillow-new-listings-scraper", {
-      zipCodes:           rotateDaily(ZILLOW_ZIPS),
+      zipCodes:           rotateDaily(ZILLOW_ZIPS).slice(0, ZILLOW_ZIPS_PER_RUN),
       listingTypes:       ["fsbo"],
       maxListingAgeHours: ZILLOW_MAX_AGE_H,
       maxListingsPerZip:  ZILLOW_PER_ZIP,
@@ -697,14 +703,16 @@ async function pullFromZillow(token, maxItems) {
     }, {memory: 1024, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
   if (!parsed) return {items: [], debug, ok: false};
 
-  const items = parsed.map(mapZillowDeal).filter(Boolean).slice(0, maxItems);
+  const mapped = parsed.map(mapZillowDeal).filter(Boolean);
+  const items  = mapped.slice(0, maxItems);
   return {
     items,
     debug: {
       ...debug,
       rawCount:     parsed.length,
-      mappedCount:  items.length,
-      droppedCount: parsed.length - items.length,
+      mappedCount:  mapped.length,
+      keptCount:    items.length,
+      droppedCount: parsed.length - mapped.length,
       sampleKeys:   parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [],
     },
     ok: status === "SUCCEEDED" || items.length > 0,
