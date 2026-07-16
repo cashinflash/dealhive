@@ -8287,15 +8287,29 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
     return true;
   });
 
-  // Rank by best score, so the "loudest" deals lead.
+  // Rank by best score, so the "loudest" deals lead…
   filtered.sort((a, b) => {
     const aBest = Math.max(a.c.buyHoldScore, a.c.flipScore);
     const bBest = Math.max(b.c.buyHoldScore, b.c.flipScore);
     return bBest - aBest;
   });
+  // …then round-robin the sources. Wholesale deals carry real ARV spreads
+  // and out-score by-owner listings' conservative fallback estimates every
+  // time, so a pure score sort buries entire sources below the fold.
+  const queues = [];
+  const queueBySource = new Map();
+  filtered.forEach(x => {
+    const k = x.d.source || "other";
+    if (!queueBySource.has(k)) { queueBySource.set(k, []); queues.push(queueBySource.get(k)); }
+    queueBySource.get(k).push(x);
+  });
+  const mixed = [];
+  for (let i = 0; queues.some(q => i < q.length); i++) {
+    for (const q of queues) if (i < q.length) mixed.push(q[i]);
+  }
 
-  const visible = isPro ? filtered : filtered.slice(0, FREE_PREVIEW_COUNT);
-  const lockedCount = filtered.length - visible.length;
+  const visible = isPro ? mixed : mixed.slice(0, FREE_PREVIEW_COUNT);
+  const lockedCount = mixed.length - visible.length;
 
   if (locked) return <DealsLockedPreview mobile={mobile} isWide={isWide} onUpgrade={onUpgrade} />;
 
