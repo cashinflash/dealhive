@@ -5772,6 +5772,9 @@ const STRATEGY_LABELS = {
   brrrr:   {label:"BRRRR",        color:C.blueDark,  bg:C.blueSubtle,  border:C.blueBorder,  dot:C.blue},
   wholesale:{label:"Wholesale",   color:C.sidebar,   bg:C.bgSubtle,    border:C.borderHover, dot:C.sidebarHover},
   multi:   {label:"Multi-strategy", color:C.purpleDark, bg:C.purpleSubtle, border:C.purpleBorder, dot:C.purple},
+  // FSBO.com inventory lane — listed for the address + seller contact, not
+  // because the fallback math proved a strategy.
+  byowner: {label:"By Owner",     color:C.sidebar,   bg:C.bgSubtle,    border:C.borderHover, dot:C.amber},
 };
 
 // Wholesale assignment deals come from the InvestorLift pull ("DealHive 1")
@@ -5888,13 +5891,19 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
                     analyzeLabel = "Analyze", hideSource = false,
                     savedScenario = null, savedFinancing = null, showAddress = false}) {
-  const {c, isBrrrr, strat, heroNumber, secondaryMetrics} =
+  const {c, isBrrrr, strat: stratAuto, heroNumber, secondaryMetrics} =
     dealHeroMetrics(deal, savedScenario, savedFinancing);
+  // FSBO.com cards are the "By Owner" inventory lane: they render even when
+  // the fallback math proves no strategy, chipped honestly instead of with
+  // a strategy label they didn't earn.
+  const byOwner = deal.source === "DealHive 2";
+  const strat = (byOwner && !savedScenario && c.tags.filter(t => t !== "brrrr").length === 0)
+    ? STRATEGY_LABELS.byowner : stratAuto;
   // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
   // there — but user-filed watchlist deals (analyzer saves, manual entries)
   // can miss both pro forma gates. If the user chose a scenario at save time,
   // always render the card their way; only auto-classified feed cards bail.
-  if (c.tags.length === 0 && !savedScenario) return null;
+  if (c.tags.length === 0 && !savedScenario && !byOwner) return null;
 
   const photo = (Array.isArray(deal.userPhotos) && deal.userPhotos[0])
     || deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
@@ -6199,7 +6208,8 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
       : coreTags.includes("flip") && c.flipScore > c.buyHoldScore
         ? "flip"
         : coreTags[0] || "buyhold";
-  const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
+  let strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
+  if (deal.source === "DealHive 2" && coreTags.length === 0) strat = STRATEGY_LABELS.byowner;
 
   // Escape closes; body scroll lock while open.
   useEffect(() => {
@@ -8251,11 +8261,21 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
   const sourceDeals = liveItems.length > 0 ? liveItems : SAMPLE_DEALS;
   const usingLive   = liveItems.length > 0;
 
-  // Filter through classification + user filters.
+  // Filter through classification + user filters. The pipeline stamps
+  // tags/scores at ingest (the ONE brain) — prefer the stamp so local math
+  // drift can never silently hide pipeline-approved deals. SAMPLE_DEALS and
+  // pre-stamp feeds fall back to local scoring.
   const classified = sourceDeals
     .filter(isResidential)
-    .map(d => ({d, c: classifyDeal(d)}))
-    .filter(({c}) => c.tags.length > 0);
+    .map(d => {
+      const c = classifyDeal(d);
+      return {d, c: Array.isArray(d.tags) && d.tags.length
+        ? {...c, tags: d.tags,
+           buyHoldScore: d.buyHoldScore ?? c.buyHoldScore,
+           flipScore:    d.flipScore    ?? c.flipScore}
+        : c};
+    })
+    .filter(({d, c}) => c.tags.length > 0 || d.source === "DealHive 2");
 
   // Build the market dropdown options from the actual data — InvestorLift
   // goes nationwide, so hardcoding 6 markets would hide most of the feed.
