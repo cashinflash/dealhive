@@ -1037,6 +1037,30 @@ async function verifyUser(req) {
 
 const billingRef = (uid) => admin.database().ref(`billing/${uid}`);
 
+// The true tier straight from Stripe: any active/trialing/past_due
+// subscription on the customer means Pro. The webhook uses this so a stale
+// event about an old (cancelled) subscription can never overwrite a newer
+// live one, and syncBilling exposes it for client self-healing.
+async function reconcileCustomer(key, uid, customerId) {
+  const subs = await stripeReq(key, "GET", `/v1/subscriptions?customer=${customerId}&status=all&limit=20`);
+  const list = Array.isArray(subs.data) ? subs.data : [];
+  const live = list.filter(s => ["active", "trialing", "past_due"].includes(s.status));
+  const best = live[0] || list[0] || null;
+  const periodEnd = best ? (best.current_period_end ||
+    (best.items && best.items.data && best.items.data[0] &&
+     best.items.data[0].current_period_end) || 0) : 0;
+  const record = {
+    tier: live.length > 0 ? "pro" : "free",
+    status: best ? best.status : "none",
+    cancelAtPeriodEnd: !!(best && best.cancel_at_period_end),
+    currentPeriodEnd: periodEnd * 1000,
+    customerId,
+    updatedAt: Date.now(),
+  };
+  await billingRef(uid).update(record);
+  return record;
+}
+
 exports.createCheckoutSession = onRequest(
   {secrets: [STRIPE_SECRET_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
   async (req, res) => {
@@ -1097,6 +1121,25 @@ exports.createPortalSession = onRequest(
     }
   });
 
+// Token-gated reconcile — the app calls this at sign-in when a customer's
+// record says free, so any webhook race self-heals on the next load.
+exports.syncBilling = onRequest(
+  {secrets: [STRIPE_SECRET_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+      const user = await verifyUser(req);
+      if (!user) { res.status(401).json({error: "Sign in first."}); return; }
+      const customerId = (await billingRef(user.uid).child("customerId").get()).val();
+      if (!customerId) { res.json({tier: "free"}); return; }
+      const rec = await reconcileCustomer(STRIPE_SECRET_KEY.value(), user.uid, customerId);
+      res.json(rec);
+    } catch (e) {
+      logger.error("syncBilling", {error: e.message});
+      res.status(500).json({error: "Could not sync billing."});
+    }
+  });
+
 exports.stripeWebhook = onRequest(
   {secrets: [STRIPE_SECRET_KEY], region: "us-central1", timeoutSeconds: 30},
   async (req, res) => {
@@ -1130,22 +1173,10 @@ exports.stripeWebhook = onRequest(
                  event.type === "customer.subscription.deleted") {
         const uid = await uidFor(obj.customer, obj.metadata && obj.metadata.firebaseUid);
         if (uid) {
-          // past_due keeps Pro while Stripe retries the card; deleted/unpaid
-          // drops to free. Newer API versions moved current_period_end onto
-          // the subscription items — read both shapes.
-          const active = event.type !== "customer.subscription.deleted" &&
-            ["active", "trialing", "past_due"].includes(obj.status);
-          const periodEnd = obj.current_period_end ||
-            (obj.items && obj.items.data && obj.items.data[0] &&
-             obj.items.data[0].current_period_end) || 0;
-          await billingRef(uid).update({
-            tier: active ? "pro" : "free",
-            status: obj.status,
-            cancelAtPeriodEnd: !!obj.cancel_at_period_end,
-            currentPeriodEnd: periodEnd * 1000,
-            updatedAt: Date.now(),
-          });
-          logger.info("stripe: subscription sync", {uid, status: obj.status, active});
+          // Judge the CUSTOMER, not this one event: list every subscription
+          // and grant Pro if any is live. Immune to event-ordering races.
+          const rec = await reconcileCustomer(key, uid, obj.customer);
+          logger.info("stripe: subscription reconciled", {uid, tier: rec.tier, status: rec.status});
         }
       }
       res.status(200).send("ok");

@@ -9765,14 +9765,27 @@ function MobileHeader({page, onBack, toast, onAddProperty}) {
           )}
         </>
       )}
-      {toast && (
-        <span style={{display:"inline-flex", alignItems:"center", gap:5, flexShrink:0,
-          fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
-          background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-          padding:"4px 9px", borderRadius:C.rFull}}>
-          <I.check size={11} stroke={2.5}/>{toast}
-        </span>
-      )}
+    </div>
+  );
+}
+
+// Floating confirmation toast — top-center, wraps instead of truncating,
+// styled like the rest of the portal instead of squeezing into the header.
+function Toast({msg}) {
+  if (!msg) return null;
+  return (
+    <div style={{position:"fixed", top:"calc(env(safe-area-inset-top, 0px) + 14px)", left:"50%",
+      transform:"translateX(-50%)", zIndex:900, maxWidth:"min(92vw, 480px)",
+      display:"flex", alignItems:"flex-start", gap:9,
+      background:C.sidebar, color:"#fff", borderRadius:14,
+      padding:"12px 18px", boxShadow:"0 12px 32px -8px rgba(9,9,11,.5)",
+      fontFamily:F, fontSize:13.5, fontWeight:600, lineHeight:1.45,
+      animation:"dhToastIn .28s cubic-bezier(.21,1.02,.73,1)"}}>
+      <span style={{width:20, height:20, borderRadius:"50%", background:C.green, color:"#fff",
+        display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1}}>
+        <I.check size={11} stroke={3}/>
+      </span>
+      <span>{msg}</span>
     </div>
   );
 }
@@ -9791,18 +9804,10 @@ function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
       <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
         {titles[page]||"DealHive"}
       </div>
-      {page === "dashboard" && onAddProperty && !toast && (
+      {page === "dashboard" && onAddProperty && (
         <button onClick={onAddProperty} {...btnStyle("primary","sm")}>
           <I.plus size={13} stroke={2.4}/> Add Property
         </button>
-      )}
-      {toast && (
-        <span style={{display:"inline-flex", alignItems:"center", gap:6,
-          fontSize:12, color:C.greenDark, fontWeight:600, fontFamily:F,
-          background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-          padding:"5px 11px", borderRadius:C.rFull}}>
-          <I.check size={12} stroke={2.5}/>{toast}
-        </span>
       )}
     </div>
   );
@@ -9971,6 +9976,7 @@ export default function App() {
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
       @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
       @keyframes dhHexBeat{0%,100%{transform:scale(.72);opacity:.4}50%{transform:scale(1.12);opacity:1}}
+      @keyframes dhToastIn{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}
       select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:38px!important;}
       input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;background:${C.bgSubtle};outline:none;border:1px solid ${C.border};}
       input[type=range]:focus{box-shadow:none!important;border-color:${C.borderHover}!important;}
@@ -10063,6 +10069,22 @@ export default function App() {
     setData(mig.data);
     if (mig.changed) saveData(u.localId, u.idToken, mig.data);
     setAL(false);
+    // Self-heal: if Stripe events ever raced (an old subscription's
+    // cancellation landing after a new one's activation), ask the server to
+    // reconcile this customer against Stripe directly.
+    if (bill && bill.customerId && bill.tier !== "pro") {
+      (async () => {
+        try {
+          const r = await fetch(`${FN_BASE}/syncBilling`, {method:"POST",
+            headers:{Authorization:`Bearer ${u.idToken}`}});
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && d.tier === "pro") {
+            setBilling(b => ({...(b||{}), ...d}));
+            setData(prev => (prev ? {...prev, tier: "pro"} : prev));
+          }
+        } catch { /* next sign-in retries */ }
+      })();
+    }
     if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
 
@@ -10351,7 +10373,8 @@ export default function App() {
     <div style={{fontFamily:F, background:C.bg, minHeight:"100vh", width:"100%", maxWidth:600, margin:"0 auto", overflowX:"clip"}}>
       <AppHexBg/>
       <div style={{position:"relative", zIndex:1}}>
-      <MobileHeader page={effPage} onBack={()=>setPropId(null)} toast={toast} daysLeft={daysLeft}
+      <Toast msg={toast}/>
+      <MobileHeader page={effPage} onBack={()=>setPropId(null)} daysLeft={daysLeft}
         onAddProperty={()=>setPage("deal")} />
       <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
@@ -10427,7 +10450,8 @@ export default function App() {
       <AppHexBg/>
       <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} isAdmin={isAdmin} />
       <div style={{marginLeft:230, flex:1, minWidth:0, position:"relative", zIndex:1}}>
-        <DesktopTopBar page={effPage} propAddress={activeProp?.address} toast={toast}
+        <Toast msg={toast}/>
+        <DesktopTopBar page={effPage} propAddress={activeProp?.address}
           onAddProperty={()=>setPage("deal")} />
         <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
