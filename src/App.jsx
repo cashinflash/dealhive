@@ -9883,6 +9883,17 @@ export default function App() {
     if (!r.ok || !d.url) throw new Error(d.error || "Billing is unavailable right now — try again in a minute.");
     return d.url;
   };
+  // The true tier straight from Stripe, via the server. Token-gated; the
+  // server looks the customer up itself, so this works even when the client
+  // can't read billing/{uid} and even if a webhook never fired.
+  const syncBillingNow = async (u) => {
+    try {
+      const r = await fetch(`${FN_BASE}/syncBilling`, {method: "POST",
+        headers: {Authorization: `Bearer ${u.idToken}`}});
+      const d = await r.json().catch(() => ({}));
+      return r.ok ? d : null;
+    } catch { return null; }
+  };
   const startCheckout = async () => {
     if (billingBusy) return;
     setBillingBusy(true);
@@ -9903,8 +9914,9 @@ export default function App() {
       setBillingBusy(false);
     }
   };
-  // Returning from Stripe: ?billing=success|cancelled. The webhook usually
-  // lands within seconds of the redirect, so poll until the tier flips.
+  // Returning from Stripe: ?billing=success|cancelled. Activation is pulled
+  // from Stripe directly (syncBilling) rather than waiting for the webhook
+  // to land — the subscription already exists by the time Stripe redirects.
   const billingReturnRef = useRef(
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("billing") : null);
   useEffect(() => {
@@ -9922,9 +9934,9 @@ export default function App() {
     const poll = async () => {
       const u = userRef.current;
       if (!u) return;
-      const bill = await loadBilling(u.localId, u.idToken);
-      if (bill && bill.tier === "pro") {
-        setBilling(bill);
+      const rec = await syncBillingNow(u);
+      if (rec && rec.tier === "pro") {
+        setBilling(b => ({...(b || {}), ...rec}));
         setData(d => (d ? {...d, tier: "pro"} : d));
         setToast("Welcome to DealHive Pro! 🐝");
         setTimeout(() => setToast(""), 3500);
@@ -10069,10 +10081,12 @@ export default function App() {
     setData(mig.data);
     if (mig.changed) saveData(u.localId, u.idToken, mig.data);
     setAL(false);
-    // Self-heal: if Stripe events ever raced (an old subscription's
-    // cancellation landing after a new one's activation), ask the server to
-    // reconcile this customer against Stripe directly.
-    if (bill && bill.customerId && bill.tier !== "pro") {
+    // Self-heal: any time this account doesn't resolve to Pro, ask the
+    // server for the truth straight from Stripe. Covers webhook races,
+    // webhook outages, and a billing record the client couldn't read — the
+    // server finds the Stripe customer itself, and accounts with no Stripe
+    // history answer instantly with "free". Never downgrades anyone here.
+    if (tier !== "pro") {
       (async () => {
         try {
           const r = await fetch(`${FN_BASE}/syncBilling`, {method:"POST",
