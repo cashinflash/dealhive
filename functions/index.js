@@ -69,6 +69,12 @@ const RESIDENTIAL_TYPES = new Set([
 const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
 const REALTOR_PER_LOCATION = parseInt(process.env.REALTOR_PER_LOCATION || "25", 10);
 const PROPWIRE_MAX      = parseInt(process.env.PROPWIRE_MAX      || "100", 10);
+// DealHive 4 (Zillow FSBO by ZIP): pay-per-result actor (~$2.70/1k), so
+// spend ≈ zips × per-zip cap. 14-day window keeps the feed stocked even
+// though we rebuild it nightly.
+const ZILLOW_MAX        = parseInt(process.env.ZILLOW_MAX        || "300", 10);
+const ZILLOW_PER_ZIP    = parseInt(process.env.ZILLOW_PER_ZIP    || "15",  10);
+const ZILLOW_MAX_AGE_H  = parseInt(process.env.ZILLOW_MAX_AGE_H  || "336", 10);
 
 // Locations the Realtor/Propwire actors scan (they require explicit
 // "City, State" strings). Nationwide-leaning coverage of the strongest
@@ -107,6 +113,43 @@ const DEAL_LOCATIONS = (process.env.DEAL_LOCATIONS || [
   "San Antonio, TX",
   "Austin, TX",
 ].join("|")).split("|").map(s => s.trim()).filter(Boolean);
+
+// Investor-grade ZIPs for the Zillow FSBO actor — it's ZIP-driven, unlike
+// the city-driven actors above. Two-ish zips per cash-flow metro; spend
+// scales with this list × ZILLOW_PER_ZIP.
+const ZILLOW_ZIPS = (process.env.ZILLOW_ZIPS || [
+  "44105","44110","44120",      // Cleveland
+  "43211","43207",              // Columbus
+  "43605","43608",              // Toledo
+  "45402","45417",              // Dayton
+  "48205","48227","48224",      // Detroit
+  "48503",                      // Flint
+  "38109","38127","38118",      // Memphis
+  "37411",                      // Chattanooga
+  "35208","35218",              // Birmingham
+  "35805",                      // Huntsville
+  "36108",                      // Montgomery
+  "46201","46218",              // Indianapolis
+  "46806",                      // Fort Wayne
+  "64130","64128",              // Kansas City
+  "63115","63120",              // St. Louis
+  "15210","15221",              // Pittsburgh
+  "19132","19140",              // Philadelphia
+  "53206","53216",              // Milwaukee
+  "21215","21223",              // Baltimore
+  "32209",                      // Jacksonville
+  "33612",                      // Tampa
+  "73111",                      // Oklahoma City
+  "74106",                      // Tulsa
+  "40211",                      // Louisville
+  "72204",                      // Little Rock
+  "27405",                      // Greensboro
+  "28301",                      // Fayetteville
+  "30901",                      // Augusta
+  "31206",                      // Macon
+  "78207","78228",              // San Antonio
+  "78744",                      // Austin
+].join(",")).split(",").map(s => s.trim()).filter(Boolean);
 
 // Effective property-tax rates by state (annual % of value). Used by
 // classifyDeal — the previous code applied Ohio's 2.33% to every deal, which
@@ -685,19 +728,123 @@ function hashId(s) {
 // by un-commenting the call below) but is intentionally not used: RentCast
 // surfaces generic public listings with no photos, which dilutes the Deals
 // page. Sticking to the exclusive InvestorLift Network feed only.
+// -- Source: DealHive 4 (ayk_6789/zillow-new-listings-scraper via Apify) -------
+// Zillow FSBO listings by ZIP — the address-rich, photo-rich off-market
+// source. Schema verified against a live run on 2026-07-16.
+async function pullFromZillow(token, maxItems) {
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
+  const actor = "ayk_6789~zillow-new-listings-scraper";
+  const url   = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        zipCodes:           ZILLOW_ZIPS,
+        listingTypes:       ["fsbo"],
+        maxListingAgeHours: ZILLOW_MAX_AGE_H,
+        maxListingsPerZip:  ZILLOW_PER_ZIP,
+        deduplicateResults: true,
+      }),
+    });
+  } catch (e) {
+    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 400);
+    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
+  }
+  let parsed;
+  try { parsed = await res.json(); } catch (e) {
+    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
+  }
+  if (!Array.isArray(parsed)) {
+    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
+  }
+  const sampleKeys = parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [];
+  const items = parsed.map(mapZillowDeal).filter(Boolean).slice(0, maxItems);
+  return {
+    items,
+    debug: {
+      httpStatus:   res.status,
+      rawCount:     parsed.length,
+      mappedCount:  items.length,
+      droppedCount: parsed.length - items.length,
+      sampleKeys,
+    },
+    ok: true,
+  };
+}
+
+const ZILLOW_TYPE_MAP = {
+  SINGLE_FAMILY: "Single Family",
+  MULTI_FAMILY:  "Multi-Family",
+  TOWNHOUSE:     "Townhouse",
+  CONDO:         "Condo",
+  APARTMENT:     "Multi-Family",
+};
+
+function mapZillowDeal(raw) {
+  const price = parseLoose(raw.price);
+  const city  = raw.city || "";
+  const state = normalizeState(raw.state);
+  if (!price || !city || !state) return null;
+  if (raw.is_pending) return null;
+
+  const street = raw.street || raw.address_full || null;
+  const photos = (Array.isArray(raw.carousel_photos) && raw.carousel_photos.length
+    ? raw.carousel_photos
+    : (raw.photo_url ? [raw.photo_url] : [])).filter(Boolean);
+  const beds = int(raw.beds);
+  const type = ZILLOW_TYPE_MAP[raw.home_type] || normalizeType(raw.home_type);
+
+  return {
+    id:        "z4-" + (raw.zpid || hashId(`${street || ""}|${city}|${state}`)),
+    source:    "DealHive 4", // Zillow FSBO
+    sourceUrl: null, // never link out
+    sourcedAt: today(),
+    address:       generateDealTitle({beds, type, city, state}),
+    streetAddress: street,
+    city,
+    state,
+    zip:       String(raw.zip || ""),
+    lat:       num(raw.lat),
+    lng:       num(raw.lng),
+    type,
+    beds,
+    baths:     num(raw.baths),
+    sqft:      int(raw.sqft),
+    yearBuilt: int(raw.year_built),
+    lotSize:   int(raw.lot_sqft),
+    price,
+    repair:    0, // owner listings; classifyDeal applies its default rehab
+    // Zillow's own rent estimate rides along — better than the 1% fallback.
+    rent:      int(raw.rent_zestimate),
+    arv:       int(raw.zestimate),
+    photo:     photos[0] || null,
+    photos,
+    // FSBO means the owner IS the seller, but this actor exposes no contact
+    // details — the full address is the value here.
+    seller:    null,
+    market:    marketIdForState(state),
+    description: null,
+  };
+}
+
 async function runPipeline(apifyKey, _rentcastKey) {
-  const sources = {investorlift: 0, dealhive2: 0, dealhive3: 0};
-  const errors  = {investorlift: false, dealhive2: false, dealhive3: false};
+  const sources = {investorlift: 0, dealhive2: 0, dealhive3: 0, dealhive4: 0};
+  const errors  = {investorlift: false, dealhive2: false, dealhive3: false, dealhive4: false};
   const debug   = {};
   const raw     = [];
 
   // Pulls run in parallel. Each Apify actor takes 1-3 minutes, so sequential
   // would push the total runtime past the timeout safe Safari can hold the
-  // /pullDealsNow URL open for. 3 parallel × 1GB memory each = 3GB, well
+  // /pullDealsNow URL open for. 4 parallel × 1GB memory each = 4GB, well
   // under Apify's 8GB account ceiling.
   if (!apifyKey) {
-    errors.investorlift = errors.dealhive2 = errors.dealhive3 = true;
-    debug.apify = debug.realtor = debug.propwire = {error: "APIFY_API_KEY not set"};
+    errors.investorlift = errors.dealhive2 = errors.dealhive3 = errors.dealhive4 = true;
+    debug.apify = debug.realtor = debug.propwire = debug.zillow = {error: "APIFY_API_KEY not set"};
   } else {
     const sourceTasks = [
       {
@@ -717,6 +864,12 @@ async function runPipeline(apifyKey, _rentcastKey) {
         debugKey: "propwire",
         label:    "propwire (DealHive 3)",
         run:      () => pullFromPropwire(apifyKey, DEAL_LOCATIONS, PROPWIRE_MAX),
+      },
+      {
+        name:     "dealhive4",
+        debugKey: "zillow",
+        label:    "zillow FSBO (DealHive 4)",
+        run:      () => pullFromZillow(apifyKey, ZILLOW_MAX),
       },
     ];
 
