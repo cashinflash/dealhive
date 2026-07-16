@@ -565,9 +565,11 @@ function mapRentCastListing(raw, market) {
 // -- Filtering / classification / dedup ---------------------------------------
 function isResidential(deal) { return RESIDENTIAL_TYPES.has(deal.type); }
 
-// Same scoring rules as classifyDeal() in src/App.jsx — duplicated here so the
-// function has no client deps. Both must stay in sync; if you tune one, tune
-// the other (or extract to a shared package later).
+// Deal scoring — the ONE brain. Synced to the analyzer's portal-wide
+// assumptions (75% LTV @ 7.5%, 8% vacancy, 8% management of collected rent,
+// 5% maintenance + 5% CapEx of gross rent) and STAMPED onto every deal the
+// pipeline writes. The app prefers the stamp over re-deriving, so page math
+// can never silently disagree with the pipeline about what qualifies.
 function classifyDeal(deal) {
   // Rent estimate — prefer real value, else 1% rule capped at $2,200 to avoid
   // optimistic numbers on expensive properties.
@@ -584,12 +586,13 @@ function classifyDeal(deal) {
   const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
   const monthlyTax = Math.round((deal.price * taxRate) / 12);
 
-  // Buy-and-hold pro forma — 80% LTV @ 7.5% over 30 yrs, real expenses.
-  const PI         = monthlyPI(deal.price * 0.8, 7.5);
-  const exp        = monthlyTax + 100 /* insurance */ + Math.round(rent * 0.08) /* 8% PM */;
-  const effRent    = rent * 0.95; // 5% vacancy
-  const finCF      = effRent - exp - PI;
-  const noi        = (effRent - exp) * 12;
+  // Buy-and-hold — 75% LTV @ 7.5%/30yr, 8% vacancy, 8% mgmt on collected
+  // rent, 5% maintenance + 5% capex on gross, taxes + $100 insurance.
+  const collected  = rent * 0.92;
+  const exp        = monthlyTax + 100 + Math.round(collected * 0.08) + Math.round(rent * 0.10);
+  const PI         = monthlyPI((deal.price || 0) * 0.75, 7.5);
+  const finCF      = collected - exp - PI;
+  const noi        = (collected - exp) * 12;
   const finCap     = deal.price > 0 ? (noi / deal.price) * 100 : 0;
 
   // Fix-and-flip — ARV less total-in, 6% agent + 2% closing on the sale, plus
@@ -600,6 +603,16 @@ function classifyDeal(deal) {
   const flipProfit   = Math.round(arv - totalIn - sellingCosts - holdingCost);
   const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
 
+  // BRRRR — all-cash buy + rehab + closing, refi at 75% of ARV, rental math
+  // against the refi payment. Overlay tag: brrrr deals also carry buyhold or
+  // flip. Mirrors the app's classifier exactly.
+  const allIn        = (deal.price || 0) + repair + 10895; // DEFAULT_CLOSING
+  const refiLoan     = Math.round(arv * 0.75);
+  const recoveredPct = allIn > 0 ? Math.min(100, Math.round((refiLoan / allIn) * 100)) : 0;
+  const refiPmt      = monthlyPI(refiLoan, 7.5);
+  const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.92 * 0.08) + Math.round(rent * 0.10);
+  const brrrrCF      = rent - brrrrOpEx - refiPmt;
+
   // Tighter gates — users complained about $30/mo cash-flow deals making the
   // list. We're selling these leads, so only "good" passes.
   //   Buy-and-hold: cap >= 8% AND >= $200/mo cash flow
@@ -607,7 +620,12 @@ function classifyDeal(deal) {
   const tags = [];
   if (finCap >= 8   && finCF      >= 200)   tags.push("buyhold");
   if (flipROI >= 18 && flipProfit >= 25000) tags.push("flip");
-  return tags;
+  if (repair >= 10000 && recoveredPct >= 70 && brrrrCF >= 100) tags.push("brrrr");
+
+  // Same score formula the page sorts by.
+  const buyHoldScore = (finCF   >= 200 ? 30 : 0) + Math.min(finCap, 15) * 2;
+  const flipScore    = (flipROI >= 18  ? 30 : 0) + Math.min(flipROI, 50);
+  return {tags, buyHoldScore, flipScore};
 }
 
 function monthlyPI(principal, rate) {
@@ -835,9 +853,16 @@ async function runPipeline(apifyKey, _rentcastKey) {
   // 3. Filter to residential + only deals that score on at least one strategy.
   const scored  = raw
     .filter(isResidential)
-    .map(d => ({d, tags: classifyDeal(d)}))
-    .filter(({tags}) => tags.length > 0);
-  const deduped = dedupByAddress(scored.map(({d}) => d));
+    .map(d => {
+      const c = classifyDeal(d);
+      return {...d, tags: c.tags, buyHoldScore: c.buyHoldScore, flipScore: c.flipScore};
+    })
+    // Strategy-tagged deals always ship. FSBO.com listings additionally
+    // ship untagged ("By Owner" lane): full-address by-owner inventory with
+    // seller contact is browsing value even when fallback math can't prove
+    // a deal. $20k floor keeps token-priced junk out of the lane.
+    .filter(d => d.tags.length > 0 || (d.source === "DealHive 2" && (d.price || 0) >= 20000));
+  const deduped = dedupByAddress(scored);
 
   // 4. Safety net: only skip the write if every source ERRORED. If Apify
   // ran but returned 0 mappable items, that's a legitimate "no deals
