@@ -98,6 +98,43 @@ const FSBO_LOCATIONS = (process.env.FSBO_LOCATIONS || [
   "San Antonio, TX",   // + Austin
 ].join("|")).split("|").map(s => s.trim()).filter(Boolean);
 
+// Investor-grade ZIPs for the Zillow FSBO actor — it's ZIP-driven, unlike
+// the metro-driven FSBO.com actor above. Two-ish zips per cash-flow metro;
+// spend scales with this list × ZILLOW_PER_ZIP.
+const ZILLOW_ZIPS = (process.env.ZILLOW_ZIPS || [
+  "44105","44110","44120",      // Cleveland
+  "43211","43207",              // Columbus
+  "43605","43608",              // Toledo
+  "45402","45417",              // Dayton
+  "48205","48227","48224",      // Detroit
+  "48503",                      // Flint
+  "38109","38127","38118",      // Memphis
+  "37411",                      // Chattanooga
+  "35208","35218",              // Birmingham
+  "35805",                      // Huntsville
+  "36108",                      // Montgomery
+  "46201","46218",              // Indianapolis
+  "46806",                      // Fort Wayne
+  "64130","64128",              // Kansas City
+  "63115","63120",              // St. Louis
+  "15210","15221",              // Pittsburgh
+  "19132","19140",              // Philadelphia
+  "53206","53216",              // Milwaukee
+  "21215","21223",              // Baltimore
+  "32209",                      // Jacksonville
+  "33612",                      // Tampa
+  "73111",                      // Oklahoma City
+  "74106",                      // Tulsa
+  "40211",                      // Louisville
+  "72204",                      // Little Rock
+  "27405",                      // Greensboro
+  "28301",                      // Fayetteville
+  "30901",                      // Augusta
+  "31206",                      // Macon
+  "78207","78228",              // San Antonio
+  "78744",                      // Austin
+].join(",")).split(",").map(s => s.trim()).filter(Boolean);
+
 // Effective property-tax rates by state (annual % of value). Used by
 // classifyDeal — the previous code applied Ohio's 2.33% to every deal, which
 // wildly distorted buy-and-hold math in low-tax states (AL 0.41%, CO 0.51%).
