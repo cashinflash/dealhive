@@ -2482,6 +2482,121 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           {m.rolledIn > 0 && <DataRow label="Costs Rolled Into Loan" value={$(m.rolledIn)} color={C.textSub} />}
         </SectionBlock>
 
+        {/* Purchase Financing — finance mode, right under Purchase where the
+            buying story starts. The BRRRR refinance below is a separate loan. */}
+        {s==="finance" && (
+        <SectionBlock title="Purchase Financing" color={C.blue} icon={I.building}>
+          {xtra === "brrrr" && (
+            <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5,
+              background:C.blueSubtle, border:"1px solid "+C.blueBorder, borderRadius:C.r2,
+              padding:"8px 12px", marginBottom:12}}>
+              This is the loan you buy with — your BRRRR refinance below replaces it.
+            </div>
+          )}
+          {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
+            <>
+              {p.downPaymentAmt != null ? (
+                <InputField label="Down Payment" val={p.downPaymentAmt} set={v=>u("downPaymentAmt",v)} pre="$" mobile={mobile} />
+              ) : (
+                <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
+              )}
+              <button onClick={()=> p.downPaymentAmt != null
+                  ? set({...p, downPaymentAmt: null})
+                  : set({...p, downPaymentAmt: Math.round(m.down)})}
+                style={{background:"none", border:"none", cursor:"pointer", padding:"0 0 12px",
+                  fontSize:12, fontWeight:600, color:C.blueDark, fontFamily:F,
+                  textDecoration:"underline", textUnderlineOffset:2}}>
+                {p.downPaymentAmt != null ? "Enter as % of price instead" : "Enter as $ amount instead"}
+              </button>
+              <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
+              <DataRow label="Down Payment" value={$(m.down)} />
+              <DataRow label="Loan Amount" value={$(m.loan)} />
+              <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
+              <button onClick={()=>u("loans", [{
+                  ...newLoan(),
+                  // Seed Loan 1 from the simple settings so opening Advanced
+                  // doesn't silently change a single number.
+                  financeOf: p.downPaymentAmt != null ? "custom" : "purchase",
+                  customAmount: p.downPaymentAmt != null
+                    ? Math.max((p.purchasePrice||0) - (p.downPaymentAmt||0), 0) : 0,
+                  ltvPct: Math.max(0, Math.min(100, 100 - (p.downPaymentPct||25))),
+                  loanType: "amortizing",
+                  rate: p.interestRate || 7.5,
+                  termYears: 30,
+                }])}
+                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginTop:10})}>
+                <I.plus size={13}/> Advanced Loan Setup
+              </button>
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
+                Choose what to finance, interest-only loans, terms, and multiple loans.
+              </div>
+            </>
+          ) : (
+            <>
+              {p.loans.map((ln, i) => {
+                const setLn = patch => u("loans", p.loans.map(x => x.id === ln.id ? {...x, ...patch} : x));
+                const amt = loanAmount(ln, p) + (i === 0 ? m.rolledIn : 0);
+                return (
+                  <div key={ln.id} style={{border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 12px 6px", marginBottom:12, background:C.bgSubtle}}>
+                    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+                      <span style={{fontSize:12, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+                        Loan {i+1}
+                      </span>
+                      <button onClick={()=>u("loans", p.loans.filter(x => x.id !== ln.id))}
+                        style={{background:"transparent", border:"none", cursor:"pointer", color:C.redDark,
+                          fontSize:12, fontWeight:600, fontFamily:F, padding:"2px 4px"}}>
+                        Remove
+                      </button>
+                    </div>
+                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>What to Finance</label>
+                    <select value={ln.financeOf} onChange={e=>setLn({financeOf:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
+                      <option value="purchase">Purchase Price</option>
+                      <option value="rehab">Rehab Costs</option>
+                      <option value="purchase_rehab">Purchase + Rehab Costs</option>
+                      <option value="arv">After Repair Value (ARV)</option>
+                      <option value="custom">Custom Amount</option>
+                    </select>
+                    {ln.financeOf === "custom" ? (
+                      <InputField label="Loan Amount" val={ln.customAmount} set={v=>setLn({customAmount:v})} pre="$" mobile={mobile} />
+                    ) : (
+                      <InputField label="Loan-to-Value" val={ln.ltvPct} set={v=>setLn({ltvPct:v})} suf="%"
+                        note={"Loan Amount: " + $(loanAmount(ln, p))} mobile={mobile} />
+                    )}
+                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Loan Type</label>
+                    <select value={ln.loanType} onChange={e=>setLn({loanType:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
+                      <option value="amortizing">Amortizing</option>
+                      <option value="interest_only">Interest Only</option>
+                    </select>
+                    <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                      <InputField label="Interest Rate" val={ln.rate} set={v=>setLn({rate:v})} suf="%" mobile={mobile} />
+                      <InputField label="Loan Term (Years)" val={ln.termYears} set={v=>setLn({termYears:v})} mobile={mobile} />
+                    </div>
+                    <InputField label="Points / Lender Fees" val={ln.pointsPct} set={v=>setLn({pointsPct:v})} suf="%"
+                      note={(ln.pointsPct||0) > 0 ? `= ${$(Math.round(amt * (ln.pointsPct||0)/100))} paid at closing` : "Optional — added to cash needed"}
+                      mobile={mobile} />
+                    <DataRow label={"Loan " + (i+1) + " Payment / mo"} value={$mo(loanPayment(amt, ln))} />
+                    {i === 0 && m.rolledIn > 0 && (
+                      <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"0 0 8px"}}>
+                        Includes {$(m.rolledIn)} of costs rolled into this loan.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button onClick={()=>u("loans", [...p.loans, newLoan(p.loans.length+1)])}
+                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+                <I.plus size={13}/> Add a Loan
+              </button>
+              <button onClick={()=>u("loans", [])}
+                style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
+                  fontSize:12, fontFamily:F, padding:"8px 4px 0", width:"100%", textAlign:"center"}}>
+                Switch Back to Simple Financing
+              </button>
+            </>
+          )}
+        </SectionBlock>
+        )}
+
         {xtra === "flip" && !showFlipOpEx ? (
           <button onClick={()=>setShowFlipOpEx(true)} style={{
             gridColumn:"1 / -1", display:"flex", alignItems:"center", justifyContent:"space-between",
@@ -2614,113 +2729,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </>
         )}
 
-        {/* Financing — Finance tab only */}
-        {s==="finance" && (
-        <SectionBlock title="Financing" color={C.blue} icon={I.building}>
-          {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
-            <>
-              {p.downPaymentAmt != null ? (
-                <InputField label="Down Payment" val={p.downPaymentAmt} set={v=>u("downPaymentAmt",v)} pre="$" mobile={mobile} />
-              ) : (
-                <InputField label="Down Payment" val={p.downPaymentPct} set={v=>u("downPaymentPct",v)} suf="%" mobile={mobile} />
-              )}
-              <button onClick={()=> p.downPaymentAmt != null
-                  ? set({...p, downPaymentAmt: null})
-                  : set({...p, downPaymentAmt: Math.round(m.down)})}
-                style={{background:"none", border:"none", cursor:"pointer", padding:"0 0 12px",
-                  fontSize:12, fontWeight:600, color:C.blueDark, fontFamily:F,
-                  textDecoration:"underline", textUnderlineOffset:2}}>
-                {p.downPaymentAmt != null ? "Enter as % of price instead" : "Enter as $ amount instead"}
-              </button>
-              <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
-              <DataRow label="Down Payment" value={$(m.down)} />
-              <DataRow label="Loan Amount" value={$(m.loan)} />
-              <DataRow label="Mortgage / mo" value={$mo(m.mtg)} />
-              <button onClick={()=>u("loans", [{
-                  ...newLoan(),
-                  // Seed Loan 1 from the simple settings so opening Advanced
-                  // doesn't silently change a single number.
-                  financeOf: p.downPaymentAmt != null ? "custom" : "purchase",
-                  customAmount: p.downPaymentAmt != null
-                    ? Math.max((p.purchasePrice||0) - (p.downPaymentAmt||0), 0) : 0,
-                  ltvPct: Math.max(0, Math.min(100, 100 - (p.downPaymentPct||25))),
-                  loanType: "amortizing",
-                  rate: p.interestRate || 7.5,
-                  termYears: 30,
-                }])}
-                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center", marginTop:10})}>
-                <I.plus size={13}/> Advanced Loan Setup
-              </button>
-              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, lineHeight:1.5}}>
-                Choose what to finance, interest-only loans, terms, and multiple loans.
-              </div>
-            </>
-          ) : (
-            <>
-              {p.loans.map((ln, i) => {
-                const setLn = patch => u("loans", p.loans.map(x => x.id === ln.id ? {...x, ...patch} : x));
-                const amt = loanAmount(ln, p) + (i === 0 ? m.rolledIn : 0);
-                return (
-                  <div key={ln.id} style={{border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 12px 6px", marginBottom:12, background:C.bgSubtle}}>
-                    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
-                      <span style={{fontSize:12, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
-                        Loan {i+1}
-                      </span>
-                      <button onClick={()=>u("loans", p.loans.filter(x => x.id !== ln.id))}
-                        style={{background:"transparent", border:"none", cursor:"pointer", color:C.redDark,
-                          fontSize:12, fontWeight:600, fontFamily:F, padding:"2px 4px"}}>
-                        Remove
-                      </button>
-                    </div>
-                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>What to Finance</label>
-                    <select value={ln.financeOf} onChange={e=>setLn({financeOf:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
-                      <option value="purchase">Purchase Price</option>
-                      <option value="rehab">Rehab Costs</option>
-                      <option value="purchase_rehab">Purchase + Rehab Costs</option>
-                      <option value="arv">After Repair Value (ARV)</option>
-                      <option value="custom">Custom Amount</option>
-                    </select>
-                    {ln.financeOf === "custom" ? (
-                      <InputField label="Loan Amount" val={ln.customAmount} set={v=>setLn({customAmount:v})} pre="$" mobile={mobile} />
-                    ) : (
-                      <InputField label="Loan-to-Value" val={ln.ltvPct} set={v=>setLn({ltvPct:v})} suf="%"
-                        note={"Loan Amount: " + $(loanAmount(ln, p))} mobile={mobile} />
-                    )}
-                    <label style={{fontSize:12, color:C.textSub, fontFamily:F, display:"block", marginBottom:5, fontWeight:500}}>Loan Type</label>
-                    <select value={ln.loanType} onChange={e=>setLn({loanType:e.target.value})} style={{...iS(mobile), marginBottom:10}}>
-                      <option value="amortizing">Amortizing</option>
-                      <option value="interest_only">Interest Only</option>
-                    </select>
-                    <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
-                      <InputField label="Interest Rate" val={ln.rate} set={v=>setLn({rate:v})} suf="%" mobile={mobile} />
-                      <InputField label="Loan Term (Years)" val={ln.termYears} set={v=>setLn({termYears:v})} mobile={mobile} />
-                    </div>
-                    <InputField label="Points / Lender Fees" val={ln.pointsPct} set={v=>setLn({pointsPct:v})} suf="%"
-                      note={(ln.pointsPct||0) > 0 ? `= ${$(Math.round(amt * (ln.pointsPct||0)/100))} paid at closing` : "Optional — added to cash needed"}
-                      mobile={mobile} />
-                    <DataRow label={"Loan " + (i+1) + " Payment / mo"} value={$mo(loanPayment(amt, ln))} />
-                    {i === 0 && m.rolledIn > 0 && (
-                      <div style={{fontSize:11, color:C.textMuted, fontFamily:F, padding:"0 0 8px"}}>
-                        Includes {$(m.rolledIn)} of costs rolled into this loan.
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <button onClick={()=>u("loans", [...p.loans, newLoan(p.loans.length+1)])}
-                {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
-                <I.plus size={13}/> Add a Loan
-              </button>
-              <button onClick={()=>u("loans", [])}
-                style={{background:"transparent", border:"none", cursor:"pointer", color:C.textMuted,
-                  fontSize:12, fontFamily:F, padding:"8px 4px 0", width:"100%", textAlign:"center"}}>
-                Switch Back to Simple Financing
-              </button>
-            </>
-          )}
-        </SectionBlock>
-        )}
-
         {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
         <SectionBlock title="After Repair Value (ARV)" color={C.blue} icon={I.trendingUp}>
           <InputField label="After Repair Value (ARV)" val={p.homeValueHigh||0}
@@ -2805,6 +2813,13 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
         {xtra === "brrrr" && (
           <SectionBlock title="BRRRR Estimate" color={C.purple} icon={I.cycle}>
+            {s === "finance" && (
+              <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5,
+                background:C.purpleSubtle, border:"1px solid "+C.purpleBorder, borderRadius:C.r2,
+                padding:"8px 12px", marginBottom:12}}>
+                The refinance is a new loan — it pays off your Purchase Financing above.
+              </div>
+            )}
             {!(p.homeValueHigh > 0) && (
               <div style={{fontSize:12.5, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
                 padding:"9px 12px", borderRadius:C.r2, marginBottom:12, fontFamily:F}}>
