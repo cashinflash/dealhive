@@ -392,7 +392,6 @@ function HeroVisual() {
 
 // -- Top nav ------------------------------------------------------------------
 const NAV_LINKS = [
-  ["How It Works", "/how-it-works"],
   ["Features", "/features"],
   ["Pricing", "/pricing"],
   ["FAQ", "/faq"],
@@ -1125,7 +1124,6 @@ function Footer({ navigate, onSignIn, onSignUp }) {
             </p>
           </div>
           <FooterCol title="Platform">
-            {link("How It Works", "/how-it-works")}
             {link("Features", "/features")}
             {link("Pricing", "/pricing")}
             {link("FAQ", "/faq")}
@@ -1196,19 +1194,11 @@ function FooterCol({ title, children }) {
 // PAGES
 // ==============================================================================
 
+// The home page IS the How It Works tour, enriched with the conversion
+// sections. The old hero home (Hero/TrustBar/HowItWorks) is retired but its
+// components stay defined for reuse.
 function HomePage({ onSignUp }) {
-  return (
-    <>
-      <Hero onSignUp={onSignUp}/>
-      <TrustBar/>
-      <HowItWorks/>
-      <Features/>
-      <NumbersStrip/>
-      <Pricing onSignUp={onSignUp}/>
-      <FAQ/>
-      <FinalCTA onSignUp={onSignUp}/>
-    </>
-  );
+  return <HowItWorksPage onSignUp={onSignUp} home/>;
 }
 
 // -- Features page: overview grid + one section per strategy -------------------
@@ -2251,7 +2241,7 @@ function HiwRow({l, r, green, red, bold}) {
   );
 }
 
-function HowItWorksPage({ onSignUp }) {
+function HowItWorksPage({ onSignUp, home = false }) {
   const steps = [
     {
       title: "Type an address. We do the typing.",
@@ -2339,9 +2329,6 @@ function HowItWorksPage({ onSignUp }) {
               </div>
             </div>
           ))}
-          <div style={{fontSize: 11.5, color: C.textMuted, marginTop: 10}}>
-            Rebuilt nightly · rotating metros · owner contact with Pro
-          </div>
         </HiwMiniCard>
       ),
     },
@@ -2424,6 +2411,15 @@ function HowItWorksPage({ onSignUp }) {
           ))}
         </div>
       </Section>
+
+      {home && (
+        <>
+          <Features/>
+          <NumbersStrip/>
+          <Pricing onSignUp={onSignUp}/>
+          <FAQ/>
+        </>
+      )}
 
       {/* CTA */}
       <Section dark hexes={HEX_SETS.dark}>
