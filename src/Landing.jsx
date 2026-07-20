@@ -1964,6 +1964,17 @@ function TermsPage() {
 // ==============================================================================
 
 const HIW_PHOTO = "linear-gradient(135deg, #e8e2d8 0%, #f4efe7 38%, #d9d2c6 72%, #cfc6b8 100%)";
+// Same hosted house photos the home hero uses — the warm gradient stays
+// underneath as the fallback layer if a photo ever fails to load.
+const HIW_IMGS = [
+  "https://images.unsplash.com/photo-1568605114967-8130f3a36994?auto=format&fit=crop&w=720&h=400&q=80",
+  "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80",
+  "https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80",
+];
+const hiwPhoto = i => ({
+  backgroundImage: `url("${HIW_IMGS[i % HIW_IMGS.length]}"), ${HIW_PHOTO}`,
+  backgroundSize: "cover", backgroundPosition: "center",
+});
 
 function HiwChip({children, tone}) {
   const tones = {
@@ -1993,7 +2004,7 @@ function HiwDealView({s = 1, compact = false}) {
   );
   return (
     <div style={{fontFamily: F, background: "#fff"}}>
-      <div style={{position: "relative", height: fz(compact ? 54 : 46), background: HIW_PHOTO}}>
+      <div style={{position: "relative", height: fz(compact ? 96 : 46), ...hiwPhoto(0)}}>
         <span style={{position: "absolute", top: fz(4), right: fz(4), width: fz(10), height: fz(10),
           borderRadius: "50%", background: "rgba(255,255,255,.95)", color: C.text,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -2021,11 +2032,26 @@ function HiwDealView({s = 1, compact = false}) {
           {metric("CoC", "21.30%")}
           {metric("Total Spent", "$46,200")}
         </div>
-        <div style={{display: "flex", justifyContent: "center", gap: fz(6), marginTop: fz(5),
-          fontSize: fz(5.4), color: C.textSub, fontWeight: 600}}>
-          <span>1 bd</span><span>·</span><span>1 ba</span><span>·</span><span>725 sqft</span>
-          <span>·</span><span>1966</span><span>·</span><span>Condo</span>
-        </div>
+        {compact ? (
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 1,
+            background: C.border, border: "1px solid " + C.border, borderRadius: fz(5),
+            overflow: "hidden", marginTop: fz(5)}}>
+            {[["1", "Beds"], ["1", "Baths"], ["725", "Sqft"],
+              ["142.8k", "Lot"], ["1966", "Year"], ["Condo", "Type"]].map(([v, l]) => (
+              <div key={l} style={{background: "#fff", textAlign: "center", padding: `${fz(4.6)}px 0`}}>
+                <div style={{fontSize: fz(7.4), fontWeight: 800, color: C.text}}>{v}</div>
+                <div style={{fontSize: fz(4.4), fontWeight: 700, color: C.textMuted,
+                  textTransform: "uppercase", letterSpacing: ".06em", marginTop: 1}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{display: "flex", justifyContent: "center", gap: fz(6), marginTop: fz(5),
+            fontSize: fz(5.4), color: C.textSub, fontWeight: 600}}>
+            <span>1 bd</span><span>·</span><span>1 ba</span><span>·</span><span>725 sqft</span>
+            <span>·</span><span>1966</span><span>·</span><span>Condo</span>
+          </div>
+        )}
         {!compact && (
           <div style={{marginTop: fz(5)}}>
             <div style={{fontSize: fz(5), fontWeight: 700, color: C.textMuted,
@@ -2046,7 +2072,7 @@ function HiwDealView({s = 1, compact = false}) {
               letterSpacing: ".08em", textTransform: "uppercase", marginBottom: fz(2)}}>Photos</div>
             <div style={{display: "flex", gap: fz(3)}}>
               <div style={{position: "relative", width: fz(26), height: fz(18), borderRadius: fz(3),
-                background: HIW_PHOTO, border: "1px solid " + C.border}}>
+                ...hiwPhoto(0), border: "1px solid " + C.border}}>
                 <span style={{position: "absolute", bottom: 1, left: 1, background: "rgba(20,25,35,.75)",
                   color: "#fff", borderRadius: 999, padding: `0 ${fz(2.4)}px`, fontSize: fz(3.6),
                   fontWeight: 800, textTransform: "uppercase"}}>Cover</span>
@@ -2056,6 +2082,16 @@ function HiwDealView({s = 1, compact = false}) {
                 color: C.orangeDark, display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: fz(4.4), fontWeight: 800}}>+ Add</div>
             </div>
+            <div style={{fontSize: fz(5), fontWeight: 700, color: C.textMuted,
+              letterSpacing: ".08em", textTransform: "uppercase", margin: `${fz(5)}px 0 ${fz(2)}px`}}>Analysis</div>
+            {["Deal Calculator", "Buy & Hold Projections"].map(l => (
+              <div key={l} style={{display: "flex", justifyContent: "space-between",
+                alignItems: "center", padding: `${fz(3.6)}px ${fz(5)}px`,
+                border: "1px solid " + C.border, borderRadius: fz(4), marginBottom: fz(2.4),
+                fontSize: fz(6.4), fontWeight: 600, color: C.text, background: "#fff"}}>
+                {l}<span style={{color: C.textMuted}}>›</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -2065,7 +2101,7 @@ function HiwDealView({s = 1, compact = false}) {
 
 function HiwDevices() {
   return (
-    <div style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
+    <div className="dh-hiw-devices" style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
       {/* Monitor */}
       <div className="dh-hiw-monitor">
       <div style={{width: "88%", background: "#0e1319", borderRadius: 18,
@@ -2094,7 +2130,7 @@ function HiwDevices() {
               {[0, 1, 2, 3].map(i => (
                 <div key={i} style={{background: "#fff", borderRadius: 8,
                   border: "1px solid " + C.border, overflow: "hidden"}}>
-                  <div style={{height: "44%", background: HIW_PHOTO}}/>
+                  <div style={{height: "44%", ...hiwPhoto(i + 1)}}/>
                 </div>
               ))}
             </div>
@@ -2112,14 +2148,42 @@ function HiwDevices() {
       <div style={{width: "26%", height: 9, margin: "0 auto", background: "#0e1319",
         borderRadius: 999}}/>
       </div>
-      {/* Phone */}
-      <div className="dh-hiw-phone" style={{position: "absolute", right: "1%", bottom: 0, width: "clamp(150px, 24%, 210px)",
-        background: "#0e1319", borderRadius: 30, padding: 7,
-        boxShadow: "0 32px 64px -18px rgba(9,12,18,.6)"}}>
-        <div style={{borderRadius: 24, overflow: "hidden", background: "#fff", position: "relative"}}>
-          <div style={{position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
-            width: "34%", height: 9, borderRadius: 999, background: "#0e1319", zIndex: 2}}/>
-          <HiwDealView s={1.06} compact/>
+      {/* Phone — a real iPhone: tall 9:19 body, rounded bezel, Dynamic
+          Island, side buttons; the app content crops like a scrolled screen. */}
+      <div className="dh-hiw-phone" style={{position: "absolute", right: "1%", bottom: -8,
+        width: "clamp(168px, 25%, 224px)", zIndex: 2}}>
+        <div style={{position: "relative", background: "#0e1319", borderRadius: 38, padding: 9,
+          aspectRatio: "9 / 19",
+          boxShadow: "0 36px 72px -20px rgba(9,12,18,.65)"}}>
+          <span style={{position: "absolute", left: -2.5, top: "20%", width: 3, height: "6%",
+            background: "#232b36", borderRadius: 2}}/>
+          <span style={{position: "absolute", left: -2.5, top: "28.5%", width: 3, height: "6%",
+            background: "#232b36", borderRadius: 2}}/>
+          <span style={{position: "absolute", right: -2.5, top: "23%", width: 3, height: "10%",
+            background: "#232b36", borderRadius: 2}}/>
+          <div style={{position: "relative", borderRadius: 30, overflow: "hidden",
+            background: "#fff", height: "100%"}}>
+            <div style={{position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
+              width: "30%", height: 13, borderRadius: 999, background: "#0e1319", zIndex: 2}}/>
+            <div style={{position: "absolute", top: 7, left: 0, right: 0, zIndex: 2,
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "0 16px", color: "#fff", textShadow: "0 1px 3px rgba(9,12,18,.5)"}}>
+              <span style={{fontSize: 11, fontWeight: 700, fontFamily: F}}>9:41</span>
+              <span style={{display: "inline-flex", alignItems: "center", gap: 4}}>
+                <span style={{display: "inline-flex", alignItems: "flex-end", gap: 1.5}}>
+                  {[3, 5, 7, 9].map(h => (
+                    <span key={h} style={{width: 2.5, height: h, borderRadius: 1,
+                      background: "#fff"}}/>
+                  ))}
+                </span>
+                <span style={{width: 19, height: 9.5, border: "1.4px solid rgba(255,255,255,.85)",
+                  borderRadius: 3, display: "inline-flex", alignItems: "center", padding: 1.2}}>
+                  <span style={{width: "72%", height: "100%", borderRadius: 1.4, background: "#fff"}}/>
+                </span>
+              </span>
+            </div>
+            <HiwDealView s={1.05} compact/>
+          </div>
         </div>
       </div>
     </div>
@@ -2163,7 +2227,7 @@ function HowItWorksPage({ onSignUp }) {
           <HiwRow l="Property Tax" r="$164/mo · auto"/>
           <div style={{display: "flex", gap: 8, marginTop: 12}}>
             {[0, 1, 2].map(i => (
-              <div key={i} style={{flex: 1, height: 52, borderRadius: 8, background: HIW_PHOTO,
+              <div key={i} style={{flex: 1, height: 52, borderRadius: 8, ...hiwPhoto(i),
                 border: "1px solid " + C.border}}/>
             ))}
           </div>
@@ -2224,10 +2288,10 @@ function HowItWorksPage({ onSignUp }) {
       visual: (
         <HiwMiniCard label="Tonight's Feed">
           {[["650 Salisbury Road, Columbus, OH", "$329,900"],
-            ["2119 East 44th Street, Kansas City, MO", "$118,000"]].map(([a, p]) => (
+            ["2119 East 44th Street, Kansas City, MO", "$118,000"]].map(([a, p], i) => (
             <div key={a} style={{display: "flex", gap: 10, alignItems: "center", padding: "8px 0",
               borderBottom: "1px solid " + C.borderSoft}}>
-              <div style={{width: 52, height: 38, borderRadius: 8, background: HIW_PHOTO,
+              <div style={{width: 52, height: 38, borderRadius: 8, ...hiwPhoto(i + 1),
                 border: "1px solid " + C.border, flexShrink: 0}}/>
               <div style={{minWidth: 0, flex: 1}}>
                 <div style={{fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden",
@@ -2257,7 +2321,10 @@ function HowItWorksPage({ onSignUp }) {
         }
         @media (max-width: 700px) {
           .dh-hiw-monitor { display: none; }
-          .dh-hiw-phone { position: static !important; width: 224px !important; margin: 0 auto; }
+          .dh-hiw-devices { margin-top: 40px !important; padding-bottom: 0 !important;
+            max-height: 560px; overflow: hidden; }
+          .dh-hiw-phone { position: static !important; width: min(330px, 86vw) !important;
+            margin: 0 auto; }
         }
       `}</style>
 
