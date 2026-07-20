@@ -10110,46 +10110,83 @@ function PlanSheet({busy, onChoose, onClose}) {
   );
 }
 
-// Admin-only: what each account's data lookups cost this month.
+// Admin-only: opens the month's per-user lookup spend as a full branded
+// page in a new tab — a Settings panel can't hold hundreds of users. The
+// tab opens synchronously on click (popup-blocker safe), then the report
+// streams in once the data lands.
 function AdminUsagePanel({token}) {
-  const [st, setSt] = useState({busy:false, err:null, data:null});
+  const [st, setSt] = useState({busy:false, err:null});
+  const esc = s => String(s ?? "").replace(/[&<>"]/g,
+    c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;"}[c]));
   const load = async () => {
-    setSt({busy:true, err:null, data:null});
+    setSt({busy:true, err:null});
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.write("<title>DealHive Usage…</title><body style='font-family:sans-serif;" +
+        "display:flex;align-items:center;justify-content:center;height:90vh;color:#666'>" +
+        "Loading usage report…</body>");
+    }
     try {
       const r = await fetch(`${FN_BASE}/usageReport`, {method:"POST",
         headers:{Authorization:`Bearer ${token}`}});
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "failed");
-      setSt({busy:false, err:null, data:d});
-    } catch { setSt({busy:false, err:"Couldn't load the report.", data:null}); }
+      const totalLookups = d.rows.reduce((s, x) => s + x.lookups, 0);
+      const totalCost    = d.rows.reduce((s, x) => s + x.estCost, 0);
+      const proCount     = d.rows.filter(x => x.tier === "pro").length;
+      const rowsHtml = d.rows.map((x, i) => `
+        <tr style="background:${i % 2 ? "#fafaf8" : "#fff"}">
+          <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(x.email)}</td>
+          <td style="padding:10px 16px"><span style="display:inline-block;padding:2px 10px;border-radius:999px;
+            font-size:11px;font-weight:700;${x.tier === "pro"
+              ? "background:#e8f6ee;color:#1a7f4b;border:1px solid #bfe6cf"
+              : "background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7"}">${esc(x.tier)}</span></td>
+          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">${x.lookups}</td>
+          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">$${x.estCost.toFixed(2)}</td>
+        </tr>`).join("");
+      const html = `<!doctype html><html><head><meta charset="utf-8">
+        <title>DealHive — API Usage ${esc(d.month)}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
+        </head><body style="margin:0;background:#f7f6f3;font-family:Inter,system-ui,sans-serif;color:#18181b">
+        <div style="background:#141d2b;color:#fff;padding:26px 28px">
+          <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">\u{1F41D} DealHive — API Usage</div>
+          <div style="font-size:13px;color:#b8c0cc;margin-top:4px">${esc(d.month)} · about ${(d.costPerLookup * 100).toFixed(1)}\u00A2 per fresh lookup · cached re-opens are free</div>
+        </div>
+        <div style="max-width:860px;margin:24px auto;padding:0 20px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">
+            ${[["Active users", d.rows.length], ["Pro accounts", proCount],
+               ["Total lookups", totalLookups], ["Est. API cost", "$" + totalCost.toFixed(2)]]
+              .map(([l, v]) => `<div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:14px 16px">
+                <div style="font-size:11px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.07em">${l}</div>
+                <div style="font-size:22px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums">${v}</div>
+              </div>`).join("")}
+          </div>
+          <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:520px">
+              <thead><tr style="border-bottom:1px solid #e4e4e7">
+                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">User</th>
+                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Tier</th>
+                <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Lookups</th>
+                <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Est. cost</th>
+              </tr></thead>
+              <tbody>${rowsHtml || `<tr><td colspan="4" style="padding:22px;text-align:center;color:#a1a1aa">No lookups yet this month.</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div></body></html>`;
+      if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+      setSt({busy:false, err:null});
+    } catch {
+      if (w) w.close();
+      setSt({busy:false, err:"Couldn't load the report."});
+    }
   };
-  const d = st.data;
   return (
     <>
-      <button onClick={load} disabled={st.busy} {...btnStyle("secondary","md", {marginBottom:12})}>
-        {st.busy ? "Loading…" : <><I.chart size={13}/> Load This Month's Usage</>}
+      <button onClick={load} disabled={st.busy} {...btnStyle("secondary","md")}>
+        {st.busy ? "Loading…" : <><I.externalLink size={13}/> Open Usage Report</>}
       </button>
-      {st.err && <div style={{fontSize:12.5, color:C.redDark, fontFamily:F}}>{st.err}</div>}
-      {d && d.rows.length === 0 && (
-        <div style={{fontSize:12.5, color:C.textSub, fontFamily:F}}>No lookups yet in {d.month}.</div>
-      )}
-      {d && d.rows.length > 0 && (
-        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden"}}>
-          {d.rows.map((r, i) => (
-            <div key={r.email + i} style={{display:"flex", justifyContent:"space-between", gap:10,
-              padding:"9px 12px", borderBottom: i === d.rows.length - 1 ? "none" : "1px solid "+C.border,
-              fontFamily:F, fontSize:12.5}}>
-              <span style={{minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-                color:C.text, fontWeight:600}}>{r.email}
-                <span style={{color:C.textMuted, fontWeight:500}}> · {r.tier}</span>
-              </span>
-              <span style={{flexShrink:0, color:C.textSub, fontVariantNumeric:"tabular-nums"}}>
-                {r.lookups} lookups · ~${r.estCost.toFixed(2)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      {st.err && <div style={{fontSize:12.5, color:C.redDark, fontFamily:F, marginTop:8}}>{st.err}</div>}
     </>
   );
 }

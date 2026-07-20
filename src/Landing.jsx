@@ -856,6 +856,7 @@ function NumbersStrip() {
 
 // -- Pricing ------------------------------------------------------------------
 function Pricing({ onSignUp }) {
+  const [yearly, setYearly] = useState(true);
   const free = {
     name: "Free",
     price: "$0",
@@ -874,8 +875,8 @@ function Pricing({ onSignUp }) {
   };
   const pro = {
     name: "Pro",
-    price: "$20",
-    period: "per month billed yearly — or $29.99 monthly",
+    price: yearly ? "$20" : "$29.99",
+    period: yearly ? "per month — $240 billed yearly" : "per month, billed monthly",
     blurb: "Analysis without limits, with live data doing the typing.",
     features: [
       "Everything in Free",
@@ -897,6 +898,28 @@ function Pricing({ onSignUp }) {
         title="One simple plan. Cancel anytime."
         subtitle="Try it free. Upgrade when you're ready to see the full feed."
       />
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+        <div style={{
+          display: "inline-flex", padding: 4, background: "#fff",
+          border: "1px solid " + C.border, borderRadius: 9999,
+          boxShadow: "0 1px 2px 0 rgba(15,23,42,.05)",
+        }}>
+          {[["monthly", "Pay Monthly"], ["yearly", "Pay Yearly · save 33%"]].map(([id, label]) => {
+            const active = (id === "yearly") === yearly;
+            return (
+              <button key={id} onClick={() => setYearly(id === "yearly")} style={{
+                padding: "9px 18px", borderRadius: 9999, border: "none", cursor: "pointer",
+                background: active ? C.orange : "transparent",
+                color: active ? "#fff" : C.textSub,
+                fontSize: 13.5, fontWeight: 700, fontFamily: F, letterSpacing: "-0.005em",
+                transition: "background .15s, color .15s",
+              }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
         gap: 20, maxWidth: 820, margin: "0 auto",
