@@ -2178,15 +2178,16 @@ function HiwDevices() {
           Island, side buttons; the app content crops like a scrolled screen. */}
       <div className="dh-hiw-phone" style={{position: "absolute", right: "1%", bottom: -8,
         width: "clamp(168px, 25%, 224px)", zIndex: 2}}>
-        <div style={{position: "relative", background: "#0e1319", borderRadius: 38, padding: 9,
-          aspectRatio: "9 / 19",
-          boxShadow: "0 36px 72px -20px rgba(9,12,18,.65)"}}>
+        <div style={{position: "relative",
+          background: "linear-gradient(155deg, #f79a52 0%, #E8731C 42%, #b85408 100%)",
+          borderRadius: 38, padding: 9, aspectRatio: "9 / 19",
+          boxShadow: "0 36px 72px -20px rgba(9,12,18,.6), 0 14px 44px -12px rgba(232,115,28,.45)"}}>
           <span style={{position: "absolute", left: -2.5, top: "20%", width: 3, height: "6%",
-            background: "#232b36", borderRadius: 2}}/>
+            background: "#a34a06", borderRadius: 2}}/>
           <span style={{position: "absolute", left: -2.5, top: "28.5%", width: 3, height: "6%",
-            background: "#232b36", borderRadius: 2}}/>
+            background: "#a34a06", borderRadius: 2}}/>
           <span style={{position: "absolute", right: -2.5, top: "23%", width: 3, height: "10%",
-            background: "#232b36", borderRadius: 2}}/>
+            background: "#a34a06", borderRadius: 2}}/>
           <div style={{position: "relative", borderRadius: 30, overflow: "hidden",
             background: "#fff", height: "100%"}}>
             <div style={{position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",

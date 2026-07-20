@@ -9880,6 +9880,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 // Deals, Analyzer, Comps, and a Saved Deals dashboard.
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
+  {id:"portfolio",  Icon:I.parcel,         label:"Portfolio",  adminOnly:true},
   {id:"deals",      Icon:I.star,           label:"Deals"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
@@ -10007,7 +10008,7 @@ function MobileNav({page, setPage, alertCount, isAdmin}) {
 function MobileHeader({page, onBack, toast, onAddProperty}) {
   const showBack = page==="property";
   const titles = {
-    dashboard:"Portfolio", properties:"Properties", projects:"Projects",
+    dashboard:"Dashboard", portfolio:"Portfolio", properties:"Properties", projects:"Projects",
     deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:"Property"
   };
@@ -10213,7 +10214,7 @@ function Toast({msg}) {
 // -- Desktop Top Bar -----------------------------------------------------------
 function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
   const titles = {
-    dashboard:"Dashboard", properties:"Properties", projects:"Projects",
+    dashboard:"Dashboard", portfolio:"Portfolio", properties:"Properties", projects:"Projects",
     deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:propAddress||"Property"
   };
@@ -10793,7 +10794,7 @@ export default function App() {
     // purchase method, so the save is one tap. The Deals-page save keeps its
     // sheet since market cards carry no user choice yet.
     assumptions: data.assumptions || null,
-    onSaveToWatchlist: isAdmin ? null : (pf, suggested) => {
+    onSaveToWatchlist: (pf, suggested) => {
       const isCash = pf.chosenStrategy === "cash";
       const res = saveDealToWatchlist(
         {...proFormaToFeedDeal(pf), chosenStrategy: pf.chosenStrategy,
@@ -10847,9 +10848,7 @@ export default function App() {
           <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
             onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
         ) : page==="dashboard" ? (
-          isAdmin
-            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
-            : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+          <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={isAdmin ? "pro" : (data.tier||"free")}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
@@ -10857,6 +10856,8 @@ export default function App() {
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
                 onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
                 openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
+        ) : page==="portfolio" && isAdmin ? (
+          <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -10928,9 +10929,7 @@ export default function App() {
               <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
                 onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
             ) : page==="dashboard" ? (
-              isAdmin
-                ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
-                : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
+              <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={isAdmin ? "pro" : (data.tier||"free")}
                     onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                     onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
@@ -10938,6 +10937,8 @@ export default function App() {
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
                 onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
                 openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
+            ) : page==="portfolio" && isAdmin ? (
+              <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
