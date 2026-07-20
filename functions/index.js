@@ -60,28 +60,15 @@ const RESIDENTIAL_TYPES = new Set([
   "Single Family", "Multi-Family", "Townhouse", "Condo",
 ]);
 
-// Pull caps — env-tunable for live tuning without redeploy:
-//   InvestorLift (Apify):   50 raw / day (nationwide, own cap)
-//   DealHive 2 (FSBO.com):  browser actor — volume bounded by the metro list
-//                           below plus this hard cap
-const INVESTORLIFT_MAX  = parseInt(process.env.INVESTORLIFT_MAX  || "50",  10);
+// Pull caps — env-tunable for live tuning without redeploy. FSBO.com is the
+// feed's sole source: address-rich by-owner listings with seller contact.
 const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
-// FSBO.com (real browser) and Zillow (44 zips) both outgrow run-sync's
-// 300s ceiling, so they run start -> poll -> collect: the run gets a
-// server-side kill switch (timeout= on the run start) and we poll up to
-// LONG_RUN_WAIT_MS before the pipeline moves on with the partial harvest.
+// The browser actor outgrows run-sync's 300s ceiling, so it runs
+// start -> poll -> collect: a server-side kill switch (timeout= on the run
+// start) and our poll gives up at LONG_RUN_WAIT_MS, keeping the partial
+// harvest either way.
 const LONG_RUN_TIMEOUT_S = 400;
 const LONG_RUN_WAIT_MS   = 420 * 1000;
-// DealHive 4 (Zillow FSBO by ZIP): pay-per-result actor (~$2.70/1k), so
-// spend ≈ zips × per-zip cap. 14-day window keeps the feed stocked even
-// though we rebuild it nightly.
-const ZILLOW_MAX        = parseInt(process.env.ZILLOW_MAX        || "300", 10);
-const ZILLOW_PER_ZIP    = parseInt(process.env.ZILLOW_PER_ZIP    || "15",  10);
-const ZILLOW_MAX_AGE_H  = parseInt(process.env.ZILLOW_MAX_AGE_H  || "336", 10);
-// The actor can't work all ~44 zips inside one 400s run (a full-list night
-// yielded 0 items), so each night takes a 12-zip bite of the daily-rotated
-// list — the whole list gets swept every ~4 nights.
-const ZILLOW_ZIPS_PER_RUN = parseInt(process.env.ZILLOW_ZIPS_PER_RUN || "12", 10);
 
 // Metros the FSBO.com actor searches ("City, ST", 100-mile radius each) — a
 // dozen well-spread hubs blanket the same cash-flow geography the old
@@ -102,43 +89,6 @@ const FSBO_LOCATIONS = (process.env.FSBO_LOCATIONS || [
   "Tampa, FL",         // + Orlando / St. Pete
   "San Antonio, TX",   // + Austin
 ].join("|")).split("|").map(s => s.trim()).filter(Boolean);
-
-// Investor-grade ZIPs for the Zillow FSBO actor — it's ZIP-driven, unlike
-// the metro-driven FSBO.com actor above. Two-ish zips per cash-flow metro;
-// spend scales with this list × ZILLOW_PER_ZIP.
-const ZILLOW_ZIPS = (process.env.ZILLOW_ZIPS || [
-  "44105","44110","44120",      // Cleveland
-  "43211","43207",              // Columbus
-  "43605","43608",              // Toledo
-  "45402","45417",              // Dayton
-  "48205","48227","48224",      // Detroit
-  "48503",                      // Flint
-  "38109","38127","38118",      // Memphis
-  "37411",                      // Chattanooga
-  "35208","35218",              // Birmingham
-  "35805",                      // Huntsville
-  "36108",                      // Montgomery
-  "46201","46218",              // Indianapolis
-  "46806",                      // Fort Wayne
-  "64130","64128",              // Kansas City
-  "63115","63120",              // St. Louis
-  "15210","15221",              // Pittsburgh
-  "19132","19140",              // Philadelphia
-  "53206","53216",              // Milwaukee
-  "21215","21223",              // Baltimore
-  "32209",                      // Jacksonville
-  "33612",                      // Tampa
-  "73111",                      // Oklahoma City
-  "74106",                      // Tulsa
-  "40211",                      // Louisville
-  "72204",                      // Little Rock
-  "27405",                      // Greensboro
-  "28301",                      // Fayetteville
-  "30901",                      // Augusta
-  "31206",                      // Macon
-  "78207","78228",              // San Antonio
-  "78744",                      // Austin
-].join(",")).split(",").map(s => s.trim()).filter(Boolean);
 
 // Effective property-tax rates by state (annual % of value). Used by
 // classifyDeal — the previous code applied Ohio's 2.33% to every deal, which
@@ -165,133 +115,6 @@ function generateDealTitle({beds, type, city, state}) {
   const lead = beds && beds > 0 ? `${beds}-bed ${t}` : t;
   const loc  = city ? ` in ${city}${state ? `, ${state}` : ""}` : "";
   return `${lead}${loc}`;
-}
-
-// -- Source: Apify InvestorLift scraper ---------------------------------------
-// Returns {items, debug}. The debug field is surfaced in the /pullDealsNow
-// response so we can diagnose schema/auth/empty-result issues without
-// crawling Cloud Logging.
-async function pullFromApify(token, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const actor = "corent1robert~investorlift-scraper";
-  const url = `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}&memory=1024`;
-  let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({maxItems, enrichWithDetails: true, dealIds: []}),
-    });
-  } catch (e) {
-    return {items: [], debug: {error: `fetch threw: ${e.message}`}, ok: false};
-  }
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 400);
-    return {items: [], debug: {httpStatus: res.status, body}, ok: false};
-  }
-  let parsed;
-  try { parsed = await res.json(); } catch (e) {
-    return {items: [], debug: {error: `JSON parse failed: ${e.message}`}, ok: false};
-  }
-  if (!Array.isArray(parsed)) {
-    return {items: [], debug: {nonArrayPayload: Object.keys(parsed || {}).slice(0, 30)}, ok: false};
-  }
-  const rawCount = parsed.length;
-  // Capture the shape of the first item — field names only, no values, so we
-  // can update mapApifyDeal without exposing scraped seller data in chat.
-  const sampleKeys = parsed[0] ? Object.keys(parsed[0]).slice(0, 50) : [];
-  const items = parsed.map(mapApifyDeal).filter(Boolean);
-  return {
-    items,
-    debug: {
-      httpStatus: res.status,
-      rawCount,
-      mappedCount: items.length,
-      droppedCount: rawCount - items.length,
-      sampleKeys,
-      // First item's actual values for safe fields — lets us debug type
-      // coercion issues (e.g. price arriving as "$79,900" instead of a number).
-      sampleValues: parsed[0] ? {
-        id:            parsed[0].id,
-        price:         parsed[0].price,
-        priceType:     typeof parsed[0].price,
-        city:          parsed[0].city,
-        state_code:    parsed[0].state_code,
-        title:         parsed[0].title,
-        property_type: parsed[0].property_type,
-        bedrooms:      parsed[0].bedrooms,
-        bedroomsType:  typeof parsed[0].bedrooms,
-      } : null,
-    },
-    ok: true,
-  };
-}
-
-// Maps an InvestorLift item (via Apify) into our internal deal shape.
-// InvestorLift only exposes city/state/zip publicly — exact street addresses
-// are gated behind their login + NDA, so the actor returns a marketing
-// `title` instead and the wholesaler's name/company as the contact. We
-// surface that on the card; users click through to InvestorLift to get the
-// address and contact info after expressing interest.
-function mapApifyDeal(raw) {
-  // Apify scrapers often hand back prices as formatted strings ("$79,900")
-  // rather than numbers — Number() chokes on that and returns NaN. Strip
-  // anything that isn't a digit or dot, then parse.
-  const price = parseLoose(raw.price);
-  const city  = raw.city || "";
-  const state = normalizeState(raw.state_code || raw.state);
-  if (!price || !city) return null;
-
-  return {
-    id:        "il-" + (raw.id || hashId(`${raw.title || ""}|${city}|${raw.zip || ""}`)),
-    source:    "DealHive 1", // InvestorLift via Apify (corent1robert~investorlift-scraper)
-    sourceUrl: raw.property_page_url || null,
-    // `published_at` is ISO ("2026-05-26T12:34:56Z") — slice to date for display.
-    sourcedAt: raw.published_at ? String(raw.published_at).slice(0, 10) : today(),
-    // Title is a marketing line ("Cleveland off-market BRRRR opportunity") —
-    // the most location info available since the street address is gated.
-    // Clean, consistent display title — we generate our own rather than
-    // surfacing InvestorLift's marketing copy (emojis, ALL CAPS).
-    address:   generateDealTitle({
-      beds:  int(raw.bedrooms),
-      type:  normalizeType(raw.property_type),
-      city,
-      state,
-    }),
-    city,
-    state,
-    zip:       String(raw.zip || ""),
-    lat:       num(raw.latitude),
-    lng:       num(raw.longitude),
-    type:      normalizeType(raw.property_type),
-    beds:      int(raw.bedrooms),
-    baths:     num(raw.bathrooms),
-    sqft:      int(raw.sq_footage),
-    yearBuilt: int(raw.year_built),
-    price,
-    repair:    0, // InvestorLift doesn't publish a rehab number; user runs it through the analyzer
-    rent:      0, // 1% rule fallback in classifyDeal fills this for the buyhold score
-    arv:       int(raw.arv_estimate),
-    photo:     raw.img_url || null,
-    // Gallery support — actor currently returns one hero image, but the
-    // client renders a carousel that scales to N photos so this is ready
-    // when we either upgrade the actor or add a second-pass per-deal pull.
-    photos:    raw.img_url ? [raw.img_url] : [],
-    seller: {
-      name:    raw.wholesaler_name || raw.account_title || null,
-      company: raw.wholesaler_company || null,
-      // InvestorLift gates phone/email behind their login — clicking the
-      // sourceUrl is how the buyer actually gets in touch.
-      phone:   null,
-      email:   null,
-    },
-    market: marketIdForState(state),
-    // Bonus metadata the Deals page can surface to make Network cards stand
-    // out vs. RentCast listings (description, freshness, "hotness" hint).
-    description:  raw.description ? String(raw.description).slice(0, 500) : null,
-    daysListed:   int(raw.days_on_il),
-    hotness:      raw.hotness || null,
-  };
 }
 
 // -- Source: DealHive 2 (dainty_screw/real-estate-fsbo-com-data-scraper) ------
@@ -709,125 +532,24 @@ function hashId(s) {
 // by un-commenting the call below) but is intentionally not used: RentCast
 // surfaces generic public listings with no photos, which dilutes the Deals
 // page. Sticking to the exclusive InvestorLift Network feed only.
-// -- Source: DealHive 4 (ayk_6789/zillow-new-listings-scraper via Apify) -------
-// Zillow FSBO listings by ZIP — the address-rich, photo-rich off-market
-// source. 44 zips outgrow run-sync's 300s ceiling, so it goes through the
-// same start -> poll -> collect runner as FSBO.com.
-async function pullFromZillow(token, maxItems) {
-  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
-  const {parsed, status, debug} = await apifyRunCollect(
-    token, "ayk_6789~zillow-new-listings-scraper", {
-      zipCodes:           rotateDaily(ZILLOW_ZIPS).slice(0, ZILLOW_ZIPS_PER_RUN),
-      listingTypes:       ["fsbo"],
-      maxListingAgeHours: ZILLOW_MAX_AGE_H,
-      maxListingsPerZip:  ZILLOW_PER_ZIP,
-      deduplicateResults: true,
-    }, {memory: 1024, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
-  if (!parsed) return {items: [], debug, ok: false};
-
-  const mapped = parsed.map(mapZillowDeal).filter(Boolean);
-  const items  = mapped.slice(0, maxItems);
-  return {
-    items,
-    debug: {
-      ...debug,
-      rawCount:     parsed.length,
-      mappedCount:  mapped.length,
-      keptCount:    items.length,
-      droppedCount: parsed.length - mapped.length,
-      sampleKeys:   parsed[0] ? Object.keys(parsed[0]).slice(0, 60) : [],
-    },
-    ok: status === "SUCCEEDED" || items.length > 0,
-  };
-}
-
-const ZILLOW_TYPE_MAP = {
-  SINGLE_FAMILY: "Single Family",
-  MULTI_FAMILY:  "Multi-Family",
-  TOWNHOUSE:     "Townhouse",
-  CONDO:         "Condo",
-  APARTMENT:     "Multi-Family",
-};
-
-function mapZillowDeal(raw) {
-  const price = parseLoose(raw.price);
-  const city  = raw.city || "";
-  const state = normalizeState(raw.state);
-  if (!price || !city || !state) return null;
-  if (raw.is_pending) return null;
-
-  const street = raw.street || raw.address_full || null;
-  const photos = (Array.isArray(raw.carousel_photos) && raw.carousel_photos.length
-    ? raw.carousel_photos
-    : (raw.photo_url ? [raw.photo_url] : [])).filter(Boolean);
-  const beds = int(raw.beds);
-  const type = ZILLOW_TYPE_MAP[raw.home_type] || normalizeType(raw.home_type);
-
-  return {
-    id:        "z4-" + (raw.zpid || hashId(`${street || ""}|${city}|${state}`)),
-    source:    "DealHive 4", // Zillow FSBO
-    sourceUrl: null, // never link out
-    sourcedAt: today(),
-    address:       generateDealTitle({beds, type, city, state}),
-    streetAddress: street,
-    city,
-    state,
-    zip:       String(raw.zip || ""),
-    lat:       num(raw.lat),
-    lng:       num(raw.lng),
-    type,
-    beds,
-    baths:     num(raw.baths),
-    sqft:      int(raw.sqft),
-    yearBuilt: int(raw.year_built),
-    lotSize:   int(raw.lot_sqft),
-    price,
-    repair:    0, // owner listings; classifyDeal applies its default rehab
-    // Zillow's own rent estimate rides along — better than the 1% fallback.
-    rent:      int(raw.rent_zestimate),
-    arv:       int(raw.zestimate),
-    photo:     photos[0] || null,
-    photos,
-    // FSBO means the owner IS the seller, but this actor exposes no contact
-    // details — the full address is the value here.
-    seller:    null,
-    market:    marketIdForState(state),
-    description: null,
-  };
-}
-
 async function runPipeline(apifyKey, _rentcastKey) {
-  const sources = {investorlift: 0, dealhive2: 0, dealhive4: 0};
-  const errors  = {investorlift: false, dealhive2: false, dealhive4: false};
+  const sources = {dealhive2: 0};
+  const errors  = {dealhive2: false};
   const debug   = {};
   const raw     = [];
 
-  // Pulls run in parallel. The API-style actors take 1-3 minutes; FSBO.com
-  // drives a real browser and polls up to ~7, all inside this function's
-  // 540s ceiling. Combined actor memory (1 + 4 + 1 GB) stays well under
-  // Apify's 8GB account ceiling.
+  // FSBO.com drives a real browser and can poll up to ~7 minutes, all
+  // inside this function's 540s ceiling.
   if (!apifyKey) {
-    errors.investorlift = errors.dealhive2 = errors.dealhive4 = true;
-    debug.apify = debug.fsbo = debug.zillow = {error: "APIFY_API_KEY not set"};
+    errors.dealhive2 = true;
+    debug.fsbo = {error: "APIFY_API_KEY not set"};
   } else {
     const sourceTasks = [
-      {
-        name:     "investorlift",
-        debugKey: "apify",
-        label:    "InvestorLift",
-        run:      () => pullFromApify(apifyKey, INVESTORLIFT_MAX),
-      },
       {
         name:     "dealhive2",
         debugKey: "fsbo",
         label:    "FSBO.com (DealHive 2)",
         run:      () => pullFromFsbo(apifyKey, FSBO_MAX),
-      },
-      {
-        name:     "dealhive4",
-        debugKey: "zillow",
-        label:    "zillow FSBO (DealHive 4)",
-        run:      () => pullFromZillow(apifyKey, ZILLOW_MAX),
       },
     ];
 

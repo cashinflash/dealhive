@@ -5737,7 +5737,6 @@ function StrategySegments({value, onChange, counts}) {
     ["buyhold",   "Rentals"],
     ["brrrr",     "BRRRR"],
     ["flip",      "Fix & Flip"],
-    ["wholesale", "Wholesale"],
   ];
   return (
     <div style={{display:"flex", padding:3, background:C.bgSubtle,
@@ -6485,8 +6484,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
   const c = classifyDeal(deal);
   // The analyzer passes an explicit suggestion (whatever section the user had
   // open); market saves fall back to the automatic classification.
-  const suggested = suggestedOverride || (isWholesaleDeal(deal) ? "wholesale"
-    : c.tags.includes("buyhold") ? "buyhold"
+  const suggested = suggestedOverride || (c.tags.includes("buyhold") ? "buyhold"
     : c.tags.includes("flip")    ? "flip"
     : c.tags.includes("brrrr")   ? "brrrr"
     : "buyhold");
@@ -6517,7 +6515,6 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
     {id:"buyhold",   Icon:I.building, label:"Rentals",     line:"Hold it, rent it, cash flow"},
     {id:"brrrr",     Icon:I.cycle,    label:"BRRRR",       line:"Rehab, rent, refi, repeat"},
     {id:"flip",      Icon:I.chart,    label:"Fix & Flip",  line:"Renovate and resell"},
-    {id:"wholesale", Icon:I.star,     label:"Wholesale",   line:"Assign the contract"},
   ];
 
   const outerStyle = mobile
@@ -6673,7 +6670,7 @@ function StrategyCards({active, counts, onSelect, mobile}) {
     {id:"buyhold",   Icon:I.building, title:"Rentals",     line:"Cash-flowing buy and holds"},
     {id:"brrrr",     Icon:I.cycle,    title:"BRRRR",       line:"Rehab, rent, refi, repeat"},
     {id:"flip",      Icon:I.chart,    title:"Fix & Flips", line:"Profit and ROI already sized"},
-    {id:"wholesale", Icon:I.star,     title:"Wholesale",   line:"Assignments with seller contact"},
+    {id:"all",       Icon:I.tag,      title:"Off Market",  line:"Direct from the owner"},
   ];
   return (
     <div style={{display:"grid", gap:12, marginBottom:20,
@@ -8440,8 +8437,8 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
             The Deal Feed is a Pro feature
           </div>
           <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, lineHeight:1.6, maxWidth:400}}>
-            Wholesale, MLS, and off-market deals land here every night — exact
-            addresses, seller contacts, and the numbers already run.
+            Off-market, for-sale-by-owner deals land here every night — exact
+            addresses, owner contact, and the numbers already run.
           </div>
           <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:2})}>
             <I.star size={14}/> Unlock the Deal Feed — $29.99/mo
@@ -8524,7 +8521,6 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
     if (strategy === "buyhold"   && !c.tags.includes("buyhold")) return false;
     if (strategy === "brrrr"     && !c.tags.includes("brrrr"))   return false;
     if (strategy === "flip"      && !c.tags.includes("flip"))    return false;
-    if (strategy === "wholesale" && !isWholesaleDeal(d))         return false;
     return true;
   });
   const marketCountsByState = new Map();

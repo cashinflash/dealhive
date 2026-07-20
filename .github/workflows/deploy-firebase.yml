@@ -86,6 +86,12 @@ jobs:
       - name: Deploy DB rules + functions
         run: firebase deploy --only database,functions --project darallc --force --non-interactive
 
+      # Every deploy re-saves the runtime secrets, and Google bills per stored
+      # version (~6 cents/version/month). Destroy the versions no deployed
+      # function references so the bill stays flat.
+      - name: Prune old secret versions
+        run: firebase functions:secrets:prune --project darallc --force
+
       - name: Summarize
         run: |
           {
