@@ -62,7 +62,10 @@ const isOhio = obj => String((obj && obj.state) || "").trim().toUpperCase() === 
 //   1. A cache (per user, TTL'd) — repeating the same address is free.
 //   2. A monthly cap on fresh (cache-miss) lookups — bounds worst-case spend.
 // LOOKUP_CAP is the only knob most people need to tune.
-const LOOKUP_CAP    = 200;            // fresh billable lookups per user, per month
+const LOOKUP_CAP    = 250;            // Pro: fresh billable lookups per month
+// Free tier meters by feature: address/property pulls, sales-comp lookups,
+// rental-comp lookups. Manual analyzing (no API) is always unlimited.
+const FREE_LIMITS   = {pulls: 3, sales: 5, rent: 5};
 const CACHE_TTL_MS  = 30 * 86400000;  // cached results stay fresh for 30 days
 const CACHE_MAX     = 50;             // most recent entries kept; older ones pruned
 const monthKey      = () => new Date().toISOString().slice(0, 7);   // "2026-05"
@@ -1905,7 +1908,7 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
       } catch (e) {
         if (!alive) return;
         setSt(x => ({...x, loading:false,
-          err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Rent lookup failed. Check the address and try again."}));
+          err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Rent lookup failed. Check the address and try again."}));
       }
     })();
     return () => { alive = false; };
@@ -2272,7 +2275,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         setAvmMsg({kind:"ok", med, lo, hi});
       }
     } catch (e) {
-      setAvmMsg({kind:"err", text: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Value lookup failed. Check the address and try again."});
+      setAvmMsg({kind:"err", text: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Value lookup failed. Check the address and try again."});
     }
     setAvmBusy(false);
   };
@@ -3321,7 +3324,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
       const d = await apiLookup(key, () => rentcastFetch(prop.address, prop.city, prop.state, prop.zip, rcAuth));
       if (rcHasData(d)) onChange(applyRentcast(prop, d, renoRates));
       else setRefreshErr("No public records found for this address.");
-    } catch (e) { setRefreshErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Refresh failed."); }
+    } catch (e) { setRefreshErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Refresh failed."); }
     setRefreshing(false);
   };
 
@@ -6649,7 +6652,7 @@ function SaveDealSheet({deal, suggestedOverride, onCancel, onConfirm, mobile}) {
             background:C.amberSubtle, border:"1px solid "+C.amberBorder, borderRadius:C.r2,
             padding:"10px 12px", fontSize:13, color:C.amberDark, fontFamily:F, lineHeight:1.5}}>
             <I.alert size={14} style={{flexShrink:0, marginTop:1}}/>
-            <span>The Free plan holds 15 saved deals. Upgrade to Pro in Settings for unlimited saves.</span>
+            <span>The Free plan holds 3 saved deals. Upgrade to Pro in Settings for unlimited saves.</span>
           </div>
         )}
         <button onClick={()=>{ const r = onConfirm(scenario, financing); setResult(r === "updated" ? "updated" : r === "limit" ? "limit" : r ? "saved" : "dupe"); }}
@@ -7103,7 +7106,7 @@ function usePropertyRecord(deal, apiLookup, rcAuth, enabled = true) {
         setSt({loading:false, err: rec ? null : "No county records found for this address yet.", rec});
       } catch (e) {
         if (!alive) return;
-        setSt({loading:false, err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Lookup failed. Try again in a moment.", rec:null});
+        setSt({loading:false, err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Lookup failed. Try again in a moment.", rec:null});
       }
     })();
     return () => { alive = false; };
@@ -7352,7 +7355,7 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
       } catch (e) {
         if (!alive) return;
         setSt(x => ({...x, loading:false,
-          err: e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Value lookup failed. Try again in a moment."}));
+          err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Value lookup failed. Try again in a moment."}));
       }
     })();
     return () => { alive = false; };
@@ -8441,7 +8444,7 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
             addresses, owner contact, and the numbers already run.
           </div>
           <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:2})}>
-            <I.star size={14}/> Unlock the Deal Feed — $29.99/mo
+            <I.star size={14}/> Unlock the Deal Feed — from $20/mo
           </button>
           <div style={{fontSize:12, color:C.textMuted, fontFamily:F}}>Cancel anytime.</div>
         </div>
@@ -8759,7 +8762,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth));
         if (rcHasData(data)) setD(prev => applyRentcast(prev, data, renoRates));
       } catch (e) {
-        setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "");
+        setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "");
       }
       setBasicsLoading(false);
     })();
@@ -9384,7 +9387,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
         });
         setSaleComps(result);
       }
-    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Search failed. Check the address and try again."); }
+    } catch (e) { setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Search failed. Check the address and try again."); }
     setL(false);
   };
 
@@ -9645,7 +9648,7 @@ function LeaseComps({rentcastKey, onSaveKey, mobile, apiLookup}) {
 }
 
 // -- Settings ------------------------------------------------------------------
-function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade, billing=null, billingBusy=false, isAdmin=false, assumptions={}, onSaveAssumptions}) {
+function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onDowngrade, billing=null, billingBusy=false, isAdmin=false, assumptions={}, onSaveAssumptions, authToken=null}) {
   const isPro = tier === "pro";
   const periodEnd = billing && billing.currentPeriodEnd
     ? new Date(billing.currentPeriodEnd).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})
@@ -9725,6 +9728,16 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
         </div>
       </SectionBlock>
 
+      {isAdmin && authToken && (
+        <SectionBlock title="API Usage (Admin)" color={C.blue} icon={I.chart}>
+          <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:12}}>
+            What each account's live data lookups cost this month (about 7.4¢ per
+            fresh lookup — repeat views are cached and free).
+          </div>
+          <AdminUsagePanel token={authToken}/>
+        </SectionBlock>
+      )}
+
       <SectionBlock title="Analyzer Defaults" color={C.blue} icon={I.settings}>
         <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:14}}>
           Every new analysis starts with these numbers. Deals you've already
@@ -9786,7 +9799,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
       const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rcAuth));
       if (!rcHasData(data)) setErr("No public records found for that address yet — you can fill the details in manually.");
       else setP(prev => applyRentcast(prev, data, renoRates));
-    } catch (e) { setErr(e && e.code === "CAP" ? LOOKUP_CAP_MSG : "Auto-fill failed."); }
+    } catch (e) { setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Auto-fill failed."); }
     setL(false);
   };
   const runSearch = () => pullData(p.address, p.city, p.state, p.zip);
@@ -10040,6 +10053,107 @@ function MobileHeader({page, onBack, toast, onAddProperty}) {
 
 // Floating confirmation toast — top-center, wraps instead of truncating,
 // styled like the rest of the portal instead of squeezing into the header.
+// Plan picker — yearly leads (best value), monthly follows. Opens whenever
+// a non-admin taps any Upgrade CTA; the choice rides to Stripe checkout.
+function PlanSheet({busy, onChoose, onClose}) {
+  useEffect(() => {
+    lockBodyScroll();
+    const h = e => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => { unlockBodyScroll(); window.removeEventListener("keydown", h); };
+  }, [onClose]);
+  const opts = [
+    {id:"yearly",  tag:"Best value — save 33%", title:"$20/mo",    sub:"Billed $240 once a year", hot:true},
+    {id:"monthly", tag:null,                    title:"$29.99/mo", sub:"Billed monthly",          hot:false},
+  ];
+  return (
+    <div style={{position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:650,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+      backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{background:C.card, borderRadius:C.r5, width:"100%", maxWidth:400,
+        boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 20px"}}>
+        <div style={{textAlign:"center", marginBottom:16}}>
+          <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            Go Pro 🐝
+          </div>
+          <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+            Unlimited saves & analyzing, 250 data lookups a month, and the full deal feed.
+          </div>
+        </div>
+        <div style={{display:"flex", flexDirection:"column", gap:10}}>
+          {opts.map(o => (
+            <button key={o.id} disabled={busy} onClick={() => onChoose(o.id)}
+              style={{textAlign:"left", cursor:"pointer", borderRadius:C.r3, padding:"14px 16px",
+                background: o.hot ? C.greenSubtle : C.card, fontFamily:F,
+                border: o.hot ? "2px solid " + C.green : "1px solid " + C.border,
+                opacity: busy ? .6 : 1}}>
+              {o.tag && (
+                <div style={{fontSize:10.5, fontWeight:800, color:C.greenDark, letterSpacing:".05em",
+                  textTransform:"uppercase", marginBottom:3}}>{o.tag}</div>
+              )}
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10}}>
+                <span style={{fontSize:18, fontWeight:800, color:C.text, letterSpacing:"-0.02em",
+                  fontVariantNumeric:"tabular-nums"}}>{o.title}</span>
+                <span style={{fontSize:12, color:C.textSub}}>{o.sub}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+        <button onClick={onClose} style={{background:"transparent", border:"none", cursor:"pointer",
+          color:C.textMuted, fontSize:12.5, fontFamily:F, padding:"12px 4px 0", width:"100%",
+          textAlign:"center"}}>
+          Maybe later
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Admin-only: what each account's data lookups cost this month.
+function AdminUsagePanel({token}) {
+  const [st, setSt] = useState({busy:false, err:null, data:null});
+  const load = async () => {
+    setSt({busy:true, err:null, data:null});
+    try {
+      const r = await fetch(`${FN_BASE}/usageReport`, {method:"POST",
+        headers:{Authorization:`Bearer ${token}`}});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "failed");
+      setSt({busy:false, err:null, data:d});
+    } catch { setSt({busy:false, err:"Couldn't load the report.", data:null}); }
+  };
+  const d = st.data;
+  return (
+    <>
+      <button onClick={load} disabled={st.busy} {...btnStyle("secondary","md", {marginBottom:12})}>
+        {st.busy ? "Loading…" : <><I.chart size={13}/> Load This Month's Usage</>}
+      </button>
+      {st.err && <div style={{fontSize:12.5, color:C.redDark, fontFamily:F}}>{st.err}</div>}
+      {d && d.rows.length === 0 && (
+        <div style={{fontSize:12.5, color:C.textSub, fontFamily:F}}>No lookups yet in {d.month}.</div>
+      )}
+      {d && d.rows.length > 0 && (
+        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden"}}>
+          {d.rows.map((r, i) => (
+            <div key={r.email + i} style={{display:"flex", justifyContent:"space-between", gap:10,
+              padding:"9px 12px", borderBottom: i === d.rows.length - 1 ? "none" : "1px solid "+C.border,
+              fontFamily:F, fontSize:12.5}}>
+              <span style={{minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                color:C.text, fontWeight:600}}>{r.email}
+                <span style={{color:C.textMuted, fontWeight:500}}> · {r.tier}</span>
+              </span>
+              <span style={{flexShrink:0, color:C.textSub, fontVariantNumeric:"tabular-nums"}}>
+                {r.lookups} lookups · ~${r.estCost.toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Toast({msg}) {
   if (!msg) return null;
   return (
@@ -10143,11 +10257,13 @@ export default function App() {
   const [billingBusy, setBillingBusy] = useState(false);
   // Checkout and the customer portal both come back as a URL we send the
   // browser to. Fresh token first — these calls are token-gated server-side.
-  const callBillingFn = async (name) => {
+  const callBillingFn = async (name, body) => {
     const u = (await refreshSession()) || userRef.current;
     if (!u) throw new Error("Sign in first.");
     const r = await fetch(`${FN_BASE}/${name}`, {method: "POST",
-      headers: {Authorization: `Bearer ${u.idToken}`}});
+      headers: {Authorization: `Bearer ${u.idToken}`,
+        ...(body ? {"Content-Type": "application/json"} : {})},
+      ...(body ? {body: JSON.stringify(body)} : {})});
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.url) throw new Error(d.error || "Billing is unavailable right now — try again in a minute.");
     return d.url;
@@ -10163,10 +10279,11 @@ export default function App() {
       return r.ok ? d : null;
     } catch { return null; }
   };
-  const startCheckout = async () => {
+  const [planOpen, setPlanOpen] = useState(false);
+  const startCheckout = async (plan = "monthly") => {
     if (billingBusy) return;
     setBillingBusy(true);
-    try { window.location.assign(await callBillingFn("createCheckoutSession")); }
+    try { window.location.assign(await callBillingFn("createCheckoutSession", {plan})); }
     catch (e) {
       setToast(e.message || "Could not start checkout.");
       setTimeout(() => setToast(""), 3200);
@@ -10413,8 +10530,25 @@ export default function App() {
     if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.payload;
 
     const month = monthKey();
-    const used = (data && data.usage && data.usage.month === month) ? (data.usage.count || 0) : 0;
-    if (count && used >= LOOKUP_CAP) { const e = new Error("LOOKUP_CAP"); e.code = "CAP"; throw e; }
+    const u0 = (data && data.usage && data.usage.month === month)
+      ? data.usage : {month, count: 0, pulls: 0, sales: 0, rent: 0};
+    const kind = key.startsWith("rc-salescomps") || key.startsWith("rc-sale-comp") ? "sales"
+      : key.startsWith("rc-rent") ? "rent"
+      : "pulls";
+    const isProUser = !!(data && (data.tier === "pro" || data.role === "admin"));
+    if (count) {
+      if (isProUser) {
+        if ((u0.count || 0) >= LOOKUP_CAP) { const e = new Error("LOOKUP_CAP"); e.code = "CAP"; throw e; }
+      } else if ((u0[kind] || 0) >= FREE_LIMITS[kind]) {
+        const noun = kind === "sales" ? "sales-comp lookups"
+          : kind === "rent" ? "rental-comp lookups" : "property lookups";
+        const e = new Error("FREE_LIMIT");
+        e.code = "CAP";
+        e.capMsg = `You've used your ${FREE_LIMITS[kind]} free ${noun} this month. ` +
+          `Pro includes ${LOOKUP_CAP} lookups a month — or yours reset on the 1st.`;
+        throw e;
+      }
+    }
 
     const payload = await fetcher();
 
@@ -10426,7 +10560,9 @@ export default function App() {
     persistQuiet({
       ...data,
       apiCache: Object.fromEntries(entries),
-      usage: count ? { month, count: used + 1 } : (data.usage || null),
+      usage: count
+        ? {...u0, month, count: (u0.count || 0) + 1, [kind]: (u0[kind] || 0) + 1}
+        : (data.usage || null),
     });
     return payload;
   }, [data, persistQuiet]);
@@ -10528,8 +10664,8 @@ export default function App() {
     const fin = financing === "owned" ? "already owned" : financing === "cash" ? "all cash" : "financed";
     const match = existing.find(x => x.id === deal.id ||
       (deal.address && x.address === deal.address && x.city === deal.city));
-    if (!match && (data.tier||"free") !== "pro" && existing.length >= 15) {
-      setToast("Free plan holds 15 saved deals — upgrade to Pro for unlimited");
+    if (!match && (data.tier||"free") !== "pro" && existing.length >= 3) {
+      setToast("Free plan holds 3 saved deals — upgrade to Pro for unlimited");
       setTimeout(()=>setToast(""), 2600);
       return "limit";
     }
@@ -10584,7 +10720,7 @@ export default function App() {
   };
   // Members go through Stripe: checkout to upgrade, the billing portal to
   // manage or cancel. The admin account keeps the instant toggle for testing.
-  const handleUpgrade   = () => { if (isAdmin) setTier("pro");  else startCheckout(); };
+  const handleUpgrade   = () => { if (isAdmin) setTier("pro");  else setPlanOpen(true); };
   const handleDowngrade = () => { if (isAdmin) setTier("free"); else openBillingPortal(); };
 
   // Admin gate. data.role is the canonical signal (set via Firebase console
@@ -10657,6 +10793,8 @@ export default function App() {
       <AppHexBg/>
       <div style={{position:"relative", zIndex:1}}>
       <Toast msg={toast}/>
+      {planOpen && <PlanSheet busy={billingBusy} onClose={()=>setPlanOpen(false)}
+        onChoose={p => startCheckout(p)}/>}
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} daysLeft={daysLeft}
         onAddProperty={()=>setPage("deal")} />
       <TrialBanner daysLeft={daysLeft} />
@@ -10699,7 +10837,7 @@ export default function App() {
         ) : page==="settings" ? (
           <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
             tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
-            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin}
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} authToken={user.idToken}
             assumptions={data.assumptions || {}}
             onSaveAssumptions={patch => persist({...data, assumptions: {...(data.assumptions||{}), ...patch}})} />
         ) : (
@@ -10735,6 +10873,8 @@ export default function App() {
       <DesktopSidebar page={showProp?"properties":page} setPage={p=>{setPage(p);setPropId(null);}} daysLeft={daysLeft} userEmail={user.email} isAdmin={isAdmin} />
       <div style={{marginLeft:230, flex:1, minWidth:0, position:"relative", zIndex:1}}>
         <Toast msg={toast}/>
+        {planOpen && <PlanSheet busy={billingBusy} onClose={()=>setPlanOpen(false)}
+          onChoose={p => startCheckout(p)}/>}
         <DesktopTopBar page={effPage} propAddress={activeProp?.address}
           onAddProperty={()=>setPage("deal")} />
         <TrialBanner daysLeft={daysLeft} />
@@ -10778,7 +10918,7 @@ export default function App() {
             ) : page==="settings" ? (
               <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
                 tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
-            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin}
+            billing={billing} billingBusy={billingBusy} isAdmin={isAdmin} authToken={user.idToken}
             assumptions={data.assumptions || {}}
             onSaveAssumptions={patch => persist({...data, assumptions: {...(data.assumptions||{}), ...patch}})} />
             ) : null}
