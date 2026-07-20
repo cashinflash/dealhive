@@ -2103,6 +2103,17 @@ function HiwDealView({s = 1, compact = false}) {
 }
 
 function HiwDevices() {
+  // On narrow screens the phone renders near full-width, so the replica
+  // scales up ~1.5x to FILL the tall screen — the section edge then slices
+  // through mid-content, DealCheck-style, instead of revealing empty glass.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 700px)");
+    const upd = () => setNarrow(mq.matches);
+    upd();
+    mq.addEventListener("change", upd);
+    return () => mq.removeEventListener("change", upd);
+  }, []);
   return (
     <div className="dh-hiw-devices" style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
       {/* Monitor */}
@@ -2189,7 +2200,7 @@ function HiwDevices() {
                 </span>
               </span>
             </div>
-            <HiwDealView s={1.05} compact/>
+            <HiwDealView s={narrow ? 1.55 : 1.05} compact/>
           </div>
         </div>
       </div>
@@ -2332,7 +2343,6 @@ function HowItWorksPage({ onSignUp }) {
             max-height: 560px; overflow: hidden; }
           .dh-hiw-phone { position: static !important; width: min(330px, 86vw) !important;
             margin: 0 auto; }
-          .dh-hiw-phone > div { aspect-ratio: auto !important; }
         }
       `}</style>
 
