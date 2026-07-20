@@ -1978,6 +1978,12 @@ const hiwPhoto = i => ({
   backgroundImage: `${i === 0 ? 'url("/kitchen-hero.jpg"), ' : ""}url("${HIW_IMGS[i % HIW_IMGS.length]}"), ${HIW_PHOTO}`,
   backgroundSize: "cover", backgroundPosition: "center",
 });
+// Named repo slots: drop a file with the given name into public/ on GitHub
+// and it takes over that spot; the hosted photo and gradient backstop it.
+const hiwSlot = (file, i) => ({
+  backgroundImage: `url("/${file}"), url("${HIW_IMGS[i % HIW_IMGS.length]}"), ${HIW_PHOTO}`,
+  backgroundSize: "cover", backgroundPosition: "center",
+});
 
 function HiwChip({children, tone}) {
   const tones = {
@@ -2024,7 +2030,7 @@ function HiwDealView({s = 1, compact = false}) {
         </div>
         <div style={{textAlign: "center", marginTop: fz(4)}}>
           <div style={{fontSize: fz(8.6), fontWeight: 800, color: C.text, letterSpacing: "-0.01em"}}>
-            4444 West Point Loma Boulevard
+            7777 West Point Loma Boulevard
           </div>
           <div style={{fontSize: fz(5.8), color: C.textSub, marginTop: 1}}>San Diego, CA 92107</div>
         </div>
@@ -2115,7 +2121,7 @@ function HiwDevices() {
     return () => mq.removeEventListener("change", upd);
   }, []);
   return (
-    <div className="dh-hiw-devices" style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
+    <div className="dh-hiw-devices" style={{position: "relative", maxWidth: 860, margin: "44px auto 0", padding: "0 12px 44px"}}>
       {/* Monitor */}
       <div className="dh-hiw-monitor">
       <div style={{width: "88%",
@@ -2126,12 +2132,8 @@ function HiwDevices() {
           aspectRatio: "16 / 9.8", border: "2px solid #171b20"}}>
           <div style={{width: "21%", background: C.navyDeep, padding: "3.4% 2.4%",
             display: "flex", flexDirection: "column", fontFamily: F}}>
-            <div style={{display: "flex", alignItems: "center", gap: "6%", marginBottom: "14%"}}>
-              <span style={{width: "0.9em", height: "0.9em", borderRadius: 3, background: C.orange,
-                display: "inline-block", flexShrink: 0}}/>
-              <span style={{color: "#fff", fontWeight: 800, fontSize: "clamp(6px, 1.3vw, 12px)"}}>
-                deal<span style={{color: C.orange}}>hive</span>.io
-              </span>
+            <div style={{background: "#fff", borderRadius: 6, padding: "7% 9%", marginBottom: "12%"}}>
+              <img src="/logo.png" alt="DealHive" style={{width: "100%", display: "block"}}/>
             </div>
             {["Dashboard", "Deals", "Deal Analyzer", "Settings"].map((l, i) => (
               <div key={l} style={{color: i === 0 ? "#fff" : "#8b96a5",
@@ -2143,10 +2145,27 @@ function HiwDevices() {
           <div style={{flex: 1, position: "relative", padding: "2.4%"}}>
             <div aria-hidden="true" style={{position: "absolute", inset: "4% 3%", display: "grid",
               gridTemplateColumns: "1fr 1fr", gap: "3%", opacity: .45, filter: "blur(1px)"}}>
-              {[0, 1, 2, 3].map(i => (
-                <div key={i} style={{background: "#fff", borderRadius: 8,
-                  border: "1px solid " + C.border, overflow: "hidden"}}>
-                  <div style={{height: "44%", ...hiwPhoto(i + 1)}}/>
+              {[["$329,900", "650 Salisbury Road, Columbus, OH", "Rental"],
+                ["$118,000", "2119 East 44th Street, Kansas City, MO", "By Owner"],
+                ["$197,000", "3616 East 146th Street, Cleveland, OH", "Rental"],
+                ["$165,000", "4205 Turney Road, Garfield Heights, OH", "Fix & Flip"]].map(([price, addr, tag], i) => (
+                <div key={addr} style={{background: "#fff", borderRadius: 8,
+                  border: "1px solid " + C.border, overflow: "hidden", fontFamily: F}}>
+                  <div style={{height: "40%", ...hiwPhoto(i + 1)}}/>
+                  <div style={{padding: "4% 6%"}}>
+                    <div style={{display: "flex", justifyContent: "space-between",
+                      alignItems: "center", gap: 4}}>
+                      <span style={{fontSize: "clamp(5px, 0.85vw, 10px)", fontWeight: 800,
+                        color: C.text}}>{price}</span>
+                      <span style={{fontSize: "clamp(4px, 0.65vw, 8px)", fontWeight: 700,
+                        color: C.orangeDark, background: C.orangeSubtle,
+                        border: "1px solid " + C.orangeBorder, borderRadius: 999,
+                        padding: "1% 5%", whiteSpace: "nowrap"}}>{tag}</span>
+                    </div>
+                    <div style={{fontSize: "clamp(4.5px, 0.7vw, 9px)", color: C.textSub,
+                      marginTop: "2%", overflow: "hidden", textOverflow: "ellipsis",
+                      whiteSpace: "nowrap"}}>{addr}</div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -2237,15 +2256,16 @@ function HowItWorksPage({ onSignUp }) {
   const steps = [
     {
       title: "Type an address. We do the typing.",
-      body: "Enter any U.S. address and DealHive pulls the property's details for you — price, beds, baths, square footage, year built, property taxes at your state's real rate, photos, and live value and rent estimates. Or enter everything by hand; the calculator never needs a lookup.",
+      body: "Enter any U.S. address and DealHive pulls the property's details for you: price, beds, baths, square footage, year built, property taxes at your state's real rate, photos, and live value and rent estimates. Prefer typing it yourself? The calculator never needs a lookup.",
       visual: (
-        <HiwMiniCard label="Property Data — auto-filled">
+        <HiwMiniCard label="Property Data · Auto Filled">
           <HiwRow l="Value Estimate" r="$180,500" bold/>
           <HiwRow l="Rent Estimate" r="$1,850/mo" green/>
           <HiwRow l="Property Tax" r="$164/mo · auto"/>
           <div style={{display: "flex", gap: 8, marginTop: 12}}>
             {[0, 1, 2].map(i => (
-              <div key={i} style={{flex: 1, height: 52, borderRadius: 8, ...hiwPhoto(i),
+              <div key={i} style={{flex: 1, height: 52, borderRadius: 8,
+                ...hiwSlot(`thumb-${i + 1}.jpg`, i),
                 border: "1px solid " + C.border}}/>
             ))}
           </div>
@@ -2254,7 +2274,7 @@ function HowItWorksPage({ onSignUp }) {
     },
     {
       title: "Shape the exact deal you'd actually do.",
-      body: "Cash or financed, hard money or conventional, Buy & Hold, BRRRR, or Fix & Flip. Nine expense categories, itemizable closing and rehab costs, and portal-wide investor defaults like 75% LTV — every number editable, every change recalculated instantly.",
+      body: "Cash or financed, hard money or conventional, Buy & Hold, BRRRR, or Fix & Flip. Nine expense categories, itemizable closing and rehab costs, and investor defaults like 75% LTV. Every number is editable, and every change recalculates instantly.",
       visual: (
         <HiwMiniCard label="Rental Income">
           <HiwRow l="Gross Rent" r="$1,850 /mo" bold/>
@@ -2270,7 +2290,7 @@ function HowItWorksPage({ onSignUp }) {
     },
     {
       title: "One Summary. The whole story.",
-      body: "Every scenario ends in a single Summary that reads like the deal itself: the loan you take, the cash you put in, the exit event — refinance or sale — and the life after it, with lender checks like DSCR for financed rentals. No hunting across sections for the verdict.",
+      body: "Every scenario ends in a single Summary that reads like the deal itself: the loan you take, the cash you put in, the exit event, and the life after it, with lender checks like DSCR for financed rentals. No hunting across sections for the verdict.",
       visual: (
         <HiwMiniCard label="Summary">
           <HiwRow l="Purchase Method" r="Finance"/>
@@ -2284,7 +2304,7 @@ function HowItWorksPage({ onSignUp }) {
     },
     {
       title: "Comps and the owner, one tap deep.",
-      body: "Browse recent sales comps and active rental comps for any address — tap one for the full picture with a Street View photo. Then find who actually owns the property with county-records Owner Lookup: name, mailing address, and whether they're an absentee owner.",
+      body: "Browse recent sales comps and active rental comps for any address, then tap one for the full picture with a Street View photo. County records Owner Lookup shows who actually owns the property: their name, mailing address, and whether they live there.",
       visual: (
         <HiwMiniCard label="Sales Comps & ARV">
           <div style={{textAlign: "center", marginBottom: 10}}>
@@ -2302,14 +2322,15 @@ function HowItWorksPage({ onSignUp }) {
     },
     {
       title: "Fresh off-market deals, every single night.",
-      body: "DealHive's feed restocks nightly with for-sale-by-owner properties across the country's best cash-flow metros — full street addresses, real photos, the numbers already run, and the owner's contact information for Pro members. No agents, no gatekeepers.",
+      body: "DealHive's feed restocks nightly with for sale by owner properties across the country's best cash flow metros. Full street addresses, real photos, the numbers already run, and owner contact info for Pro members. No agents, no gatekeepers.",
       visual: (
         <HiwMiniCard label="Tonight's Feed">
           {[["650 Salisbury Road, Columbus, OH", "$329,900"],
             ["2119 East 44th Street, Kansas City, MO", "$118,000"]].map(([a, p], i) => (
             <div key={a} style={{display: "flex", gap: 10, alignItems: "center", padding: "8px 0",
               borderBottom: "1px solid " + C.borderSoft}}>
-              <div style={{width: 52, height: 38, borderRadius: 8, ...hiwPhoto(i + 1),
+              <div style={{width: 52, height: 38, borderRadius: 8,
+                ...hiwSlot(`feed-${i + 1}.jpg`, i + 1),
                 border: "1px solid " + C.border, flexShrink: 0}}/>
               <div style={{minWidth: 0, flex: 1}}>
                 <div style={{fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden",
@@ -2347,7 +2368,7 @@ function HowItWorksPage({ onSignUp }) {
       `}</style>
 
       {/* Hero */}
-      <section style={{position: "relative", overflow: "hidden", padding: "76px 20px 0",
+      <section style={{position: "relative", overflow: "hidden", padding: "52px 20px 0",
         background: `radial-gradient(ellipse at 18% 0%, ${C.navySoft} 0%, transparent 55%), linear-gradient(165deg, ${C.navyDeep} 0%, ${C.navy} 100%)`}}>
         <div aria-hidden="true" style={{position: "absolute", inset: 0}}>
           <Hex size={260} color={C.orange} opacity={0.14} blur={40} float={1} style={{top: -80, right: "6%"}}/>
@@ -2355,10 +2376,6 @@ function HowItWorksPage({ onSignUp }) {
           <Hex size={54} color={C.orangeBorder} opacity={0.25} float={3} style={{bottom: "18%", right: "20%"}}/>
         </div>
         <div style={{position: "relative", maxWidth: 820, margin: "0 auto", textAlign: "center"}}>
-          <div style={{display: "inline-block", background: "rgba(255,255,255,.08)",
-            border: "1px solid rgba(255,255,255,.16)", color: C.orangeBorder, borderRadius: 999,
-            padding: "6px 16px", fontSize: 12.5, fontWeight: 700, fontFamily: F,
-            letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 20}}>How it works</div>
           <h1 style={{fontSize: "clamp(34px, 5.4vw, 58px)", fontWeight: 800, fontFamily: F,
             letterSpacing: "-0.035em", lineHeight: 1.04, margin: "0 0 18px", color: "#fff"}}>
             From address to answer{" "}
@@ -2482,6 +2499,10 @@ export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
       <style>{`
         @keyframes dhFloat1 { from { transform: translateY(0); }    to { transform: translateY(-14px); } }
         @keyframes dhFloat2 { from { transform: translateY(-8px); } to { transform: translateY(10px); } }
+        @media (max-width: 860px) {
+          .dh-strat-grid { grid-template-columns: 1fr !important; gap: 28px !important; }
+          .dh-strat-grid > div { order: unset !important; }
+        }
         @keyframes dhFloat3 { from { transform: translateY(6px); }  to { transform: translateY(-10px); } }
         @media (prefers-reduced-motion: reduce) {
           .dh-hero svg { animation: none !important; }
