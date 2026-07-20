@@ -869,7 +869,6 @@ function Pricing({ onSignUp }) {
       "5 sales-comp + 5 rental-comp lookups a month",
       "Save up to 3 properties",
       "Upload up to 5 property photos",
-      "Deal feed preview",
     ],
     cta: "Get started",
   };
@@ -880,11 +879,16 @@ function Pricing({ onSignUp }) {
     blurb: "Analysis without limits, with live data doing the typing.",
     features: [
       "Everything in Free",
-      "Unlimited saved properties & photos",
-      "250 live property lookups a month — 50+ full workups",
-      "Full off-market deal feed with owner contact",
-      "Buy & Hold Projections & Appreciation Projector",
-      "Owner Lookup & Property Records",
+      "Full off-market deal feed",
+      "Direct owner contact info",
+      "Unlimited saved properties",
+      "Unlimited property photos",
+      "250 live property lookups a month",
+      "Unlimited sales & rental comps",
+      "Buy & Hold Projections",
+      "Appreciation Projector",
+      "Owner Lookup",
+      "Property Records",
       "Cancel anytime",
     ],
     cta: "Start free, upgrade anytime",
@@ -1763,133 +1767,194 @@ function PrivacyPage() {
 
 function TermsPage() {
   return (
-    <LegalPage title="Terms of Use" updated="July 7, 2026">
+    <LegalPage title="Terms of Use" updated="July 20, 2026">
       <p>
-        These Terms of Use ("Terms") govern your access to and use of the DealHive website and
-        applications (the "Service"), operated by DealHive ("we", "us"). By creating an account or
-        using the Service, you agree to these Terms and to our{" "}
-        <a href="/privacy">Privacy Policy</a>.
+        These Terms of Use ("Terms") are a license agreement between you and DealHive
+        ("DealHive", "we", "us") governing your access to and use of the DealHive website,
+        web application, and any mobile applications we release (together, the "Service").
+        By creating an account or using the Service you agree to be bound by these Terms and
+        by our <a href="/privacy">Privacy Policy</a>. If you do not agree, do not use the
+        Service and discontinue any existing use.
       </p>
 
-      <h2>1. The Service</h2>
+      <h2>1. License grant</h2>
       <p>
-        DealHive aggregates real estate deal information from third-party and public sources and
-        provides analysis tools for evaluating potential investments. The Service is an
-        informational tool. It is not a brokerage, lender, appraiser, or investment advisor.
+        The Service is licensed to you, not sold. We grant you a revocable, non-exclusive,
+        non-transferable, limited right to access and use the Service on devices you own or
+        control, strictly in accordance with these Terms and with any applicable rules of
+        third-party platforms through which you access it (such as Apple or Google).
       </p>
 
-      <h2>2. Accounts</h2>
-      <p>
-        You must provide accurate information when creating an account and keep your credentials
-        secure. You are responsible for activity under your account. One account per person; you
-        may not share, sell, or transfer your account.
-      </p>
-
-      <h2>3. Subscriptions & billing</h2>
+      <h2>2. Restrictions on use</h2>
+      <p>You agree that you will not:</p>
       <ul>
-        <li>The Free plan is free indefinitely and includes the features described on our Pricing page.</li>
-        <li>DealHive Pro is a monthly subscription billed through Stripe at the price shown at checkout. It renews automatically each month until cancelled.</li>
-        <li>You can cancel anytime; access continues through the end of the paid period. Fees already paid are non-refundable except where required by law or where we determine an error on our part.</li>
-        <li>We may change subscription pricing with at least 30 days' notice; existing subscribers keep their sign-up price unless notified otherwise.</li>
+        <li>Copy, decompile, reverse engineer, disassemble, or attempt to derive the source code of the Service, or create derivative works from it;</li>
+        <li>Scrape, harvest, bulk-export, resell, or redistribute data, listings, or content obtained through the Service;</li>
+        <li>Use the Service to build, train, or improve a product or service that competes with DealHive;</li>
+        <li>Remove, alter, or obscure any proprietary notices in the Service;</li>
+        <li>Use the Service to send automated queries, spam, or unsolicited communications;</li>
+        <li>Share, sell, or transfer your account, or access another user's account or data;</li>
+        <li>Interfere with or disrupt the Service, or violate any applicable law, rule, or regulation in connection with your use.</li>
       </ul>
 
-      <h2>4. License & acceptable use</h2>
+      <h2>3. Intellectual property</h2>
       <p>
-        We grant you a limited, non-exclusive, non-transferable license to use the Service for your
-        own real estate investing activities. You agree not to:
+        The Service — including its code, design, structure, algorithms, databases, and
+        organization — and all copyrights, trademarks, trade secrets, and other intellectual
+        property rights in it are and remain the property of DealHive and its licensors. No
+        rights are granted to you by implication or otherwise except as expressly stated in
+        these Terms. The Service may include third-party and open-source components, which
+        are governed by their own license terms. You may not use the DealHive name, logo, or
+        marks in any advertising or commercial manner without our prior written consent.
       </p>
+
+      <h2>4. No transfer</h2>
+      <p>
+        You may not rent, lease, lend, sublicense, or transfer the Service, this license, or
+        any rights granted under these Terms. Any attempted transfer in violation of this
+        section is void.
+      </p>
+
+      <h2>5. Your information</h2>
+      <p>
+        You consent to our collection, storage, and use of information related to or derived
+        from your use of the Service as described in our <a href="/privacy">Privacy
+        Policy</a>. We may update the Privacy Policy from time to time by posting the revised
+        version; your continued use of the Service after changes are posted constitutes
+        acceptance of them.
+      </p>
+
+      <h2>6. Third-party content and services</h2>
+      <p>
+        The Service displays and relies on products, data, listings, estimates, imagery, and
+        services created or provided by third parties — including property-data providers,
+        listing sources, mapping services, and payment processors ("Third-Party Content and
+        Services"). We do not investigate, monitor, verify, or endorse Third-Party Content
+        and Services, and your use of them is at your sole risk. Your dealings with any
+        third party — including any property owner or seller you locate through the
+        Service — are between you and that party, and may be governed by that party's own
+        terms and policies. We disclaim all warranties regarding the availability, quality,
+        accuracy, completeness, or legality of Third-Party Content and Services, and we have
+        no liability arising out of your access to or use of them.
+      </p>
+
+      <h2>7. Contacting property owners; not a brokerage</h2>
+      <p>
+        The Service may surface publicly listed contact information for property owners and
+        sellers. You are solely responsible for how you use it. You agree to comply with all
+        laws applicable to your outreach — including, without limitation, the Telephone
+        Consumer Protection Act (TCPA), do-not-call registries, and applicable state
+        solicitation and licensing laws — and you accept that contact and listing details
+        may be incomplete or out of date. DealHive is an informational tool. We are not a
+        real estate brokerage, agent, lender, appraiser, title company, or investment
+        advisor, and nothing in the Service is an offer to buy or sell real estate.
+      </p>
+
+      <h2>8. Subscriptions and billing</h2>
       <ul>
-        <li>Scrape, harvest, resell, or redistribute the Service's data or content;</li>
-        <li>Reverse engineer, copy, or create derivative works of the Service;</li>
-        <li>Use the Service to violate any law or third-party right;</li>
-        <li>Interfere with or disrupt the Service, or attempt to access other users' data.</li>
+        <li><strong>Subscription service.</strong> Certain features require an active, auto-renewing paid subscription ("Subscription"), billed monthly or yearly. We may modify the features, pricing, or availability of any plan at our discretion; price changes for existing subscribers take effect no earlier than their next renewal after notice.</li>
+        <li><strong>Payment authorization.</strong> Payments are processed by our payment processor (Stripe). By starting a Subscription you authorize recurring charges to your payment method for each renewal period until you cancel. You also authorize credits to your payment method where refunds are issued.</li>
+        <li><strong>Renewal and cancellation.</strong> Subscriptions renew automatically each billing cycle on the renewal date. You can cancel anytime in the app via Settings → Manage Billing, or by emailing <a href="mailto:support@dealhive.io">support@dealhive.io</a>. Cancellations made less than 24 hours before a renewal may not take effect until the following cycle. After cancellation, access continues through the end of the paid period.</li>
+        <li><strong>Failed payments.</strong> You are responsible for keeping a valid payment method with sufficient funds. We may suspend or terminate Subscriptions with unpaid amounts, and we are not liable for fees your bank or card issuer may charge.</li>
+        <li><strong>Taxes.</strong> Prices do not include applicable sales, use, VAT/GST, or similar taxes, which are your responsibility. We may collect and remit taxes where required.</li>
+        <li><strong>Refunds.</strong> Charges are final and non-refundable except where required by law or where we determine, at our sole discretion, that a refund is appropriate. Refund requests can be sent to <a href="mailto:support@dealhive.io">support@dealhive.io</a> with an explanation.</li>
+        <li><strong>Payment information.</strong> We may disclose payment-related information to third parties as reasonably required to process payments, resolve payment problems, comply with law or legal process, or as described in our Privacy Policy.</li>
       </ul>
 
-      <h2>5. Property data & reports disclaimer</h2>
+      <h2>9. Term and termination</h2>
       <p>
-        <strong>Read this section carefully.</strong> Property information, deal listings,
-        estimates, analyses, and reports in the Service are generated from data provided by third
-        parties and public records. We do not independently verify this data, and it may be
-        incomplete, outdated, or inaccurate. Analyses and projections are mathematical models based
-        on assumptions. They are <strong>not</strong> certified appraisals, broker price opinions,
-        or investment, legal, tax, or financial advice.
-      </p>
-      <p>
-        Real estate investing involves substantial risk, including loss of capital. You are solely
-        responsible for your investment decisions. Always independently verify property details,
-        condition, title, rents, and values, and consult licensed professionals, before
-        purchasing any property.
+        These Terms are effective until terminated. We may suspend or terminate your access
+        to the Service at any time, for any or no reason, with or without notice. If you
+        breach these Terms, this license terminates automatically. Upon termination you must
+        cease all use of the Service. Sections 2 through 13 survive termination.
       </p>
 
-      <h2>6. Intellectual property</h2>
+      <h2>10. Disclaimer of warranties</h2>
       <p>
-        The Service, including its software, design, and branding, is owned by us or our licensors
-        and protected by intellectual property laws. These Terms grant you no ownership rights.
-        Content you create in your account (notes, saved analyses) remains yours.
+        <strong>Read this section carefully.</strong> The Service is provided "as is" and
+        "as available," and your use of and reliance on it is at your sole risk. To the
+        fullest extent permitted by law, we and our licensors and suppliers disclaim all
+        warranties, express, implied, or statutory — including the implied warranties of
+        merchantability, fitness for a particular purpose, and non-infringement. We do not
+        warrant that the Service will meet your requirements; that it will be uninterrupted,
+        timely, secure, or error-free; that any calculation, estimate, valuation, rent
+        figure, comparable, projection, or report produced by the Service is accurate or
+        complete; or that errors will be corrected.
+      </p>
+      <p>
+        The Service produces analyses, valuations, and projections that are mathematical
+        models based on assumptions, on data supplied by third parties that we do not
+        independently verify, and on inputs you provide, which we also do not verify.
+        Property records may not reflect recent additions or modifications. Actual results
+        are affected by factors outside any model — including market conditions, interest
+        rates, financing availability, regulation, and property condition — and may differ
+        materially from projections. Nothing in the Service is a certified appraisal, a
+        broker price opinion, or legal, tax, financial, or investment advice, and no
+        assurance is given that projected results will be realized. Real estate investing
+        involves substantial risk, including loss of capital. Always verify property
+        details independently and consult licensed professionals before transacting.
       </p>
 
-      <h2>7. Third-party content & services</h2>
+      <h2>11. Limitation of liability</h2>
       <p>
-        The Service links to and displays content from third parties (listings, maps, imagery). We
-        are not responsible for third-party content or services, and your use of them may be
-        subject to their own terms.
+        To the fullest extent permitted by law, in no event shall DealHive or its
+        affiliates, suppliers, or licensors be liable for any indirect, incidental,
+        consequential, special, or exemplary damages arising out of or relating to your use
+        of, or inability to use, the Service or any Third-Party Content and Services —
+        including damages from relying on the Service in real estate purchasing or
+        investment decisions — whether or not such damages were foreseeable. Our total
+        aggregate liability to you for all claims, whether in contract, tort, or otherwise,
+        shall not exceed the greater of (a) the amounts you paid us in the twelve months
+        preceding the claim, or (b) one hundred dollars ($100). These limitations apply even
+        if any stated remedy fails of its essential purpose.
       </p>
 
-      <h2>8. Termination</h2>
+      <h2>12. Indemnification</h2>
       <p>
-        You may stop using the Service or delete your account at any time. We may suspend or
-        terminate accounts that violate these Terms or that create risk for the Service or other
-        users. Upon termination, sections 5–11 survive.
+        You agree to indemnify, defend, and hold harmless DealHive and its affiliates,
+        suppliers, and licensors, and their respective officers, agents, and employees, from
+        any claim, loss, damage, fine, or expense (including reasonable attorneys' fees)
+        arising out of (i) your use of the Service or Third-Party Content and Services;
+        (ii) your breach of these Terms; (iii) your violation of law, including laws
+        governing communications with property owners; (iv) your negligence or willful
+        misconduct; or (v) your violation of any third party's rights. You are responsible
+        for third-party claims relating to your use of the Service, and agree to notify us
+        promptly of any such claims.
       </p>
 
-      <h2>9. Disclaimer of warranties</h2>
+      <h2>13. Compatibility</h2>
       <p>
-        THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EXPRESS
-        OR IMPLIED, INCLUDING FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, AND NON-INFRINGEMENT. WE
-        DO NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED, ERROR-FREE, OR THAT ANY DEAL WILL BE
-        AVAILABLE, ACCURATE, OR PROFITABLE.
+        We do not warrant that the Service will be compatible or interoperable with your
+        device, browser, or other software, and we are not liable for losses arising from
+        compatibility or interoperability problems.
       </p>
 
-      <h2>10. Limitation of liability</h2>
+      <h2>14. Governing law and disputes</h2>
       <p>
-        TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
-        SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR LOST PROFITS, LOST DATA, OR INVESTMENT
-        LOSSES, ARISING FROM YOUR USE OF THE SERVICE. OUR TOTAL LIABILITY FOR ANY CLAIM IS LIMITED
-        TO THE AMOUNT YOU PAID US IN THE TWELVE MONTHS BEFORE THE CLAIM AROSE (OR $50 IF YOU PAID
-        NOTHING).
+        These Terms are governed by the laws of the State of California, excluding its
+        conflict-of-laws principles, and any disputes arising from them shall be brought in
+        the state or federal courts located in California. The United Nations Convention on
+        Contracts for the International Sale of Goods does not apply.
       </p>
 
-      <h2>11. Indemnification</h2>
+      <h2>15. Miscellaneous</h2>
       <p>
-        You agree to indemnify and hold us harmless from claims arising out of your use of the
-        Service, your investment decisions, or your violation of these Terms.
+        If any provision of these Terms is held invalid or unenforceable, the remainder
+        stays in effect. Our failure to enforce a right is not a waiver of it. We may modify
+        these Terms by posting the revised version on this page; your continued use of the
+        Service after posting constitutes acceptance. These Terms, together with the
+        documents referenced in them, are the entire agreement between you and us regarding
+        the Service and supersede all prior understandings.
       </p>
 
-      <h2>12. Changes to these Terms</h2>
+      <h2>16. Contact</h2>
       <p>
-        We may update these Terms from time to time. We'll update the date above and, for material
-        changes, notify you in the app or by email. Continued use after changes take effect means
-        you accept the updated Terms.
-      </p>
-
-      <h2>13. Governing law</h2>
-      <p>
-        These Terms are governed by the laws of the United States and the state in which DealHive's
-        operating company is organized, without regard to conflict-of-law rules. Disputes will be
-        resolved in the courts of that state.
-      </p>
-
-      <h2>14. Contact</h2>
-      <p>
-        Questions about these Terms:{" "}
-        <a href="mailto:support@dealhive.io">support@dealhive.io</a>
+        Questions about these Terms: <a href="mailto:support@dealhive.io">support@dealhive.io</a>
       </p>
     </LegalPage>
   );
 }
 
-// Marketing chrome (nav + footer) as a wrapper, so the auth pages in App.jsx
-// can live inside the same shell as the rest of the site.
 export function MarketingChrome({ navigate, onSignIn, onSignUp, children }) {
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
