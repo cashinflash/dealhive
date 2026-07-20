@@ -6673,7 +6673,7 @@ function StrategyCards({active, counts, onSelect, mobile}) {
     {id:"buyhold",   Icon:I.building, title:"Rentals",     line:"Cash-flowing buy and holds"},
     {id:"brrrr",     Icon:I.cycle,    title:"BRRRR",       line:"Rehab, rent, refi, repeat"},
     {id:"flip",      Icon:I.chart,    title:"Fix & Flips", line:"Profit and ROI already sized"},
-    {id:"all",       Icon:I.tag,      title:"Off Market",  line:"Direct from the owner"},
+    {id:"all",       Icon:I.tag,      title:"All Properties", line:"The full deal feed"},
   ];
   return (
     <div style={{display:"grid", gap:12, marginBottom:20,
