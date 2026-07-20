@@ -1971,8 +1971,11 @@ const HIW_IMGS = [
   "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80",
   "https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80",
 ];
+// Slot 0 (the featured deal's photo on both devices) tries the repo-hosted
+// kitchen shot first — upload public/kitchen-hero.jpg and it takes over;
+// until then the hosted house photo shows, and the gradient backstops both.
 const hiwPhoto = i => ({
-  backgroundImage: `url("${HIW_IMGS[i % HIW_IMGS.length]}"), ${HIW_PHOTO}`,
+  backgroundImage: `${i === 0 ? 'url("/kitchen-hero.jpg"), ' : ""}url("${HIW_IMGS[i % HIW_IMGS.length]}"), ${HIW_PHOTO}`,
   backgroundSize: "cover", backgroundPosition: "center",
 });
 
@@ -2104,10 +2107,12 @@ function HiwDevices() {
     <div className="dh-hiw-devices" style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
       {/* Monitor */}
       <div className="dh-hiw-monitor">
-      <div style={{width: "88%", background: "#0e1319", borderRadius: 18,
-        padding: "1.6% 1.6% 2%", boxShadow: "0 40px 80px -24px rgba(9,12,18,.55)"}}>
+      <div style={{width: "88%",
+        background: "linear-gradient(180deg, #f4f6f8 0%, #e0e4e8 55%, #c9cfd5 100%)",
+        borderRadius: 18, padding: "1.6% 1.6% 2%", border: "1px solid #b7bdc4",
+        boxShadow: "0 40px 80px -24px rgba(9,12,18,.5)"}}>
         <div style={{borderRadius: 8, overflow: "hidden", display: "flex", background: "#F7F5F1",
-          aspectRatio: "16 / 9.8"}}>
+          aspectRatio: "16 / 9.8", border: "2px solid #171b20"}}>
           <div style={{width: "21%", background: C.navyDeep, padding: "3.4% 2.4%",
             display: "flex", flexDirection: "column", fontFamily: F}}>
             <div style={{display: "flex", alignItems: "center", gap: "6%", marginBottom: "14%"}}>
@@ -2143,10 +2148,12 @@ function HiwDevices() {
           </div>
         </div>
       </div>
-      <div style={{width: "9%", height: 26, margin: "0 auto", background: "#0e1319",
+      <div style={{width: "9%", height: 26, margin: "0 auto",
+        background: "linear-gradient(180deg, #d7dbe0, #b8bec5)",
         clipPath: "polygon(12% 0, 88% 0, 100% 100%, 0 100%)"}}/>
-      <div style={{width: "26%", height: 9, margin: "0 auto", background: "#0e1319",
-        borderRadius: 999}}/>
+      <div style={{width: "26%", height: 9, margin: "0 auto",
+        background: "linear-gradient(180deg, #e8ebee, #c2c8ce)", borderRadius: 999,
+        boxShadow: "0 6px 14px -6px rgba(9,12,18,.4)"}}/>
       </div>
       {/* Phone — a real iPhone: tall 9:19 body, rounded bezel, Dynamic
           Island, side buttons; the app content crops like a scrolled screen. */}
@@ -2325,6 +2332,7 @@ function HowItWorksPage({ onSignUp }) {
             max-height: 560px; overflow: hidden; }
           .dh-hiw-phone { position: static !important; width: min(330px, 86vw) !important;
             margin: 0 auto; }
+          .dh-hiw-phone > div { aspect-ratio: auto !important; }
         }
       `}</style>
 
@@ -2348,8 +2356,8 @@ function HowItWorksPage({ onSignUp }) {
           </h1>
           <p style={{fontSize: "clamp(15px, 1.8vw, 19px)", color: "#c3ccd8", fontFamily: F,
             lineHeight: 1.65, margin: "0 auto", maxWidth: 620}}>
-            Type an address, let live data fill in the numbers, and know whether the deal
-            works — on your laptop or in your pocket.
+            Our software makes it easy to analyze rental properties, BRRRR's, flips &
+            multi-family buildings, estimate profits and find the best real estate deals.
           </p>
           <button onClick={onSignUp} style={{marginTop: 28, background: C.orange, color: "#fff",
             border: "none", borderRadius: 12, padding: "15px 34px", fontSize: 16, fontWeight: 800,
