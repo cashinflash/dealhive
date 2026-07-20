@@ -2219,9 +2219,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
   const xtra    = exit !== undefined ? exit : localXtra;
   const setXtra = onExitChange ?? setLocalXtra;
   const [avmBusy, setAvmBusy] = useState(false);
-  // Flips don't rent — Income and Operating Expenses fold away in flip mode
-  // (they still drive holding costs), with a one-tap expander.
-  const [showFlipOpEx, setShowFlipOpEx] = useState(false);
   const [avmMsg,  setAvmMsg]  = useState(null);  // {kind:"ok"|"err", text}
   const [compsOpen, setCompsOpen] = useState(false);
   // One-time attention pulse on the exit toggle. It only plays once the
@@ -2589,25 +2586,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
         </SectionBlock>
         )}
 
-        {xtra === "flip" && !showFlipOpEx ? (
-          <button onClick={()=>setShowFlipOpEx(true)} style={{
-            gridColumn:"1 / -1", display:"flex", alignItems:"center", justifyContent:"space-between",
-            gap:10, padding:"13px 16px", borderRadius:C.r3, cursor:"pointer", textAlign:"left",
-            background:"#fff", border:"1px dashed "+C.borderHover, fontFamily:F,
-          }}>
-            <span style={{minWidth:0}}>
-              <span style={{display:"block", fontSize:13.5, fontWeight:700, color:C.text, letterSpacing:"-0.01em"}}>
-                Income & Operating Expenses — folded for flips
-              </span>
-              <span style={{display:"block", fontSize:11.5, color:C.textSub, marginTop:2}}>
-                A flip never rents. Taxes, insurance, and fixed bills still count as holding costs.
-              </span>
-            </span>
-            <span style={{color:C.textMuted, display:"inline-flex", flexShrink:0}}>
-              <I.chevronDown size={16} stroke={2.2}/>
-            </span>
-          </button>
-        ) : (
         <>
         {/* Income — shared by both tabs (this used to hide on Finance) */}
         <SectionBlock title="Income" color={C.cashPos} icon={I.dollar}>
@@ -2719,7 +2697,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           <DataRow label="NOI / yr" value={$(m.noi*12)} />
         </SectionBlock>
         </>
-        )}
 
         {/* After Repair Value — drives the BRRRR / flip exits on both tabs */}
         <SectionBlock title="After Repair Value (ARV)" color={C.blue} icon={I.trendingUp}>
