@@ -2486,13 +2486,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
             buying story starts. The BRRRR refinance below is a separate loan. */}
         {s==="finance" && (
         <SectionBlock title="Purchase Financing" color={C.blue} icon={I.building}>
-          {xtra === "brrrr" && (
-            <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5,
-              background:C.blueSubtle, border:"1px solid "+C.blueBorder, borderRadius:C.r2,
-              padding:"8px 12px", marginBottom:12}}>
-              This is the loan you buy with — your BRRRR refinance below replaces it.
-            </div>
-          )}
           {(!Array.isArray(p.loans) || p.loans.length === 0) ? (
             <>
               {p.downPaymentAmt != null ? (
@@ -2503,10 +2496,8 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               <button onClick={()=> p.downPaymentAmt != null
                   ? set({...p, downPaymentAmt: null})
                   : set({...p, downPaymentAmt: Math.round(m.down)})}
-                style={{background:"none", border:"none", cursor:"pointer", padding:"0 0 12px",
-                  fontSize:12, fontWeight:600, color:C.blueDark, fontFamily:F,
-                  textDecoration:"underline", textUnderlineOffset:2}}>
-                {p.downPaymentAmt != null ? "Enter as % of price instead" : "Enter as $ amount instead"}
+                {...btnStyle("secondary","sm", {marginBottom:12})}>
+                <I.cycle size={12}/> {p.downPaymentAmt != null ? "Enter as % of Price" : "Enter as $ Amount"}
               </button>
               <InputField label="Interest Rate" val={p.interestRate} set={v=>u("interestRate",v)} suf="%" mobile={mobile} />
               <DataRow label="Down Payment" value={$(m.down)} />
@@ -2783,10 +2774,20 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
 
       {/* Exit strategies — BRRRR / Fix & Flip toggle, both tabs (the math
           adapts: financed exits carry debt service and loan payoffs) */}
-      <div style={{marginTop:14}}>
-        <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
-          letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
-          Explore Exit Strategies
+      <div style={{marginTop:18}}>
+        <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:10}}>
+          <span style={{width:30, height:30, borderRadius:9, flexShrink:0, background:C.purpleSubtle,
+            border:"1px solid "+C.purpleBorder, color:C.purpleDark, display:"inline-flex",
+            alignItems:"center", justifyContent:"center"}}>
+            <I.cycle size={15} stroke={2.2}/>
+          </span>
+          <span style={{minWidth:0}}>
+            <span style={{display:"block", fontSize:15.5, fontWeight:800, color:C.text, fontFamily:F,
+              letterSpacing:"-0.015em"}}>Explore Exit Strategies</span>
+            <span style={{display:"block", fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
+              Same property, three plays — tap one to compare the numbers.
+            </span>
+          </span>
         </div>
         <div ref={exitRowRef} style={{display:"flex", gap:0, padding:4, background:C.bgSubtle,
           borderRadius:C.r2, border:"1px solid "+C.border, marginBottom:14}}>
