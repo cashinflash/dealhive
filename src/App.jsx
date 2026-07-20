@@ -1859,6 +1859,7 @@ function ItemizeSheet({title, items: initialItems, prefill, onApply, onClose, pr
 // RentCast rent AVM + nearby active rental listings for the entered address,
 // so Monthly Rent can be sanity-checked without leaving the analyzer.
 function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgrade, mobile}) {
+  const [compOpen, setCompOpen] = useState(null);
   const isPro = tier === "pro";
   const [st, setSt] = useState({loading:true, err:null, rent:0, low:0, high:0, comps:[]});
 
@@ -1994,10 +1995,11 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                 const psf   = l.squareFootage ? (rentV / l.squareFootage) : null;
                 const seen  = listedOn(l);
                 return (
-                  <div key={l.id || i} style={{
+                  <div key={l.id || i} onClick={()=>setCompOpen(l)} style={{
                     display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
                     border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 13px",
                     background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
+                    cursor:"pointer",
                   }}>
                     <div style={{display:"flex", alignItems:"flex-start", gap:11, minWidth:0}}>
                       <span style={{
@@ -2054,6 +2056,8 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                 <div style={{display:"flex", flexDirection:"column", gap:8}}>
                   {visible.map(row)}
                 </div>
+                {compOpen && <CompDetailSheet comp={compOpen} kind="rent"
+                  onClose={()=>setCompOpen(null)} mobile={mobile}/>}
                 {hidden > 0 && (
                   <div style={{position:"relative", marginTop:8, borderRadius:C.r4, overflow:"hidden"}}>
                     <div aria-hidden="true" style={{display:"flex", flexDirection:"column", gap:8,
@@ -6907,7 +6911,138 @@ function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
 
 // -- Deal View sub-sheets --------------------------------------------------------
 // Shared bottom-sheet shell for the Deal View's research screens.
-function SheetShell({title, sub, onClose, mobile, children}) {
+// Tap-a-comp detail card — the comparable's facts plus a Street View look
+// at the home. Renders above whichever comps sheet opened it (z 640 > 620).
+function CompDetailSheet({comp, kind, onClose, mobile}) {
+  const rent  = kind === "rent";
+  const price = comp.price || comp.rent || 0;
+  const psf   = comp.squareFootage ? price / comp.squareFootage : null;
+  const when  = (() => {
+    const d = comp.removedDate || comp.soldDate || comp.listedDate || comp.createdDate || comp.lastSeenDate;
+    if (!d) return null;
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? null
+      : dt.toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+  })();
+  const addr = comp.formattedAddress || comp.addressLine1 || "Comparable";
+  const [svFailed, setSvFailed] = useState(false);
+  useEffect(() => {
+    lockBodyScroll();
+    const h = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", h, true);
+    return () => { unlockBodyScroll(); window.removeEventListener("keydown", h, true); };
+  }, [onClose]);
+  const rows = [
+    [rent ? "Asking Rent" : "Sale / List Price", rent ? $mo(price) : $(price)],
+    ...(psf ? [[rent ? "Rent per Sqft" : "Price per Sqft",
+      "$" + (rent ? psf.toFixed(2) : Math.round(psf).toLocaleString())]] : []),
+    ...(when ? [[rent ? "Listed" : "Sold / Delisted", when]] : []),
+    ...(comp.bedrooms      ? [["Bedrooms", comp.bedrooms]] : []),
+    ...(comp.bathrooms     ? [["Bathrooms", comp.bathrooms]] : []),
+    ...(comp.squareFootage ? [["Square Feet", comp.squareFootage.toLocaleString()]] : []),
+    ...(comp.yearBuilt     ? [["Year Built", comp.yearBuilt]] : []),
+    ...(comp.propertyType  ? [["Property Type", comp.propertyType]] : []),
+    ...(comp.lotSize       ? [["Lot Size", comp.lotSize.toLocaleString() + " sqft"]] : []),
+    ...(typeof comp.distance === "number" ? [["Distance", comp.distance.toFixed(2) + " mi away"]] : []),
+    ...(comp.daysOnMarket  ? [["Days on Market", comp.daysOnMarket]] : []),
+  ];
+  const mapsHref = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(addr);
+  const outer = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:640, display:"flex",
+       alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:640, display:"flex",
+       alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const card = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"88dvh",
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:460, maxHeight:"88dvh",
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
+  return (
+    <div style={outer} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={card}>
+        <div style={{position:"relative"}}>
+          {comp.latitude && comp.longitude && !svFailed ? (
+            <img src={svUrl(comp.latitude, comp.longitude, 900, 380)} alt="Street View"
+              onError={()=>setSvFailed(true)}
+              style={{width:"100%", height:180, objectFit:"cover", display:"block"}}/>
+          ) : (
+            <div style={{height:110, background:C.bgSubtle}}>{imgPlaceholder(30)}</div>
+          )}
+          <button onClick={onClose} aria-label="Close"
+            style={{position:"absolute", top:12, right:12, width:34, height:34, borderRadius:"50%",
+              background:"rgba(255,255,255,.94)", border:"none", cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
+            <I.x size={15} stroke={2.5}/>
+          </button>
+          <span style={{position:"absolute", top:12, left:12,
+            background: rent ? C.greenSubtle : C.blueSubtle,
+            color: rent ? C.greenDark : C.blueDark,
+            border:"1px solid " + (rent ? C.greenBorder : C.blueBorder),
+            padding:"4px 11px", borderRadius:9999, fontSize:11, fontWeight:800, fontFamily:F,
+            boxShadow:C.sh1}}>
+            {rent ? "Rental Comp" : "Sale Comp"}
+          </span>
+        </div>
+        <div style={{padding: mobile ? "16px 18px 22px" : "18px 20px 22px"}}>
+          <div style={{fontSize:16.5, fontWeight:800, color:C.text, fontFamily:F,
+            letterSpacing:"-0.015em", lineHeight:1.3}}>
+            {addr}
+          </div>
+          <div style={{fontSize:22, fontWeight:800, color: rent ? C.greenDark : C.blueDark,
+            fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em",
+            margin:"6px 0 12px"}}>
+            {rent
+              ? <>{$(price)}<span style={{fontSize:14, color:C.textSub, fontWeight:600}}>/mo</span></>
+              : $(price)}
+          </div>
+          <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", background:C.card}}>
+            {rows.map(([l, v], i) => (
+              <div key={l} style={{display:"flex", justifyContent:"space-between", gap:12,
+                padding:"10px 14px", borderBottom: i === rows.length - 1 ? "none" : "1px solid "+C.border}}>
+                <span style={{fontSize:13, color:C.textSub, fontFamily:F, fontWeight:500}}>{l}</span>
+                <span style={{fontSize:13, color:C.text, fontFamily:F, fontWeight:700,
+                  fontVariantNumeric:"tabular-nums", textAlign:"right"}}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <a href={mapsHref} target="_blank" rel="noreferrer"
+            style={{textDecoration:"none", display:"block", marginTop:12}}>
+            <span {...btnStyle("secondary","md", {width:"100%", justifyContent:"center"})}>
+              <I.pin size={13}/> Open in Maps
+            </span>
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Scoped hive backdrop for full-screen sheets — the same visual language as
+// AppHexBg, but positioned absolutely inside the sheet so it scrolls with
+// the content and sprinkles down long pages.
+function SheetHexDecor() {
+  const hex = (size, color, opacity, blur, style, outline=false) => (
+    <svg width={size} height={size*1.15} viewBox="0 0 100 115" aria-hidden="true"
+      style={{position:"absolute", pointerEvents:"none", opacity,
+        filter: blur ? `blur(${blur}px)` : "none", ...style}}>
+      <polygon points="50,6 94,31 94,84 50,109 6,84 6,31"
+        fill={outline ? "none" : color} stroke={color} strokeWidth="11" strokeLinejoin="round"/>
+    </svg>
+  );
+  return (
+    <div aria-hidden="true" style={{position:"absolute", inset:0, pointerEvents:"none", overflow:"hidden"}}>
+      <span style={{position:"absolute", top:-100, right:-80}}>{hex(300, C.greenLight, 0.34, 44, {})}</span>
+      <span style={{position:"absolute", top:170, left:-40}}>{hex(100, C.greenBorder, 0.15, 0, {}, true)}</span>
+      <span style={{position:"absolute", top:90, right:"20%"}}>{hex(46, C.green, 0.06, 0, {})}</span>
+      <span style={{position:"absolute", top:620, left:"55%"}}>{hex(240, C.greenLight, 0.30, 40, {})}</span>
+      <span style={{position:"absolute", top:980, left:-30}}>{hex(84, C.greenBorder, 0.13, 0, {}, true)}</span>
+      <span style={{position:"absolute", top:1400, right:-70}}>{hex(220, C.greenLight, 0.28, 38, {})}</span>
+    </div>
+  );
+}
+
+function SheetShell({title, sub, onClose, mobile, hive=false, children}) {
   useEffect(() => {
     lockBodyScroll();
     const h = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
@@ -6923,13 +7058,15 @@ function SheetShell({title, sub, onClose, mobile, children}) {
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
   const inner = mobile
-    ? {background:C.card, width:"100%", height:"100%", overflowY:"auto", overscrollBehavior:"contain",
+    ? {background: hive ? C.bg : C.card, width:"100%", height:"100%", overflowY:"auto", overscrollBehavior:"contain",
        padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
-    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
+    : {background: hive ? C.bg : C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
        overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
   return (
     <div style={outer} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={inner}>
+      <div style={{...inner, position:"relative"}}>
+        {hive && <SheetHexDecor/>}
+        <div style={{position:"relative", zIndex:1}}>
         <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:14}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{title}</div>
@@ -6945,6 +7082,7 @@ function SheetShell({title, sub, onClose, mobile, children}) {
           </button>
         </div>
         {children}
+        </div>
       </div>
     </div>
   );
@@ -7001,7 +7139,7 @@ function AppreciationSheet({deal, onClose, mobile}) {
   const hero  = at(10);
   const presets = [["Conservative", 2], ["U.S. average", 3], ["Hot market", 5]];
   return (
-    <SheetShell title="Appreciation Projector"
+    <SheetShell title="Appreciation Projector" hive
       sub={`${deal.streetAddress || deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
 
@@ -7029,11 +7167,11 @@ function AppreciationSheet({deal, onClose, mobile}) {
         <input type="range" min={0} max={10} step={0.5} value={rate}
           onChange={e => setRate(parseFloat(e.target.value))}
           style={{width:"100%", accentColor:C.green}} />
-        <div style={{display:"flex", gap:8, marginTop:10, flexWrap:"wrap"}}>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:8, marginTop:10}}>
           {presets.map(([label, r]) => (
             <button key={label} onClick={() => setRate(r)}
-              style={{padding:"5px 11px", borderRadius:9999, cursor:"pointer", fontFamily:F,
-                fontSize:12, fontWeight:600,
+              style={{padding:"6px 2px", borderRadius:9999, cursor:"pointer", fontFamily:F,
+                fontSize:11.5, fontWeight:600, whiteSpace:"nowrap", textAlign:"center",
                 background: rate === r ? C.greenSubtle : C.card,
                 color:      rate === r ? C.greenDark   : C.textSub,
                 border: "1px solid " + (rate === r ? C.greenBorder : C.border)}}>
@@ -7091,7 +7229,7 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
   const occupied = rec.ownerOccupied === true;
   const absentee = rec.ownerOccupied === false;
   return (
-    <SheetShell title="Owner Lookup" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+    <SheetShell title="Owner Lookup" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
       {!isPro ? (
         <div style={{textAlign:"center", padding:"10px 4px 4px"}}>
@@ -7161,7 +7299,7 @@ function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
     ? new Date(rec.lastSaleDate).toLocaleDateString("en-US", {month:"short", year:"numeric"})
     : null;
   return (
-    <SheetShell title="Property Records" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+    <SheetShell title="Property Records" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
       {st.loading ? sheetSpinner("Pulling county records…")
         : st.err ? sheetError(st.err)
@@ -7194,6 +7332,7 @@ function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
 // actual comps the valuation model used, each with price and distance.
 function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
   const [st, setSt] = useState({loading:true, err:null, med:0, lo:0, hi:0, comps:[]});
+  const [compOpen, setCompOpen] = useState(null);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -7229,10 +7368,11 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
     const priceV = l.price || 0;
     const psf    = l.squareFootage ? (priceV / l.squareFootage) : null;
     return (
-      <div key={l.id || i} style={{
+      <div key={l.id || i} onClick={()=>setCompOpen(l)} style={{
         display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
         border:"1px solid "+C.border, borderRadius:C.r3, padding:"12px 13px",
         background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)", boxShadow:C.sh1,
+        cursor:"pointer",
       }}>
         <div style={{display:"flex", alignItems:"flex-start", gap:11, minWidth:0}}>
           <span style={{width:30, height:30, borderRadius:8, flexShrink:0, marginTop:1,
@@ -7283,19 +7423,16 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
             border:"1px solid "+C.blueBorder, borderRadius:C.r4,
             padding:"18px 16px", textAlign:"center", boxShadow:C.sh2,
           }}>
-            <div style={{fontSize:10.5, fontWeight:700, color:C.blueDark, fontFamily:F,
-              letterSpacing:".07em", textTransform:"uppercase"}}>Estimated Value</div>
+            <div style={{fontSize:14, fontWeight:800, color:C.blueDark, fontFamily:F,
+              letterSpacing:"-0.01em"}}>Estimated Value</div>
             <div style={{fontSize:34, fontWeight:800, color:C.text, fontFamily:F,
-              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>
+              fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:4}}>
               {$(st.med)}
             </div>
             <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
               background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
               padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
               Range {$(st.lo)} – {$(st.hi)}
-            </div>
-            <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:7, lineHeight:1.5}}>
-              As-is value from comparable sales — set your ARV in the Deal Calculator.
             </div>
           </div>
 
@@ -7314,6 +7451,8 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
               <div style={{display:"flex", flexDirection:"column", gap:8}}>
                 {visible.map(row)}
               </div>
+              {compOpen && <CompDetailSheet comp={compOpen} kind="sale"
+                onClose={()=>setCompOpen(null)} mobile={mobile}/>}
               {hidden > 0 && (
                 <div style={{position:"relative", marginTop:8, borderRadius:C.r4, overflow:"hidden"}}>
                   <div aria-hidden="true" style={{display:"flex", flexDirection:"column", gap:8,
@@ -7521,7 +7660,7 @@ function ProjectionsSheet({deal, onPatchDeal, onClose, mobile}) {
   );
 
   return (
-    <SheetShell title="Buy & Hold Projections" sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+    <SheetShell title="Buy & Hold Projections" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={close} mobile={mobile}>
 
       {/* Year picker — sticky so you can flip years from anywhere on the page */}
@@ -7695,6 +7834,39 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   // user's own uploads. Feed deals keep their real listing photos when the
   // source provided them.
   const uploads  = Array.isArray(deal.userPhotos) ? deal.userPhotos : [];
+  // Drag-to-reorder — slot 1 is the property's cover photo everywhere.
+  // Live order rides local state during the drag; the persisted deal
+  // catches up on pointer-up and the local override clears itself.
+  const [photoOrder, setPhotoOrder] = useState(null);
+  const [draggingPhoto, setDraggingPhoto] = useState(null);
+  const dragPhotoRef = useRef(null);
+  useEffect(() => { setPhotoOrder(null); }, [uploads.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shownPhotos = photoOrder || uploads;
+  const photoDragMove = e => {
+    const id = dragPhotoRef.current;
+    if (!id) return;
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const overEl = els.find(el => el.dataset && el.dataset.dhPhoto && el.dataset.dhPhoto !== id);
+    if (!overEl) return;
+    setPhotoOrder(prev => {
+      const arr = [...(prev || uploads)];
+      const from = arr.indexOf(id), to = arr.indexOf(overEl.dataset.dhPhoto);
+      if (from < 0 || to < 0 || from === to) return prev;
+      arr.splice(to, 0, arr.splice(from, 1)[0]);
+      return arr;
+    });
+  };
+  const photoDragEnd = () => {
+    const wasDragging = dragPhotoRef.current;
+    dragPhotoRef.current = null;
+    setDraggingPhoto(null);
+    setPhotoOrder(prev => {
+      if (wasDragging && prev && onPatchDeal && prev.join("|") !== uploads.join("|")) {
+        onPatchDeal(deal.id, {userPhotos: prev});
+      }
+      return prev; // cleared by the uploads-sync effect once the deal updates
+    });
+  };
   const provided = Array.isArray(deal.photos) && deal.photos.length
     ? deal.photos
     : (deal.lat && deal.lng ? [svUrl(deal.lat, deal.lng, 900, 560)]
@@ -7946,12 +8118,30 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
           </div>
           <div style={{border:"1px solid "+C.border, borderRadius:C.r4, background:"#fff",
             boxShadow:C.sh1, padding:12}}>
-            <div style={{display:"flex", gap:10, overflowX:"auto", padding:"6px 2px 2px"}}>
-              {uploads.map(u => (
-                <div key={u} style={{position:"relative", flexShrink:0}}>
+            <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(86px, 1fr))",
+              gap:10, padding:"6px 2px 2px"}}>
+              {shownPhotos.map((u, idx) => (
+                <div key={u} data-dh-photo={u}
+                  onPointerDown={e => {
+                    if (e.target.closest("button")) return;
+                    dragPhotoRef.current = u; setDraggingPhoto(u);
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  }}
+                  onPointerMove={photoDragMove}
+                  onPointerUp={photoDragEnd}
+                  onPointerCancel={photoDragEnd}
+                  style={{position:"relative", touchAction:"none", cursor:"grab",
+                    transform: draggingPhoto === u ? "scale(1.06)" : "none",
+                    transition:"transform .12s", zIndex: draggingPhoto === u ? 2 : 1}}>
                   <SafeImg src={u} fallback={imgPlaceholder(14)}
-                    style={{width:86, height:64, borderRadius:8, objectFit:"cover", display:"block",
-                      border:"1px solid "+C.border}}/>
+                    style={{width:"100%", height:64, borderRadius:8, objectFit:"cover", display:"block",
+                      border:"1px solid "+C.border, pointerEvents:"none"}}/>
+                  {idx === 0 && (
+                    <span style={{position:"absolute", bottom:4, left:4, background:"rgba(9,9,11,.72)",
+                      color:"#fff", padding:"2px 7px", borderRadius:9999, fontSize:9.5, fontWeight:800,
+                      fontFamily:F, letterSpacing:".05em", textTransform:"uppercase",
+                      pointerEvents:"none"}}>Cover</span>
+                  )}
                   <button onClick={()=>removePhoto(u)} aria-label="Remove photo"
                     style={{position:"absolute", top:-7, right:-7, width:21, height:21, borderRadius:"50%",
                       background:C.text, color:"#fff", border:"2px solid #fff", cursor:"pointer",
@@ -7962,7 +8152,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
                 </div>
               ))}
               <button onClick={pickFiles} disabled={upBusy}
-                style={{width:86, height:64, borderRadius:8, flexShrink:0, cursor:"pointer",
+                style={{width:"100%", height:64, borderRadius:8, flexShrink:0, cursor:"pointer",
                   border:"1.5px dashed "+C.greenBorder, background:C.greenSubtle, color:C.greenDark,
                   display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
                   gap:3, fontSize:10.5, fontWeight:700, fontFamily:F}}>
@@ -7973,9 +8163,11 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
             </div>
             <div style={{fontSize:11.5, color: upNote ? C.amberDark : C.textSub, fontFamily:F,
               marginTop:9, lineHeight:1.5}}>
-              {upNote || (isPro
-                ? "Add your own photos — walkthroughs, rehab progress, anything."
-                : `Your own photos of this property — ${Math.max(5 - uploads.length, 0)} of 5 free slots left.`)}
+              {upNote || (uploads.length > 1
+                ? (isPro
+                  ? "Drag photos to reorder — the first one is the cover."
+                  : `Drag to reorder — the first is the cover. ${Math.max(5 - uploads.length, 0)} of 5 free slots left.`)
+                : (isPro ? "" : `${Math.max(5 - uploads.length, 0)} of 5 free slots left.`))}
             </div>
             {!isPro && uploads.length >= 5 && onUpgrade && (
               <button onClick={onUpgrade} {...btnStyle("secondary","sm", {marginTop:9})}>
