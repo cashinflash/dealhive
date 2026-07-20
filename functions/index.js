@@ -659,10 +659,22 @@ exports.rcProxy = onRequest(
       const path = String(req.query.path || "");
       if (!RC_ALLOWED.some(rx => rx.test(path))) { res.status(400).json({error: "path"}); return; }
 
-      const day = new Date().toISOString().slice(0, 10);
-      const ref = admin.database().ref(`rcUsage/${decoded.uid}/${day}`);
-      const tx  = await ref.transaction(v => (v || 0) + 1);
-      if ((tx.snapshot.val() || 0) > RC_DAILY_CAP) { res.status(429).json({error: "cap"}); return; }
+      // Tier-aware backstops. The app meters itself first (free 3/5/5, Pro
+      // 250/mo) — these server caps exist so a tampered client still can't
+      // spend past the plan's worst case. Admin runs unmetered.
+      if (decoded.email !== "harut@ymail.com") {
+        const day = new Date().toISOString().slice(0, 10);
+        const ref = admin.database().ref(`rcUsage/${decoded.uid}/${day}`);
+        const tx  = await ref.transaction(v => (v || 0) + 1);
+        if ((tx.snapshot.val() || 0) > RC_DAILY_CAP) { res.status(429).json({error: "cap"}); return; }
+
+        const tier = (await admin.database().ref(`billing/${decoded.uid}/tier`).get()).val();
+        const monthCap = tier === "pro" ? 300 : 20;
+        const mo   = new Date().toISOString().slice(0, 7);
+        const mref = admin.database().ref(`rcUsage/${decoded.uid}/months/${mo}`);
+        const mtx  = await mref.transaction(v => (v || 0) + 1);
+        if ((mtx.snapshot.val() || 0) > monthCap) { res.status(429).json({error: "cap"}); return; }
+      }
 
       const r = await fetch("https://api.rentcast.io/v1" + path, {
         headers: {"X-Api-Key": RENTCAST_API_KEY.value()},
@@ -672,6 +684,51 @@ exports.rcProxy = onRequest(
     } catch (e) {
       logger.error("rcProxy", e);
       res.status(500).json({error: "proxy"});
+    }
+  });
+
+// Admin-only per-user API spend report: who used how many lookups this
+// month, their tier, and the estimated RentCast cost. This is the "keep
+// tabs on what a customer costs us" dashboard.
+exports.usageReport = onRequest(
+  {cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      const user = await verifyUser(req);
+      if (!user || user.email !== "harut@ymail.com") { res.status(403).json({error: "admin only"}); return; }
+      const mo = new Date().toISOString().slice(0, 7);
+      const [usageSnap, billingSnap] = await Promise.all([
+        admin.database().ref("rcUsage").get(),
+        admin.database().ref("billing").get(),
+      ]);
+      const usage   = usageSnap.val()  || {};
+      const billing = billingSnap.val() || {};
+      const rows = Object.entries(usage).map(([uid, days]) => {
+        const monthNode = days && days.months && days.months[mo];
+        const daySum = Object.entries(days || {})
+          .filter(([k]) => k.startsWith(mo + "-"))
+          .reduce((s, [, v]) => s + (typeof v === "number" ? v : 0), 0);
+        const lookups = Math.max(monthNode || 0, daySum);
+        return {uid, lookups, tier: (billing[uid] && billing[uid].tier) || "free"};
+      }).filter(r => r.lookups > 0).sort((a, b) => b.lookups - a.lookups).slice(0, 50);
+      // Attach emails in one batched auth call.
+      const ids = rows.map(r => ({uid: r.uid}));
+      const emails = {};
+      for (let i = 0; i < ids.length; i += 100) {
+        const got = await admin.auth().getUsers(ids.slice(i, i + 100)).catch(() => null);
+        if (got) got.users.forEach(u => { emails[u.uid] = u.email || u.uid; });
+      }
+      res.json({
+        month: mo,
+        costPerLookup: 0.074,
+        rows: rows.map(r => ({
+          email: emails[r.uid] || r.uid, tier: r.tier, lookups: r.lookups,
+          estCost: Math.round(r.lookups * 7.4) / 100,
+        })),
+      });
+    } catch (e) {
+      logger.error("usageReport", {error: e.message});
+      res.status(500).json({error: "report failed"});
     }
   });
 
@@ -704,7 +761,8 @@ exports.pullDealsNow = onRequest({
 // id and re-fetch the event from Stripe's API with our key — an attacker
 // can't forge that — so no webhook signing secret is needed.
 const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
-const STRIPE_PRICE_ID   = "price_1TgDZo02g0ecGMpyP7iKQCpP"; // DealHive Pro, $29.99/mo
+const STRIPE_PRICE_ID        = "price_1TgDZo02g0ecGMpyP7iKQCpP"; // DealHive Pro, $29.99/mo
+const STRIPE_PRICE_ID_YEARLY = "price_1TvNbs02g0ecGMpywa0rsL36"; // DealHive Pro, $240/yr
 const APP_ORIGIN        = "https://dealhive.io";
 
 async function stripeReq(key, method, path, params) {
@@ -778,10 +836,11 @@ exports.createCheckoutSession = onRequest(
         await admin.database().ref(`stripeCustomers/${customerId}`).set(user.uid);
       }
 
+      const plan = (req.body && req.body.plan) === "yearly" ? "yearly" : "monthly";
       const session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
         "mode": "subscription",
         "customer": customerId,
-        "line_items[0][price]": STRIPE_PRICE_ID,
+        "line_items[0][price]": plan === "yearly" ? STRIPE_PRICE_ID_YEARLY : STRIPE_PRICE_ID,
         "line_items[0][quantity]": "1",
         "client_reference_id": user.uid,
         "subscription_data[metadata][firebaseUid]": user.uid,
