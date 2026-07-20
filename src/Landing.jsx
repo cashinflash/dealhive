@@ -2132,9 +2132,8 @@ function HiwDevices() {
           aspectRatio: "16 / 9.8", border: "2px solid #171b20"}}>
           <div style={{width: "21%", background: C.navyDeep, padding: "3.4% 2.4%",
             display: "flex", flexDirection: "column", fontFamily: F}}>
-            <div style={{background: "#fff", borderRadius: 6, padding: "7% 9%", marginBottom: "12%"}}>
-              <img src="/logo.png" alt="DealHive" style={{width: "100%", display: "block"}}/>
-            </div>
+            <img src="/logo-white.png" alt="DealHive"
+              style={{width: "80%", display: "block", marginBottom: "12%"}}/>
             {["Dashboard", "Deals", "Deal Analyzer", "Settings"].map((l, i) => (
               <div key={l} style={{color: i === 0 ? "#fff" : "#8b96a5",
                 background: i === 0 ? "rgba(255,255,255,.08)" : "transparent",
@@ -2263,9 +2262,8 @@ function HowItWorksPage({ onSignUp }) {
           <HiwRow l="Rent Estimate" r="$1,850/mo" green/>
           <HiwRow l="Property Tax" r="$164/mo · auto"/>
           <div style={{display: "flex", gap: 8, marginTop: 12}}>
-            {[0, 1, 2].map(i => (
-              <div key={i} style={{flex: 1, height: 52, borderRadius: 8,
-                ...hiwSlot(`thumb-${i + 1}.jpg`, i),
+            {["thumb-1.avif", "thumb-2.jpg", "thumb-3.jpg"].map((f, i) => (
+              <div key={f} style={{flex: 1, height: 52, borderRadius: 8, ...hiwSlot(f, i),
                 border: "1px solid " + C.border}}/>
             ))}
           </div>
@@ -2330,7 +2328,7 @@ function HowItWorksPage({ onSignUp }) {
             <div key={a} style={{display: "flex", gap: 10, alignItems: "center", padding: "8px 0",
               borderBottom: "1px solid " + C.borderSoft}}>
               <div style={{width: 52, height: 38, borderRadius: 8,
-                ...hiwSlot(`feed-${i + 1}.jpg`, i + 1),
+                ...hiwSlot(i === 0 ? "feed-1.webp" : "feed-2.webp", i + 1),
                 border: "1px solid " + C.border, flexShrink: 0}}/>
               <div style={{minWidth: 0, flex: 1}}>
                 <div style={{fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden",
