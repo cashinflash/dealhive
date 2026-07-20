@@ -1586,47 +1586,6 @@ function MapView({properties, onSelect}) {
   return <div ref={ref} style={{height:"100%", width:"100%"}} />;
 }
 
-// -- Appreciation Projector ----------------------------------------------------
-function AppreciationProjector({homeValue, purchasePrice, mobile}) {
-  const [rate, setRate] = useState(3);
-  if (!homeValue && !purchasePrice) return null;
-  const base = homeValue || purchasePrice;
-  const years = [1,3,5,10,20];
-  return (
-    <SectionBlock title="Appreciation Projector" color={C.green} collapsible defaultOpen={true}>
-      <div style={{marginBottom:16}}>
-        <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
-          <label style={{fontSize:13, color:C.text, fontWeight:500, fontFamily:F}}>Annual appreciation</label>
-          <span style={{fontSize:13, fontWeight:600, color:C.green, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{rate}%</span>
-        </div>
-        <input type="range" min={0} max={10} step={0.5} value={rate}
-          onChange={e=>setRate(parseFloat(e.target.value))}
-          style={{width:"100%", accentColor:C.green}} />
-        <div style={{display:"flex", justifyContent:"space-between", fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6, fontVariantNumeric:"tabular-nums"}}>
-          <span>0%</span><span>5%</span><span>10%</span>
-        </div>
-      </div>
-      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"repeat(5,1fr)", gap:1,
-        background:C.border, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border}}>
-        {years.map(yr => {
-          const val = base * Math.pow(1 + rate/100, yr);
-          const gain = val - base;
-          return (
-            <div key={yr} style={{background:C.card, padding:"12px 10px", textAlign:"center"}}>
-              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{yr} yr{yr>1?"s":""}</div>
-              <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, marginTop:4, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{$(val)}</div>
-              <div style={{fontSize:11, color:C.greenDark, fontFamily:F, marginTop:2, fontWeight:500, fontVariantNumeric:"tabular-nums"}}>+{$(gain)}</div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{marginTop:12, fontSize:12, color:C.textMuted, fontFamily:F, lineHeight:1.5}}>
-        Based on a current value of {$(base)}. Appreciation is not guaranteed.
-      </div>
-    </SectionBlock>
-  );
-}
-
 // -- Itemize sheet ---------------------------------------------------------------
 // Itemized breakdown editor for closing costs or repair costs. Items support
 // $ amounts, % of purchase price, % of loan amount, and roll-into-loan. Rows
@@ -2936,8 +2895,6 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           onClose={()=>setItemize(null)} mobile={mobile} />
       )}
 
-      {/* Appreciation Projector */}
-      <AppreciationProjector homeValue={p.homeValueMedian || p.homeValueHigh} purchasePrice={p.purchasePrice} mobile={mobile} />
       </>
       )}
 
@@ -7052,6 +7009,98 @@ const sheetError = (text) => (
   </div>
 );
 
+// -- Appreciation Projector (dedicated Deal View page) --------------------------
+// Moved out of the calculator: value growth is a hold-phase question, so it
+// lives with the saved deal. Base value = analyzer ARV when the deal was
+// saved, else the feed's estimate, else the price.
+function AppreciationSheet({deal, onClose, mobile}) {
+  const a     = deal.analysis || null;
+  const base  = (a && a.arv) || deal.arv || deal.price || 0;
+  const paid  = deal.price || 0;
+  const [rate, setRate] = useState(3);
+  const years = [1, 3, 5, 10, 15, 20, 30];
+  const at    = yr => base * Math.pow(1 + rate / 100, yr);
+  const hero  = at(10);
+  const presets = [["Conservative", 2], ["U.S. average", 3], ["Hot market", 5]];
+  return (
+    <SheetShell title="Appreciation Projector"
+      sub={`${deal.streetAddress || deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={onClose} mobile={mobile}>
+
+      {/* Hero — the 10-year headline */}
+      <div style={{background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3,
+        padding:"18px 16px", textAlign:"center", marginBottom:16}}>
+        <div style={{fontSize:11, fontWeight:700, color:C.greenDark, fontFamily:F,
+          letterSpacing:".06em", textTransform:"uppercase"}}>Projected value in 10 years</div>
+        <div style={{fontSize:32, fontWeight:800, color:C.text, fontFamily:F, marginTop:6,
+          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em"}}>{$(hero)}</div>
+        <div style={{fontSize:13, fontWeight:600, color:C.greenDark, fontFamily:F, marginTop:4,
+          fontVariantNumeric:"tabular-nums"}}>
+          +{$(hero - base)} ({base > 0 ? Math.round((hero / base - 1) * 100) : 0}%) over today's {$(base)}
+        </div>
+      </div>
+
+      {/* Rate control */}
+      <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r3,
+        padding:"14px 16px", marginBottom:16}}>
+        <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:600, fontFamily:F}}>Annual appreciation</label>
+          <span style={{fontSize:13, fontWeight:700, color:C.greenDark, fontFamily:F,
+            fontVariantNumeric:"tabular-nums"}}>{rate}%</span>
+        </div>
+        <input type="range" min={0} max={10} step={0.5} value={rate}
+          onChange={e => setRate(parseFloat(e.target.value))}
+          style={{width:"100%", accentColor:C.green}} />
+        <div style={{display:"flex", gap:8, marginTop:10, flexWrap:"wrap"}}>
+          {presets.map(([label, r]) => (
+            <button key={label} onClick={() => setRate(r)}
+              style={{padding:"5px 11px", borderRadius:9999, cursor:"pointer", fontFamily:F,
+                fontSize:12, fontWeight:600,
+                background: rate === r ? C.greenSubtle : C.card,
+                color:      rate === r ? C.greenDark   : C.textSub,
+                border: "1px solid " + (rate === r ? C.greenBorder : C.border)}}>
+              {label} · {r}%
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Year-by-year growth */}
+      <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden"}}>
+        {years.map((yr, i) => {
+          const v = at(yr);
+          return (
+            <div key={yr} style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+              padding:"12px 16px", borderBottom: i === years.length - 1 ? "none" : "1px solid "+C.border}}>
+              <span style={{fontSize:13, fontWeight:600, color:C.textSub, fontFamily:F}}>
+                {yr} year{yr > 1 ? "s" : ""}
+              </span>
+              <span style={{textAlign:"right"}}>
+                <span style={{display:"block", fontSize:15, fontWeight:700, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{$(v)}</span>
+                <span style={{display:"block", fontSize:11.5, fontWeight:600, color:C.greenDark, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                  +{$(v - base)} · +{base > 0 ? Math.round((v / base - 1) * 100) : 0}%
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {paid > 0 && paid !== base && (
+        <div style={{marginTop:12, fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55}}>
+          Purchase price was {$(paid)} — at {rate}% a year, this property would be worth
+          {" "}{$(hero - paid)} more than you paid within 10 years.
+        </div>
+      )}
+      <div style={{marginTop:8, fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.5}}>
+        Compound growth on today's value. Appreciation varies by market and is not guaranteed.
+      </div>
+    </SheetShell>
+  );
+}
+
 function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
   const st  = usePropertyRecord(deal, apiLookup, rcAuth, isPro);
   const rec = st.rec || {};
@@ -7966,7 +8015,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
             <Row Ic={I.chart} label="Deal Calculator"
               onClick={()=>{ onClose(); onAnalyze(deal); }}/>
             <Row Ic={I.trendingUp} label="Buy & Hold Projections"
-              onClick={()=>setSheet("proj")} last/>
+              onClick={()=>setSheet("proj")}/>
+            <Row Ic={I.home} label="Appreciation Projector"
+              onClick={()=>setSheet("appr")} last/>
           </Group>
           <Group title="Research">
             <Row Ic={I.tag} label="Sales Comps & ARV"
@@ -8016,6 +8067,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
         <RentCompsSheet p={deal} apiLookup={apiLookup} rcAuth={rcAuth}
           tier={isPro ? "pro" : "free"} onUpgrade={onUpgrade}
           onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "appr" && (
+        <AppreciationSheet deal={deal} onClose={()=>setSheet(null)} mobile={mobile} />
       )}
       {sheet === "owner" && (
         <OwnerLookupSheet deal={deal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
