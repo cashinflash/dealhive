@@ -392,6 +392,7 @@ function HeroVisual() {
 
 // -- Top nav ------------------------------------------------------------------
 const NAV_LINKS = [
+  ["How It Works", "/how-it-works"],
   ["Features", "/features"],
   ["Pricing", "/pricing"],
   ["FAQ", "/faq"],
@@ -1124,6 +1125,7 @@ function Footer({ navigate, onSignIn, onSignUp }) {
             </p>
           </div>
           <FooterCol title="Platform">
+            {link("How It Works", "/how-it-works")}
             {link("Features", "/features")}
             {link("Pricing", "/pricing")}
             {link("FAQ", "/faq")}
@@ -1955,6 +1957,395 @@ function TermsPage() {
   );
 }
 
+
+// ==============================================================================
+// How It Works — DealCheck-style tour with device mockups drawn in pure CSS
+// (crisp at any scale, always on-brand, no screenshot assets to go stale).
+// ==============================================================================
+
+const HIW_PHOTO = "linear-gradient(135deg, #e8e2d8 0%, #f4efe7 38%, #d9d2c6 72%, #cfc6b8 100%)";
+
+function HiwChip({children, tone}) {
+  const tones = {
+    price:  {bg: C.navyDeep, color: "#fff", border: C.navyDeep},
+    rental: {bg: C.orangeSubtle, color: C.orangeDark, border: C.orangeBorder},
+    plain:  {bg: "#fff", color: C.textSub, border: C.border},
+  }[tone || "plain"];
+  return (
+    <span style={{background: tones.bg, color: tones.color, border: "1px solid " + tones.border,
+      borderRadius: 999, padding: "0.22em 0.7em", fontWeight: 700, whiteSpace: "nowrap"}}>
+      {children}
+    </span>
+  );
+}
+
+// The Deal View replica that lives inside both device screens. `s` scales the
+// type so the same markup reads right on the monitor and the phone.
+function HiwDealView({s = 1, compact = false}) {
+  const fz = px => px * s;
+  const metric = (label, value, green) => (
+    <div style={{padding: `${fz(7)}px ${fz(6)}px`, textAlign: "center", background: "#fff"}}>
+      <div style={{fontSize: fz(5.4), fontWeight: 700, color: C.textMuted, letterSpacing: ".08em",
+        textTransform: "uppercase"}}>{label}</div>
+      <div style={{fontSize: fz(10.5), fontWeight: 800, marginTop: 2,
+        color: green ? C.cashPos : C.text}}>{value}</div>
+    </div>
+  );
+  return (
+    <div style={{fontFamily: F, background: "#fff"}}>
+      <div style={{position: "relative", height: fz(compact ? 54 : 46), background: HIW_PHOTO}}>
+        <span style={{position: "absolute", top: fz(4), right: fz(4), width: fz(10), height: fz(10),
+          borderRadius: "50%", background: "rgba(255,255,255,.95)", color: C.text,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: fz(6), fontWeight: 700}}>×</span>
+        <span style={{position: "absolute", bottom: fz(4), right: fz(4), background: "rgba(20,25,35,.7)",
+          color: "#fff", borderRadius: 999, padding: `${fz(1)}px ${fz(4)}px`, fontSize: fz(4.6),
+          fontWeight: 700}}>1 / 2</span>
+      </div>
+      <div style={{padding: `${fz(6)}px ${fz(8)}px ${fz(8)}px`}}>
+        <div style={{display: "flex", gap: fz(3), justifyContent: "center", fontSize: fz(5.6)}}>
+          <HiwChip tone="price">$165,000</HiwChip>
+          <HiwChip tone="rental">• Rental</HiwChip>
+          <HiwChip tone="plain">Finance</HiwChip>
+        </div>
+        <div style={{textAlign: "center", marginTop: fz(4)}}>
+          <div style={{fontSize: fz(8.6), fontWeight: 800, color: C.text, letterSpacing: "-0.01em"}}>
+            4444 West Point Loma Boulevard
+          </div>
+          <div style={{fontSize: fz(5.8), color: C.textSub, marginTop: 1}}>San Diego, CA 92107</div>
+        </div>
+        <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: C.border,
+          border: "1px solid " + C.border, borderRadius: fz(5), overflow: "hidden", marginTop: fz(5)}}>
+          {metric("Cash Flow", "$820/mo", true)}
+          {metric("Cap Rate", "10.80%")}
+          {metric("CoC", "21.30%")}
+          {metric("Total Spent", "$46,200")}
+        </div>
+        <div style={{display: "flex", justifyContent: "center", gap: fz(6), marginTop: fz(5),
+          fontSize: fz(5.4), color: C.textSub, fontWeight: 600}}>
+          <span>1 bd</span><span>·</span><span>1 ba</span><span>·</span><span>725 sqft</span>
+          <span>·</span><span>1966</span><span>·</span><span>Condo</span>
+        </div>
+        {!compact && (
+          <div style={{marginTop: fz(5)}}>
+            <div style={{fontSize: fz(5), fontWeight: 700, color: C.textMuted,
+              letterSpacing: ".08em", textTransform: "uppercase", marginBottom: fz(2)}}>Analysis</div>
+            {["Deal Calculator", "Buy & Hold Projections", "Appreciation Projector"].map(l => (
+              <div key={l} style={{display: "flex", justifyContent: "space-between",
+                alignItems: "center", padding: `${fz(3.6)}px ${fz(5)}px`,
+                border: "1px solid " + C.border, borderRadius: fz(4), marginBottom: fz(2.4),
+                fontSize: fz(6.4), fontWeight: 600, color: C.text, background: "#fff"}}>
+                {l}<span style={{color: C.textMuted}}>›</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {compact && (
+          <div style={{marginTop: fz(5)}}>
+            <div style={{fontSize: fz(5), fontWeight: 700, color: C.textMuted,
+              letterSpacing: ".08em", textTransform: "uppercase", marginBottom: fz(2)}}>Photos</div>
+            <div style={{display: "flex", gap: fz(3)}}>
+              <div style={{position: "relative", width: fz(26), height: fz(18), borderRadius: fz(3),
+                background: HIW_PHOTO, border: "1px solid " + C.border}}>
+                <span style={{position: "absolute", bottom: 1, left: 1, background: "rgba(20,25,35,.75)",
+                  color: "#fff", borderRadius: 999, padding: `0 ${fz(2.4)}px`, fontSize: fz(3.6),
+                  fontWeight: 800, textTransform: "uppercase"}}>Cover</span>
+              </div>
+              <div style={{width: fz(26), height: fz(18), borderRadius: fz(3),
+                border: "1.4px dashed " + C.orangeBorder, background: C.orangeSubtle,
+                color: C.orangeDark, display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: fz(4.4), fontWeight: 800}}>+ Add</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HiwDevices() {
+  return (
+    <div style={{position: "relative", maxWidth: 860, margin: "56px auto 0", padding: "0 12px 44px"}}>
+      {/* Monitor */}
+      <div className="dh-hiw-monitor">
+      <div style={{width: "88%", background: "#0e1319", borderRadius: 18,
+        padding: "1.6% 1.6% 2%", boxShadow: "0 40px 80px -24px rgba(9,12,18,.55)"}}>
+        <div style={{borderRadius: 8, overflow: "hidden", display: "flex", background: "#F7F5F1",
+          aspectRatio: "16 / 9.8"}}>
+          <div style={{width: "21%", background: C.navyDeep, padding: "3.4% 2.4%",
+            display: "flex", flexDirection: "column", fontFamily: F}}>
+            <div style={{display: "flex", alignItems: "center", gap: "6%", marginBottom: "14%"}}>
+              <span style={{width: "0.9em", height: "0.9em", borderRadius: 3, background: C.orange,
+                display: "inline-block", flexShrink: 0}}/>
+              <span style={{color: "#fff", fontWeight: 800, fontSize: "clamp(6px, 1.3vw, 12px)"}}>
+                deal<span style={{color: C.orange}}>hive</span>.io
+              </span>
+            </div>
+            {["Dashboard", "Deals", "Deal Analyzer", "Settings"].map((l, i) => (
+              <div key={l} style={{color: i === 0 ? "#fff" : "#8b96a5",
+                background: i === 0 ? "rgba(255,255,255,.08)" : "transparent",
+                borderRadius: 6, padding: "5% 7%", marginBottom: "3%",
+                fontSize: "clamp(5px, 1vw, 10px)", fontWeight: i === 0 ? 700 : 500}}>{l}</div>
+            ))}
+          </div>
+          <div style={{flex: 1, position: "relative", padding: "2.4%"}}>
+            <div aria-hidden="true" style={{position: "absolute", inset: "4% 3%", display: "grid",
+              gridTemplateColumns: "1fr 1fr", gap: "3%", opacity: .45, filter: "blur(1px)"}}>
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} style={{background: "#fff", borderRadius: 8,
+                  border: "1px solid " + C.border, overflow: "hidden"}}>
+                  <div style={{height: "44%", background: HIW_PHOTO}}/>
+                </div>
+              ))}
+            </div>
+            <div style={{position: "absolute", left: "50%", top: "50%",
+              transform: "translate(-50%, -50%)", width: "58%",
+              borderRadius: 10, overflow: "hidden", boxShadow: "0 18px 50px -12px rgba(9,12,18,.4)",
+              border: "1px solid " + C.border}}>
+              <HiwDealView s={0.98}/>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={{width: "9%", height: 26, margin: "0 auto", background: "#0e1319",
+        clipPath: "polygon(12% 0, 88% 0, 100% 100%, 0 100%)"}}/>
+      <div style={{width: "26%", height: 9, margin: "0 auto", background: "#0e1319",
+        borderRadius: 999}}/>
+      </div>
+      {/* Phone */}
+      <div className="dh-hiw-phone" style={{position: "absolute", right: "1%", bottom: 0, width: "clamp(150px, 24%, 210px)",
+        background: "#0e1319", borderRadius: 30, padding: 7,
+        boxShadow: "0 32px 64px -18px rgba(9,12,18,.6)"}}>
+        <div style={{borderRadius: 24, overflow: "hidden", background: "#fff", position: "relative"}}>
+          <div style={{position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
+            width: "34%", height: 9, borderRadius: 999, background: "#0e1319", zIndex: 2}}/>
+          <HiwDealView s={1.06} compact/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HiwMiniCard({label, children}) {
+  return (
+    <div style={{background: "#fff", border: "1px solid " + C.border, borderRadius: 16,
+      padding: "20px 20px 18px", boxShadow: "0 24px 48px -22px rgba(31,45,61,.22)",
+      fontFamily: F, maxWidth: 420, width: "100%", margin: "0 auto"}}>
+      {label && (
+        <div style={{fontSize: 11, fontWeight: 700, color: C.orangeDark, letterSpacing: ".08em",
+          textTransform: "uppercase", marginBottom: 12}}>{label}</div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function HiwRow({l, r, green, red, bold}) {
+  return (
+    <div style={{display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0",
+      borderBottom: "1px solid " + C.borderSoft, fontSize: 13.5}}>
+      <span style={{color: C.textSub, fontWeight: 500}}>{l}</span>
+      <span style={{fontWeight: bold ? 800 : 700,
+        color: green ? C.cashPos : red ? "#dc2626" : C.text, fontVariantNumeric: "tabular-nums"}}>{r}</span>
+    </div>
+  );
+}
+
+function HowItWorksPage({ onSignUp }) {
+  const steps = [
+    {
+      title: "Type an address. We do the typing.",
+      body: "Enter any U.S. address and DealHive pulls the property's details for you — price, beds, baths, square footage, year built, property taxes at your state's real rate, photos, and live value and rent estimates. Or enter everything by hand; the calculator never needs a lookup.",
+      visual: (
+        <HiwMiniCard label="Property Data — auto-filled">
+          <HiwRow l="Value Estimate" r="$180,500" bold/>
+          <HiwRow l="Rent Estimate" r="$1,850/mo" green/>
+          <HiwRow l="Property Tax" r="$164/mo · auto"/>
+          <div style={{display: "flex", gap: 8, marginTop: 12}}>
+            {[0, 1, 2].map(i => (
+              <div key={i} style={{flex: 1, height: 52, borderRadius: 8, background: HIW_PHOTO,
+                border: "1px solid " + C.border}}/>
+            ))}
+          </div>
+        </HiwMiniCard>
+      ),
+    },
+    {
+      title: "Shape the exact deal you'd actually do.",
+      body: "Cash or financed, hard money or conventional, Buy & Hold, BRRRR, or Fix & Flip. Nine expense categories, itemizable closing and rehab costs, and portal-wide investor defaults like 75% LTV — every number editable, every change recalculated instantly.",
+      visual: (
+        <HiwMiniCard label="Rental Income">
+          <HiwRow l="Gross Rent" r="$1,850 /mo" bold/>
+          <HiwRow l="Vacancy Rate" r="8%"/>
+          <div style={{fontSize: 11, fontWeight: 700, color: C.orangeDark, letterSpacing: ".08em",
+            textTransform: "uppercase", margin: "14px 0 6px"}}>Operating Expenses</div>
+          <HiwRow l="Itemized Total" r="$826 /mo" bold/>
+          <div style={{marginTop: 12, display: "inline-flex", alignItems: "center", gap: 6,
+            border: "1px solid " + C.border, borderRadius: 999, padding: "6px 14px",
+            fontSize: 12.5, fontWeight: 700, color: C.textSub}}>✎ Itemize Expenses</div>
+        </HiwMiniCard>
+      ),
+    },
+    {
+      title: "One Summary. The whole story.",
+      body: "Every scenario ends in a single Summary that reads like the deal itself: the loan you take, the cash you put in, the exit event — refinance or sale — and the life after it, with lender checks like DSCR for financed rentals. No hunting across sections for the verdict.",
+      visual: (
+        <HiwMiniCard label="Summary">
+          <HiwRow l="Purchase Method" r="Finance"/>
+          <HiwRow l="Exit Strategy" r="BRRRR"/>
+          <HiwRow l="Out of Pocket" r="$80,608"/>
+          <HiwRow l="Net Cash at Refi" r="$92,050" green bold/>
+          <HiwRow l="Cash Flow (After Refi)" r="$375/mo" green bold/>
+          <HiwRow l="Cap Rate" r="13.01%"/>
+        </HiwMiniCard>
+      ),
+    },
+    {
+      title: "Comps and the owner, one tap deep.",
+      body: "Browse recent sales comps and active rental comps for any address — tap one for the full picture with a Street View photo. Then find who actually owns the property with county-records Owner Lookup: name, mailing address, and whether they're an absentee owner.",
+      visual: (
+        <HiwMiniCard label="Sales Comps & ARV">
+          <div style={{textAlign: "center", marginBottom: 10}}>
+            <div style={{fontSize: 13, fontWeight: 800, color: "#2563eb"}}>Estimated Value</div>
+            <div style={{fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em"}}>$180,500</div>
+          </div>
+          <HiwRow l="650 Salisbury Rd · 0.21 mi" r="$186,000"/>
+          <HiwRow l="2119 E 44th St · 0.34 mi" r="$174,500"/>
+          <div style={{marginTop: 12, background: C.orange, color: "#fff", borderRadius: 10,
+            padding: "9px 0", textAlign: "center", fontSize: 13, fontWeight: 800}}>
+            Find the Owner
+          </div>
+        </HiwMiniCard>
+      ),
+    },
+    {
+      title: "Fresh off-market deals, every single night.",
+      body: "DealHive's feed restocks nightly with for-sale-by-owner properties across the country's best cash-flow metros — full street addresses, real photos, the numbers already run, and the owner's contact information for Pro members. No agents, no gatekeepers.",
+      visual: (
+        <HiwMiniCard label="Tonight's Feed">
+          {[["650 Salisbury Road, Columbus, OH", "$329,900"],
+            ["2119 East 44th Street, Kansas City, MO", "$118,000"]].map(([a, p]) => (
+            <div key={a} style={{display: "flex", gap: 10, alignItems: "center", padding: "8px 0",
+              borderBottom: "1px solid " + C.borderSoft}}>
+              <div style={{width: 52, height: 38, borderRadius: 8, background: HIW_PHOTO,
+                border: "1px solid " + C.border, flexShrink: 0}}/>
+              <div style={{minWidth: 0, flex: 1}}>
+                <div style={{fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden",
+                  textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{a}</div>
+                <div style={{fontSize: 11.5, color: C.textSub, marginTop: 1}}>
+                  <span style={{fontWeight: 800, color: C.text}}>{p}</span> · By Owner
+                </div>
+              </div>
+            </div>
+          ))}
+          <div style={{fontSize: 11.5, color: C.textMuted, marginTop: 10}}>
+            Rebuilt nightly · rotating metros · owner contact with Pro
+          </div>
+        </HiwMiniCard>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      <style>{`
+        .dh-hiw-step { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+        .dh-hiw-step.flip .dh-hiw-copy { order: 2; }
+        @media (max-width: 860px) {
+          .dh-hiw-step { grid-template-columns: 1fr; gap: 26px; }
+          .dh-hiw-step.flip .dh-hiw-copy { order: 0; }
+        }
+        @media (max-width: 700px) {
+          .dh-hiw-monitor { display: none; }
+          .dh-hiw-phone { position: static !important; width: 224px !important; margin: 0 auto; }
+        }
+      `}</style>
+
+      {/* Hero */}
+      <section style={{position: "relative", overflow: "hidden", padding: "76px 20px 0",
+        background: `radial-gradient(ellipse at 18% 0%, ${C.navySoft} 0%, transparent 55%), linear-gradient(165deg, ${C.navyDeep} 0%, ${C.navy} 100%)`}}>
+        <div aria-hidden="true" style={{position: "absolute", inset: 0}}>
+          <Hex size={260} color={C.orange} opacity={0.14} blur={40} float={1} style={{top: -80, right: "6%"}}/>
+          <Hex size={110} color={C.orange} opacity={0.2} outline float={2} style={{top: "30%", left: "-30px"}}/>
+          <Hex size={54} color={C.orangeBorder} opacity={0.25} float={3} style={{bottom: "18%", right: "20%"}}/>
+        </div>
+        <div style={{position: "relative", maxWidth: 820, margin: "0 auto", textAlign: "center"}}>
+          <div style={{display: "inline-block", background: "rgba(255,255,255,.08)",
+            border: "1px solid rgba(255,255,255,.16)", color: C.orangeBorder, borderRadius: 999,
+            padding: "6px 16px", fontSize: 12.5, fontWeight: 700, fontFamily: F,
+            letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 20}}>How it works</div>
+          <h1 style={{fontSize: "clamp(34px, 5.4vw, 58px)", fontWeight: 800, fontFamily: F,
+            letterSpacing: "-0.035em", lineHeight: 1.04, margin: "0 0 18px", color: "#fff"}}>
+            From address to answer{" "}
+            <span style={{color: C.orange, whiteSpace: "nowrap"}}>in seconds.</span>
+          </h1>
+          <p style={{fontSize: "clamp(15px, 1.8vw, 19px)", color: "#c3ccd8", fontFamily: F,
+            lineHeight: 1.65, margin: "0 auto", maxWidth: 620}}>
+            Type an address, let live data fill in the numbers, and know whether the deal
+            works — on your laptop or in your pocket.
+          </p>
+          <button onClick={onSignUp} style={{marginTop: 28, background: C.orange, color: "#fff",
+            border: "none", borderRadius: 12, padding: "15px 34px", fontSize: 16, fontWeight: 800,
+            fontFamily: F, cursor: "pointer", boxShadow: "0 16px 40px -10px rgba(232,115,28,.55)"}}>
+            Try DealHive for Free
+          </button>
+          <div style={{fontSize: 12.5, color: "#8b96a5", fontFamily: F, marginTop: 12}}>
+            Free forever plan · no credit card required
+          </div>
+        </div>
+        <HiwDevices/>
+      </section>
+
+      {/* Steps */}
+      <Section tint hexes={HEX_SETS.tint}>
+        <SectionHeader
+          eyebrow="The workflow"
+          title="Accurate property analysis in just a few clicks."
+          subtitle="Five steps between a raw address and a confident decision."
+        />
+        <div style={{maxWidth: 1020, margin: "0 auto", display: "flex", flexDirection: "column", gap: 84}}>
+          {steps.map((s, i) => (
+            <div key={s.title} className={"dh-hiw-step" + (i % 2 ? " flip" : "")}>
+              <div className="dh-hiw-copy">
+                <div style={{display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 34, height: 34, borderRadius: 10, background: C.orangeSubtle,
+                  border: "1px solid " + C.orangeBorder, color: C.orangeDark, fontWeight: 800,
+                  fontFamily: F, fontSize: 15, marginBottom: 14}}>{i + 1}</div>
+                <h3 style={{fontSize: "clamp(22px, 2.6vw, 30px)", fontWeight: 800, fontFamily: F,
+                  letterSpacing: "-0.025em", lineHeight: 1.15, margin: "0 0 12px", color: C.text}}>
+                  {s.title}
+                </h3>
+                <p style={{fontSize: 15.5, color: C.textSub, fontFamily: F, lineHeight: 1.7, margin: 0}}>
+                  {s.body}
+                </p>
+              </div>
+              <div>{s.visual}</div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* CTA */}
+      <Section dark hexes={HEX_SETS.dark}>
+        <div style={{textAlign: "center", maxWidth: 640, margin: "0 auto"}}>
+          <h2 style={{fontSize: "clamp(26px, 3.6vw, 40px)", fontWeight: 800, fontFamily: F,
+            letterSpacing: "-0.03em", color: "#fff", margin: "0 0 14px", lineHeight: 1.1}}>
+            Analyze your first deal in the next five minutes.
+          </h2>
+          <p style={{fontSize: 16, color: "#c3ccd8", fontFamily: F, lineHeight: 1.65, margin: "0 0 26px"}}>
+            The calculator is free forever. The full feed is one tap away when you're ready.
+          </p>
+          <button onClick={onSignUp} style={{background: C.orange, color: "#fff", border: "none",
+            borderRadius: 12, padding: "15px 34px", fontSize: 16, fontWeight: 800, fontFamily: F,
+            cursor: "pointer", boxShadow: "0 16px 40px -10px rgba(232,115,28,.55)"}}>
+            Get Started Free
+          </button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 export function MarketingChrome({ navigate, onSignIn, onSignUp, children }) {
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: "100vh" }}>
@@ -1971,6 +2362,7 @@ export function MarketingChrome({ navigate, onSignIn, onSignUp, children }) {
 const PAGE_TITLES = {
   "/":          "DealHive: Analyze Any Investment Property in Seconds",
   "/features":  "DealHive Features",
+  "/how-it-works": "How DealHive Works",
   "/pricing":   "DealHive Pricing",
   "/faq":       "DealHive FAQ",
   "/about":     "About DealHive",
@@ -1995,6 +2387,7 @@ export default function Landing({ page = "/", navigate, onSignIn, onSignUp }) {
     page === "/about"    ? <AboutPage onSignUp={onSignUp}/> :
     page === "/contact"  ? <ContactPage/> :
     page.startsWith("/use-cases/") && USE_CASES[page] ? <UseCasePage path={page} onSignUp={onSignUp}/> :
+    page === "/how-it-works" ? <HowItWorksPage onSignUp={onSignUp}/> :
     page === "/privacy"  ? <PrivacyPage/> :
     page === "/terms"    ? <TermsPage/> :
     <HomePage onSignUp={onSignUp}/>;
