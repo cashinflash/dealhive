@@ -3092,19 +3092,35 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
             return (
               <Card key={p.id} onClick={()=>onSelect(p.id)} hover style={{cursor:"pointer"}}>
                 {p.lat && p.lng ? (
-                  <div style={{position:"relative", height:140, overflow:"hidden", background:C.bgSubtle}}>
-                    <SafeImg src={svUrl(p.lat,p.lng,900,280)} fallback={imgPlaceholder()}
-                      style={{width:"100%", height:"100%", objectFit:"cover"}} />
-                    <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom,transparent 35%,rgba(9,9,11,.7))"}} />
-                    <div style={{position:"absolute", bottom:10, left:14, right:14, display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:8}}>
-                      <div style={{minWidth:0}}>
-                        <div style={{color:"white", fontWeight:600, fontSize:14, fontFamily:F, letterSpacing:"-0.01em",
-                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
-                        <div style={{color:"rgba(255,255,255,.8)", fontSize:12, fontFamily:F, marginTop:1}}>{p.city}, {p.state}</div>
-                      </div>
+                  <div style={{position:"relative", height:170, overflow:"hidden", background:C.bgSubtle}}>
+                    <SafeImg src={svUrl(p.lat,p.lng,900,340)} fallback={imgPlaceholder()}
+                      style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}} />
+                    <div style={{position:"absolute", inset:0, background:"linear-gradient(to bottom, transparent 55%, rgba(9,9,11,.55))"}} />
+                    <div style={{position:"absolute", top:10, left:10}}>
+                      <span style={{display:"inline-flex", alignItems:"center", gap:5,
+                        background:ob.bg, color:ob.c, border:"1px solid rgba(255,255,255,.4)",
+                        padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+                        letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)"}}>
+                        <span style={{width:6, height:6, borderRadius:"50%", background:ob.c}}/>
+                        {ob.label}
+                      </span>
                     </div>
-                    <div style={{position:"absolute", top:10, right:10}}>
-                      <Badge label={ob.label} bg={ob.bg} c={ob.c} dot/>
+                    <div style={{position:"absolute", bottom:10, left:14, right:14,
+                      color:"#fff", fontFamily:F, display:"flex", justifyContent:"space-between",
+                      alignItems:"flex-end", gap:8}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:17, fontWeight:700, letterSpacing:"-0.015em", lineHeight:1.15,
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{p.address}</div>
+                        <div style={{fontSize:12, color:"rgba(255,255,255,.85)", marginTop:2}}>{p.city}, {p.state}</div>
+                      </div>
+                      {(p.beds || p.baths || p.sqft) && (
+                        <span style={{background:"rgba(255,255,255,.92)", color:C.text,
+                          padding:"3px 8px", borderRadius:C.r1, fontSize:11, fontWeight:600,
+                          fontVariantNumeric:"tabular-nums", flexShrink:0, letterSpacing:"-0.005em"}}>
+                          {[p.beds ? `${p.beds}bd` : null, p.baths ? `${p.baths}ba` : null,
+                            p.sqft ? `${(p.sqft/1000).toFixed(1)}k sqft` : null].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -3119,20 +3135,28 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
                   </div>
                 )}
                 <div style={{padding:"14px"}}>
-                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:1, marginBottom:12,
-                    background:C.border, borderRadius:C.r2, overflow:"hidden", border:"1px solid "+C.border}}>
-                    {[["CF/mo",m.chosenCF,$mo(m.chosenCF)],["CoC",m.chosenCoC,pct(m.chosenCoC)],["Cap",m.chosenCap,pct(m.chosenCap)]].map(([l,v,sv]) => (
-                      <div key={l} style={{textAlign:"center", background:C.card, padding:"10px 6px"}}>
-                        <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:500, letterSpacing:".03em", textTransform:"uppercase"}}>{l}</div>
-                        <div style={{fontSize:14, fontWeight:700, marginTop:3,
-                          color:["CF/mo","CoC"].includes(l)?cfC(v):C.text, fontFamily:F, fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{sv}</div>
+                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, marginBottom:12,
+                    background:C.border, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border}}>
+                    {[["Cash Flow", $mo(m.chosenCF), cfC(m.chosenCF), true],
+                      ["Rent / mo", $(p.rentAmount||0), null, false],
+                      ["CoC", m.chosenOOP > 0 ? pct(m.chosenCoC) : "∞", cfC(m.chosenCF), false],
+                      ["Cap Rate", pct(m.chosenCap), null, false]].map(([l, v, vColor, isHero]) => (
+                      <div key={l} style={{
+                        background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+                        padding:"14px 10px 16px", textAlign:"center"}}>
+                        <div style={{fontSize:10, color:C.textMuted, fontWeight:700, fontFamily:F,
+                          letterSpacing:".09em", textTransform:"uppercase"}}>{l}</div>
+                        <div style={{fontSize: isHero ? 22 : 18.5, fontWeight:800, lineHeight:1.15,
+                          color: vColor || C.text, fontFamily:F,
+                          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em", marginTop:5}}>{v}</div>
                       </div>
                     ))}
                   </div>
                   <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
                     <Badge label={p.tenantStatus} bg={st.bg} c={st.c} dot/>
-                    <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                      {p.beds}bd · {p.baths}ba{p.sqft?` · ${(p.sqft/1000).toFixed(1)}k sqft`:""}
+                    <span style={{fontSize:12, color:C.textMuted, fontFamily:F,
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                      {p.occupied ? (p.tenantName || "Occupied") : "Vacant"}
                     </span>
                   </div>
                   {days!=null && days<=60 && days>=0 && (
