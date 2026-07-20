@@ -2159,6 +2159,7 @@ function DealSummaryBlock({p, m, exit}) {
       ["hr"],
       ["New Mortgage / mo (After Refi)", $mo(m.brrrMtg), C.text],
       ["Cash Flow / mo (After Refi)",    $mo(m.brrrCF),  cfC(m.brrrCF)],
+      ["Cap Rate",                       pct(m.chosenCap), C.text],
     ];
     if ((fin || m.owned) && m.brrrNetCash < 0) footer = (
       <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
@@ -5814,10 +5815,6 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const cashMode = savedFinancing === "cash" || savedFinancing === "owned";
 
   const a = savedScenario ? deal.analysis : null;
-  // Cash the refi puts in your pocket beyond everything you spent (never
-  // negative on the card — a shortfall just reads $0 in pocket).
-  const brrrrInPocket = a ? Math.max((a.brrrrNetCash || 0) - (a.brrrrAllIn ?? a.oop ?? 0), 0) : 0;
-
   const heroNumber =
     primary === "flip"      ? (a
       ? {label:"Est. profit", value:$(a.flipProfit), color:cfC(a.flipProfit)}
@@ -5836,10 +5833,11 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
       ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], ["Total Spent", $(a.oop)]]
       : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]])
   : primary === "brrrr"     ? (a
-      ? [["Out of Pocket", $(a.brrrrAllIn ?? a.oop)],
+      ? [["Cap Rate", pct(a.capRate)],
          ["Cash Out Refi", $(a.brrrrNetCash), C.cashPos],
-         ["Cash in Pocket", $(brrrrInPocket), C.cashPos]]
-      : [["Capital back", c.brrrr.recoveredPct + "%"], ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn)]])
+         ["Out of Pocket", $(a.brrrrAllIn ?? a.oop)]]
+      : [["Cap Rate", pct(cashMode ? c.buyHold.cashCap : c.buyHold.finCap)],
+         ["Refi loan", $(c.brrrr.refiLoan)], ["Out of Pocket", $(c.brrrr.allIn)]])
   : primary === "wholesale" ? [["ARV", $(c.flip.arv)], ["All in", $(c.flip.totalIn)], ["ROI", pct(c.flip.roi)]]
   : (a
       ? [["Cap rate", pct(a.capRate)], ["CoC", pct(a.coc), null, true], ["Total Spent", $(a.oop)]]
@@ -6023,18 +6021,15 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             .map(([l, v, vColor, keepCase, isHero]) => (
             <div key={l} style={{
               background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
-              padding:"13px 10px 15px", textAlign:"center",
+              padding:"14px 10px 16px", textAlign:"center",
             }}>
-              <div style={{display:"inline-flex", alignItems:"center", gap:5,
-                fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F,
-                letterSpacing:".07em", textTransform: keepCase ? "none" : "uppercase"}}>
-                <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
-                  background: vColor || (isHero ? heroNumber.color : C.borderHover)}}/>
+              <div style={{fontSize:10, color:C.textMuted, fontWeight:700, fontFamily:F,
+                letterSpacing:".09em", textTransform: keepCase ? "none" : "uppercase"}}>
                 {l}
               </div>
-              <div style={{fontSize: isHero ? 21 : 18, fontWeight:500,
+              <div style={{fontSize: isHero ? 22 : 18.5, fontWeight:800, lineHeight:1.15,
                 color: vColor || (isHero ? heroNumber.color : C.text), fontFamily:F,
-                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4}}>
+                fontVariantNumeric:"tabular-nums", letterSpacing:"-0.025em", marginTop:5}}>
                 {v}
               </div>
             </div>
