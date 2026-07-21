@@ -8441,13 +8441,14 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
   return (
     <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
       <PageHeader title="Deals" subtitle="Fresh investment deals, sourced nightly across 31 metros"/>
-      <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden"}}>
+      <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden",
+        height: mobile ? "calc(100dvh - 330px)" : 560}}>
         <div aria-hidden="true" style={{
           display:"grid", gap:16, filter:"blur(6px)", opacity:.8,
           pointerEvents:"none", userSelect:"none",
           gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
         }}>
-          {SAMPLE_DEALS.slice(0, mobile ? 3 : 6).map(d => (
+          {SAMPLE_DEALS.slice(0, mobile ? 2 : 6).map(d => (
             <DealCard key={d.id} deal={d} isPro={false} hideSource
               onAnalyze={()=>{}} onSave={()=>{}} onUpgrade={()=>{}} mobile={mobile} />
           ))}
@@ -9699,9 +9700,9 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
               boxShadow:"0 6px 16px -6px rgba(232,115,28,.55)",
             }}>{(userEmail||"?")[0].toUpperCase()}</div>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:14.5, fontWeight:700, color:"#fff", fontFamily:F,
-                letterSpacing:"-0.005em", overflow:"hidden", textOverflow:"ellipsis",
-                whiteSpace:"nowrap"}}>{userEmail}</div>
+              <div style={{fontSize:14, fontWeight:700, color:"#fff", fontFamily:F,
+                letterSpacing:"-0.005em", wordBreak:"break-word",
+                lineHeight:1.35}}>{userEmail}</div>
               <span style={{display:"inline-flex", alignItems:"center", gap:5, marginTop:5,
                 background: isPro ? "rgba(232,115,28,.18)" : "rgba(255,255,255,.1)",
                 border:"1px solid "+(isPro ? "rgba(247,154,82,.5)" : "rgba(255,255,255,.2)"),
@@ -9814,7 +9815,8 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
         </SectionBlock>
       )}
 
-      <SectionBlock title="Analyzer Defaults" color={C.blue} icon={I.settings}>
+      <SectionBlock title="Calculation Defaults" color={C.blue} icon={I.settings}
+        collapsible defaultOpen={false}>
         <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:14}}>
           Every new analysis starts with these numbers. Deals you've already
           saved keep their own.
