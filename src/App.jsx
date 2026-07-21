@@ -7506,6 +7506,11 @@ function RevealBlock({deal, rcAuth}) {
         <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>
       ) : rv && rv.found ? (
         <>
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:10}}>
+            Numbers and emails linked to <strong style={{color:C.text}}>{rv.ownerName || "this owner"}</strong> in
+            public records, most-likely first. Skip-traced data can include past,
+            household, and relatives' numbers — try the most recent mobile first.
+          </div>
           {(rv.phones || []).map(p => (
             <div key={p.number} style={{display:"flex", alignItems:"center",
               justifyContent:"space-between", gap:10, padding:"9px 0",
@@ -7546,6 +7551,12 @@ function RevealBlock({deal, rcAuth}) {
             {!st.admin && st.balance != null &&
               ` You have ${st.balance} reveal credit${st.balance === 1 ? "" : "s"} left.`}
           </div>
+          {rv.stale && (
+            <button onClick={reveal} disabled={busy}
+              {...btnStyle("secondary","sm", {marginTop:12, width:"100%", justifyContent:"center"})}>
+              {busy ? "Refreshing…" : "Refresh with improved matching · free"}
+            </button>
+          )}
         </>
       ) : rv && rv.found === false ? (
         <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
