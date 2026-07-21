@@ -23,6 +23,26 @@
     "rcUsage": {
       ".read":  false,
       ".write": false
+    },
+    "credits": {
+      ".read":  false,
+      ".write": false
+    },
+    "creditsLedger": {
+      ".read":  false,
+      ".write": false
+    },
+    "creditSessions": {
+      ".read":  false,
+      ".write": false
+    },
+    "reveals": {
+      ".read":  false,
+      ".write": false
+    },
+    "skipCache": {
+      ".read":  false,
+      ".write": false
     }
   }
 }
