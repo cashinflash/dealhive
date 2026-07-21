@@ -11698,7 +11698,9 @@ export default function App() {
       {planOpen && <PlanSheet busy={billingBusy} onClose={()=>setPlanOpen(false)}
         onChoose={p => startCheckout(p)}/>}
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} daysLeft={daysLeft}
-        onAddProperty={isAdmin ? ()=>setShowAdd(true) : ()=>setPage("deal")}
+        onAddProperty={isAdmin
+          ? (effPage === "properties" ? ()=>setShowAdd(true) : ()=>setPage("deal"))
+          : ()=>setPage("deal")}
         isAdmin={isAdmin} onMenuNav={id=>setPage(id)} />
       <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
@@ -11714,7 +11716,7 @@ export default function App() {
             onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
         ) : page==="dashboard" ? (
           isAdmin
-            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setPage("deal")} mobile={mobile} />
             : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
@@ -11804,7 +11806,7 @@ export default function App() {
                 onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
             ) : page==="dashboard" ? (
               isAdmin
-                ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+                ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setPage("deal")} mobile={mobile} />
                 : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                     onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
