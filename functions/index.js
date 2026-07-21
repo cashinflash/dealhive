@@ -923,10 +923,23 @@ const ENDATO_BASE        = "https://devapi.endato.com";
 // people-search API — count them separately instead of burning searches.
 const ENTITY_RX = /\b(llc|l\.l\.c|inc|corp|corporation|trust|estate|properties|investments|holdings|ventures|homes|realty|group|partners|lp|llp)\b/i;
 
-async function endatoEnrich(apName, apPassword, {name, address1, address2}) {
-  const parts = String(name || "").trim().split(/\s+/);
-  const FirstName = parts.length > 1 ? parts[0] : "";
-  const LastName  = parts.length > 1 ? parts.slice(1).join(" ") : (parts[0] || "");
+// County names arrive "First [Middle] Last [Suffix]", often with a middle
+// initial. The first bake-off proved middles poison the match — every
+// two-token name hit, every three-token name missed — so send strictly
+// first + last: drop initials and Jr/Sr/roman suffixes, surname = last token.
+function splitOwnerName(name) {
+  const parts = String(name || "").trim().replace(/\./g, "").split(/\s+/).filter(Boolean);
+  while (parts.length > 2 && /^([a-z]|jr|sr|ii|iii|iv)$/i.test(parts[parts.length - 1])) parts.pop();
+  return {
+    first: parts.length > 1 ? parts[0] : "",
+    last:  parts.length > 1 ? parts[parts.length - 1] : (parts[0] || ""),
+  };
+}
+
+async function endatoEnrich(apName, apPassword, {name, address1, address2, nameOverride}) {
+  const nm = nameOverride || splitOwnerName(name);
+  const FirstName = nm.first;
+  const LastName  = nm.last;
   const t0 = Date.now();
   const r = await fetch(ENDATO_BASE + "/Contact/Enrich", {
     method: "POST",
@@ -978,6 +991,10 @@ async function endatoEnrich(apName, apPassword, {name, address1, address2}) {
 // path 404s with a non-JSON body, the real one answers with property JSON
 // (or a readable search-type/permission error).
 const ENDATO_PROP_PATHS = [
+  // Their live routes are single-segment ("/PersonSearch", "/Contact/Enrich"),
+  // so lead with those shapes; the first five guesses all 404'd.
+  "/PropertySearchV2", "/PropertyV2Search", "/Property/SearchV2",
+  "/PropertySearch", "/Search",
   "/PropertySearch/V2", "/Property/Search/V2", "/PropertyV2/Search",
   "/PropertyV2", "/Property/V2/Search",
 ];
@@ -1171,10 +1188,25 @@ exports.skipTraceTest = onRequest({
         out = {status: 0, ms: 0, phones: [], emails: [],
           error: String(e.message || e).slice(0, 200)};
       }
+      // Counties sometimes store "LAST FIRST M" with no comma to flag it —
+      // a clean miss gets one retry with first/last swapped.
+      let swapRetried = false;
+      if (!out.error && !out.phones.length) {
+        const nm = splitOwnerName(name);
+        if (nm.first && nm.last && nm.first.toLowerCase() !== nm.last.toLowerCase()) {
+          try {
+            const retry = await endatoEnrich(apName, apPass, {name,
+              nameOverride: {first: nm.last, last: nm.first},
+              address1: d.streetAddress, address2});
+            if (!retry.error && retry.phones.length) { out = retry; swapRetried = true; }
+          } catch { /* keep the original miss */ }
+        }
+      }
       results.push({
         address: full,
         owner:   name,
         nameSource,
+        ...(swapRetried ? {swapRetried: true} : {}),
         ...(ownerOccupied != null ? {ownerOccupied} : {}),
         hit:     out.phones.length > 0,
         phones:  out.phones,
