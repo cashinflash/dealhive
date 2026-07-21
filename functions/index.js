@@ -1150,6 +1150,19 @@ exports.revealOwner = onRequest({
     const mine = (await admin.database().ref(`reveals/${user.uid}/${k}`).get()).val();
     if (mine) { res.json({revealed: mine, balance, ...flags}); return; }
     if (!b.confirm) { res.json({revealed: null, balance, ...flags}); return; }
+    // Daily attempt cap. Hits charge a credit, but misses are free for the
+    // member while still costing us a county lookup (and sometimes a trace)
+    // — without this, a scripted client could grind unlimited provider spend
+    // through garbage addresses. 60/day is ~8x a heavy legitimate day.
+    if (!isAdmin) {
+      const day  = new Date().toISOString().slice(0, 10);
+      const aTx  = await admin.database().ref(`revealUsage/${user.uid}/${day}`)
+        .transaction(v => (v || 0) + 1);
+      if ((aTx.snapshot.val() || 0) > 60) {
+        res.status(429).json({error: "cap", balance});
+        return;
+      }
+    }
     if (!isAdmin && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
 
     const apName = ENDATO_AP_NAME.value();

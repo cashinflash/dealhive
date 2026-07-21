@@ -7465,7 +7465,9 @@ function RevealBlock({deal, rcAuth}) {
       // On a credits error, trust the server's reported balance (it rides the
       // 402) rather than assuming zero — a transient failure must never make a
       // funded member look empty. Fall back to a re-check if it's absent.
-      if (e.code === "credits") {
+      if (e.code === "cap") {
+        setErr("Daily reveal limit reached — resets tomorrow. No credit was used.");
+      } else if (e.code === "credits") {
         const bal = typeof e.balance === "number" ? e.balance : null;
         if (bal != null) setSt(x => ({...x, balance: bal}));
         else { try { const d = await call({balanceOnly: true}); setSt(x => ({...x, balance: d.balance})); } catch { /* keep prior */ } }
