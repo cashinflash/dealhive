@@ -4092,11 +4092,15 @@ function ActivityTimeline({pr, onChange, mobile}) {
   };
 
   return (
-    <div style={{marginBottom:14}}>
-      <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:10}}>
-        <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
-          letterSpacing:".06em", textTransform:"uppercase"}}>Activity</span>
-        <span style={{flex:1, height:1, background:C.border}}/>
+    <div>
+      <div style={{display:"flex", alignItems:"center", gap:9, marginBottom:12}}>
+        <span style={{width:24, height:24, borderRadius:7, flexShrink:0, display:"flex",
+          alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+          border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+          <I.message size={13} stroke={2.2}/>
+        </span>
+        <span style={{fontSize:12, fontWeight:800, color:C.text, fontFamily:F,
+          letterSpacing:".05em", textTransform:"uppercase"}}>Activity</span>
       </div>
 
       <div style={{marginBottom:16}}>
@@ -4162,56 +4166,73 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
       createdAt: new Date().toISOString(),
     });
   };
-  const sectionLabel = (text) => (
-    <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
-      <span style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
-        letterSpacing:".06em", textTransform:"uppercase"}}>{text}</span>
-      <span style={{flex:1, height:1, background:C.border}}/>
+  const sectionLabel = (text, Ic) => (
+    <div style={{display:"flex", alignItems:"center", gap:9, marginBottom:13}}>
+      <span style={{width:24, height:24, borderRadius:7, flexShrink:0, display:"flex",
+        alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+        border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+        <Ic size={13} stroke={2.2}/>
+      </span>
+      <span style={{fontSize:12, fontWeight:800, color:C.text, fontFamily:F,
+        letterSpacing:".05em", textTransform:"uppercase"}}>{text}</span>
     </div>
   );
-  const labelStyle = {fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F};
+  const labelStyle = {fontSize:12.5, color:C.textSub, fontWeight:600, display:"block", marginBottom:6, fontFamily:F};
+  const panel = {background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
+    boxShadow:C.sh1, padding: mobile ? "15px 14px" : "17px 18px", marginBottom:13};
 
   return (
-    <div style={{padding: mobile ? "18px 14px 16px" : "22px 24px 20px", background:C.card, borderTop:"1px solid "+C.border}}>
-      {sectionLabel("Details")}
-      <InputField label="What needs doing" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
-      <div style={{marginBottom:14}}>
-        <label style={labelStyle}>Type</label>
-        <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
-      </div>
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "minmax(0,1fr)" : "repeat(4, minmax(0,1fr))", gap: mobile?10:12}}>
-        <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
-        <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
-        <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
-          options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
+    <div style={{padding: mobile ? "15px 13px" : "18px 20px", background:C.bgSubtle, borderTop:"1px solid "+C.border}}>
+      {/* Details */}
+      <div style={panel}>
+        {sectionLabel("Details", I.clipboardCheck)}
+        <InputField label="What needs doing" type="text" val={pr.name||""} set={v=>u("name",v)} mobile={mobile} />
         <div style={{marginBottom:14}}>
-          <label style={labelStyle}>Contractor</label>
-          <input value={pr.contractor||""} onChange={e=>u("contractor", e.target.value)}
-            list="dh-contractors" placeholder="Name" style={iS(mobile)} />
+          <label style={labelStyle}>Type</label>
+          <TypePicker value={typeOf(pr)} onChange={v=>u("type",v)} />
+        </div>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, minmax(0,1fr))", gap: mobile?10:12}}>
+          <DateField label="Due date" value={pr.dueDate||""} onChange={v=>u("dueDate",v)} mobile={mobile} />
+          <InputField label="Cost" val={pr.budget||0} set={v=>u("budget",v)} pre="$" mobile={mobile} />
+          <SelectField label="Priority" value={pr.priority||"normal"} onChange={v=>u("priority",v)}
+            options={[["high","High"],["normal","Normal"],["low","Low"]]} mobile={mobile} />
+          <div style={{marginBottom:14}}>
+            <label style={labelStyle}>Contractor</label>
+            <input value={pr.contractor||""} onChange={e=>u("contractor", e.target.value)}
+              list="dh-contractors" placeholder="Name" style={iS(mobile)} />
+          </div>
         </div>
       </div>
 
-      <div style={{marginTop:mobile?18:24}}>
+      {/* Activity */}
+      <div style={panel}>
         <ActivityTimeline pr={pr} onChange={onChange} mobile={mobile} />
       </div>
 
-      <div style={{marginTop:mobile?18:24}}>
-        {sectionLabel("Attachments")}
+      {/* Attachments */}
+      <div style={panel}>
+        {sectionLabel("Attachments", I.camera)}
         <PhotoUploader photos={pr.photos||[]} onChange={v=>u("photos",v)} />
         <FileUploader files={pr.files||[]} onChange={v=>u("files",v)} mobile={mobile} />
       </div>
 
       {onAddExpense && (
-        <div style={{display:"flex", alignItems:"center", gap:10, padding:"12px 14px", marginTop:4, marginBottom:14,
-          background:C.greenSubtle, border:"1px solid "+C.greenBorder, borderRadius:C.r3}}>
+        <div style={{display:"flex", alignItems:"center", gap:12, padding: mobile?"12px 13px":"13px 15px", marginBottom:13,
+          background:`linear-gradient(160deg, #fff, ${C.greenSubtle})`, border:"1px solid "+C.greenBorder,
+          borderRadius:C.r4, boxShadow:C.sh1}}>
+          <div style={{width:38, height:38, borderRadius:10, flexShrink:0, display:"flex",
+            alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+            border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+            <I.receipt size={17} stroke={2}/>
+          </div>
           <div style={{flex:1, minWidth:0}}>
-            <div style={{fontSize:13, fontWeight:600, color:C.text, fontFamily:F}}>Record this as an expense</div>
+            <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F}}>Record this as an expense</div>
             <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>
-              {pr.budget>0 ? `${$(pr.budget)} → Expenses tab` : "Add a cost above, then log it to Expenses"}
+              {pr.budget>0 ? `${$(pr.budget)} flows to your Expenses tab` : "Add a cost above, then log it to Expenses"}
             </div>
           </div>
           {isExpensed ? (
-            <span style={{display:"inline-flex", alignItems:"center", gap:5, fontSize:12, fontWeight:600,
+            <span style={{display:"inline-flex", alignItems:"center", gap:5, fontSize:12, fontWeight:700,
               color:C.greenDark, fontFamily:F, flexShrink:0}}>
               <I.check size={14} stroke={2.5}/> In expenses
             </span>
@@ -4224,13 +4245,13 @@ function FollowupExpanded({pr, onChange, onDelete, mobile, contractors=[], onAdd
         </div>
       )}
 
-      <div style={{display:"flex", justifyContent:"flex-end", borderTop:"1px solid "+C.border, paddingTop:12, marginTop:4}}>
+      <div style={{display:"flex", justifyContent:"flex-end"}}>
         <button onClick={onDelete}
-          style={{background:"none", border:"none", padding:"6px 10px", borderRadius:C.r1,
-            color:C.textMuted, fontFamily:F, fontSize:12, fontWeight:500, cursor:"pointer",
-            display:"inline-flex", alignItems:"center", gap:6, transition:"color .12s, background .12s"}}
-          onMouseEnter={e=>{e.currentTarget.style.color=C.redDark; e.currentTarget.style.background=C.redSubtle;}}
-          onMouseLeave={e=>{e.currentTarget.style.color=C.textMuted; e.currentTarget.style.background="none";}}>
+          style={{background:C.card, border:"1px solid "+C.border, padding:"7px 13px", borderRadius:C.r2,
+            color:C.textSub, fontFamily:F, fontSize:12.5, fontWeight:600, cursor:"pointer",
+            display:"inline-flex", alignItems:"center", gap:6, transition:"color .12s, background .12s, border-color .12s"}}
+          onMouseEnter={e=>{e.currentTarget.style.color=C.redDark; e.currentTarget.style.background=C.redSubtle; e.currentTarget.style.borderColor=C.redBorder;}}
+          onMouseLeave={e=>{e.currentTarget.style.color=C.textSub; e.currentTarget.style.background=C.card; e.currentTarget.style.borderColor=C.border;}}>
           <I.trash size={12}/> Delete follow-up
         </button>
       </div>
@@ -5096,11 +5117,6 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         <h1 style={{margin:0, fontSize: mobile?22:27, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.025em"}}>
           Projects
         </h1>
-        <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
-          {openTotal === 0
-            ? "All clear across the portfolio."
-            : `Every follow-up across your ${properties.length} ${properties.length===1?"property":"properties"}, in one place.`}
-        </p>
       </div>
 
       {/* Stat strip */}
@@ -5619,7 +5635,10 @@ const classifyDeal = (deal) => {
 // so it can live on the saved-deals watchlist and render in DealCard with the
 // same classification pipeline as market deals.
 const proFormaToFeedDeal = pf => ({
-  id:            "a" + Date.now(),
+  // Keep the original id through the analyzer round-trip so re-saving a deal
+  // updates that exact watchlist entry (new strategy, new numbers) instead of
+  // creating a duplicate. Only fresh analyses without an id get a new one.
+  id:            pf.id || ("a" + Date.now()),
   address:       pf.address || pf.fullAddress || "Untitled deal",
   streetAddress: pf.address || null,
   city: pf.city || "", state: pf.state || "", zip: pf.zip || "",
@@ -11646,8 +11665,10 @@ export default function App() {
           analysis: buildAnalysisSnapshot(pf)},
         suggested || "buyhold",
         pf.alreadyOwned ? "owned" : isCash ? "cash" : "finance");
-      // A professional save takes you to where the deal now lives.
-      if (res === "created" || res === "updated") setPage("dashboard");
+      // A professional save takes you to where the deal now lives: the admin's
+      // saved deals live on the Saved Deals page (their dashboard is the
+      // portfolio), everyone else's live on their dashboard.
+      if (res === "created" || res === "updated") setPage(isAdmin ? "saved" : "dashboard");
     },
     onMoveToPortfolio: moveDealToPortfolio,
     onUpgrade: handleUpgrade,
