@@ -29,13 +29,13 @@ const C = {
   navySoft:     "#2C3E52",
   text:         "#1F2D3D",
   textSub:      "#52525b",
-  textMuted:    "#a1a1aa",
+  textMuted:    "#6b7280",   // WCAG AA (4.83:1) — was #a1a1aa (2.56:1)
   bg:           "#ffffff",
   bgSoft:       "#fafafa",
   card:         "#ffffff",
   border:       "#e4e4e7",
   borderSoft:   "#f1f1f3",
-  cashPos:      "#059669",
+  cashPos:      "#047857",   // WCAG AA (5.48:1) — was #059669 (3.77:1)
 };
 const F = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
@@ -424,7 +424,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
       }}>
         <a href="/" onClick={e => { e.preventDefault(); go("/"); }}
           style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-          <img src="/logo.png" alt="DealHive" style={{ height: 40, width: "auto" }}/>
+          <img src="/logo.png" alt="DealHive" width={520} height={125} style={{ height: 40, width: "auto" }}/>
         </a>
 
         <div style={{ display: "flex", alignItems: "center", gap: 32 }} className="dh-nav-links">
@@ -473,7 +473,7 @@ function TopNav({ navigate, onSignIn, onSignUp }) {
           }}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
               background:"#fff", padding:"14px 24px"}}>
-              <img src="/logo.png" alt="DealHive" style={{ height: 40, width: "auto" }}/>
+              <img src="/logo.png" alt="DealHive" width={520} height={125} style={{ height: 40, width: "auto" }}/>
               <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
                 style={{width:38, height:38, borderRadius:12, background:C.bgSoft,
                   border:"1px solid "+C.border, cursor:"pointer", color:C.text,
@@ -1118,7 +1118,7 @@ function Footer({ navigate, onSignIn, onSignUp }) {
           display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 32, marginBottom: 40,
         }} className="dh-footer-grid">
           <div>
-            <img src="/logo.png" alt="DealHive" style={{ height: 36, width: "auto", marginBottom: 14 }}/>
+            <img src="/logo.png" alt="DealHive" width={520} height={125} style={{ height: 36, width: "auto", marginBottom: 14 }}/>
             <p style={{ fontSize: 13, color: C.textSub, lineHeight: 1.55, margin: 0, maxWidth: 320 }}>
               The investment property analyzer that does the research for you. Any address, any strategy, in seconds.
             </p>
@@ -1306,7 +1306,7 @@ const MockBadge = ({ children, bg = C.cashPos }) => (
 function StrategyMock({ id }) {
   if (id === "rental") return (
     <AppFrame label="DealHive · Deal Analyzer">
-      <MockHeader color="#059669" label="Summary"/>
+      <MockHeader color="#047857" label="Summary"/>
       <MockRow l="Purchase Method" v="Cash"/>
       <MockRow l="Exit Strategy" v="Buy & Hold"/>
       <MockRow l="Out of Pocket" v="$96,500"/>
@@ -1954,12 +1954,14 @@ function TermsPage() {
 // ==============================================================================
 
 const HIW_PHOTO = "linear-gradient(135deg, #e8e2d8 0%, #f4efe7 38%, #d9d2c6 72%, #cfc6b8 100%)";
-// Same hosted house photos the home hero uses — the warm gradient stays
-// underneath as the fallback layer if a photo ever fails to load.
+// Self-hosted, already-optimized house photos used as the fallback layer under
+// the named slots (and the visible photo in the small blurred backdrop cards).
+// The warm gradient stays underneath if a photo ever fails to load. Kept local
+// so the homepage never reaches out to a third-party image host.
 const HIW_IMGS = [
-  "https://images.unsplash.com/photo-1568605114967-8130f3a36994?auto=format&fit=crop&w=720&h=400&q=80",
-  "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=720&h=400&q=80",
-  "https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=720&h=400&q=80",
+  "/thumb-1.avif",
+  "/thumb-2.jpg",
+  "/thumb-3.jpg",
 ];
 // Slot 0 (the featured deal's photo on both devices) tries the repo-hosted
 // kitchen shot first — upload public/kitchen-hero.jpg and it takes over;
@@ -2122,8 +2124,8 @@ function HiwDevices() {
           aspectRatio: "16 / 9.8", border: "2px solid #171b20"}}>
           <div style={{width: "21%", background: C.navyDeep, padding: "3.4% 2.4%",
             display: "flex", flexDirection: "column", fontFamily: F}}>
-            <img src="/logo-white.png" alt="DealHive"
-              style={{width: "80%", display: "block", marginBottom: "12%"}}/>
+            <img src="/logo-white.png" alt="DealHive" width={520} height={125}
+              style={{width: "80%", height: "auto", display: "block", marginBottom: "12%"}}/>
             {["Dashboard", "Deals", "Deal Analyzer", "Settings"].map((l, i) => (
               <div key={l} style={{color: i === 0 ? "#fff" : "#8b96a5",
                 background: i === 0 ? "rgba(255,255,255,.08)" : "transparent",
