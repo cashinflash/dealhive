@@ -980,7 +980,12 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
     headers: {"X-Api-Key": rcKey},
     signal: AbortSignal.timeout(15000),
   });
-  if (!r.ok) return {error: `rc ${r.status}`};
+  if (!r.ok) {
+    // The body says WHY (invalid key / expired subscription / plan limit /
+    // an HTML block page) — surface it instead of a bare status code.
+    const errBody = await r.text().catch(() => "");
+    return {error: `rc ${r.status}`, body: (errBody || "").slice(0, 220)};
+  }
   const body = await r.json().catch(() => null);
   const rec = Array.isArray(body) ? body[0] : body;
   const names = (rec && rec.owner && Array.isArray(rec.owner.names) ? rec.owner.names : []).filter(Boolean);
@@ -1028,8 +1033,14 @@ exports.skipTraceTest = onRequest({
     const noOwnerFound = [];
     const results = [];
     let rcCalls = 0;
+    let rcFirstError = null;
+    let rcErrorStreak = 0;
+    let rcBailedEarly = false;
     for (const d of addressComplete) {
       if (results.length >= n) break;
+      // Five county lookups failing in a row means the key/account is the
+      // problem, not the addresses — stop burning calls and report.
+      if (rcErrorStreak >= 5) { rcBailedEarly = true; break; }
       const address2 = `${d.city}, ${d.state}${d.zip ? " " + d.zip : ""}`;
       const full = `${d.streetAddress}, ${address2}`;
 
@@ -1042,7 +1053,13 @@ exports.skipTraceTest = onRequest({
         let rec = null;
         try { rcCalls++; rec = await rcOwnerName(rcKey, d.streetAddress, d.city, d.state, d.zip); }
         catch (e) { rec = {error: String(e.message || e).slice(0, 120)}; }
-        if (rec && rec.error) { noOwnerFound.push({address: full, why: rec.error}); continue; }
+        if (rec && rec.error) {
+          rcErrorStreak++;
+          if (!rcFirstError) rcFirstError = {why: rec.error, body: rec.body || null};
+          noOwnerFound.push({address: full, why: rec.error});
+          continue;
+        }
+        rcErrorStreak = 0;
         if (!rec || !rec.name) { noOwnerFound.push({address: full, why: "no owner on record"}); continue; }
         name = rec.name;
         ownerOccupied = rec.ownerOccupied;
@@ -1082,6 +1099,8 @@ exports.skipTraceTest = onRequest({
         countyRecordLookups:  rcCalls,
         ownerNotFound:        noOwnerFound.length,
         entityOwners:         entityOwners.length,
+        ...(rcBailedEarly ? {rcBailedEarly: true} : {}),
+        ...(rcFirstError ? {rcFirstError} : {}),
       },
       attempted:          results.length,
       hits:               hits.length,
