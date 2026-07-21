@@ -1,0 +1,17 @@
+# DealHive
+
+> Analyze any investment property in seconds. DealHive pulls the property data, runs Buy and Hold, BRRRR, and Fix and Flip numbers, and tells you which strategy wins.
+
+DealHive is an investment property analyzer for real estate investors. Enter any address and it fills in the property details from public records, estimates rent and value, and computes returns across every common strategy so you can see which one makes the deal work.
+
+## Pages
+
+- [Home](https://dealhive.io/): Product overview and free analyzer
+- [How It Works](https://dealhive.io/how-it-works): Step by step walkthrough
+- [Features](https://dealhive.io/features): What DealHive does
+- [Pricing](https://dealhive.io/pricing): Free and Pro plans
+- [FAQ](https://dealhive.io/faq): Common questions
+- [Rental Property Analysis](https://dealhive.io/use-cases/rental-property-analysis): Buy and hold underwriting
+- [BRRRR Analysis](https://dealhive.io/use-cases/brrrr-analysis): Buy, rehab, rent, refinance, repeat
+- [About](https://dealhive.io/about): About DealHive
+- [Contact](https://dealhive.io/contact): Get in touch
