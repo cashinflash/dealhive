@@ -684,7 +684,7 @@ const C = {
   // Text
   text:         "#1F2D3D",   // logo navy for primary text (was near-black)
   textSub:      "#52525b",
-  textMuted:    "#a1a1aa",
+  textMuted:    "#6b7280",   // darkened from #a1a1aa to pass WCAG AA (4.83:1)
 
   // Semantic
   blue:         "#2563eb", blueLight:"#dbeafe", blueDark:"#1e40af", blueSubtle:"#eff6ff", blueBorder:"#bfdbfe",
@@ -692,7 +692,7 @@ const C = {
   red:          "#dc2626", redLight:"#fee2e2", redDark:"#991b1b", redSubtle:"#fef2f2", redBorder:"#fecaca",
   purple:       "#7c3aed", purpleLight:"#ede9fe", purpleDark:"#5b21b6", purpleSubtle:"#f5f3ff", purpleBorder:"#ddd6fe",
   // True positive-money green (cash flow stays green by financial convention)
-  cashPos:      "#059669",
+  cashPos:      "#047857",   // darkened from #059669 to pass WCAG AA (5.48:1)
 
   // Radii
   r1: 6, r2: 8, r3: 10, r4: 12, r5: 16, rFull: 9999,
@@ -1386,7 +1386,7 @@ function AuthPage({onAuth}) {
   const comingSoon = name => { setErr(""); setMsg(`${name} sign-in is coming soon — use email or Google for now.`); };
 
   const linkBtn = {
-    background:"none", border:"none", padding:0, color:C.green, fontWeight:600,
+    background:"none", border:"none", padding:0, color:C.greenDark, fontWeight:600,
     cursor:"pointer", fontFamily:F, fontSize:13, letterSpacing:"-0.005em",
   };
   const socialBtn = {
@@ -10581,16 +10581,26 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 // Deals, Analyzer, Comps, and a Saved Deals dashboard.
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
-  {id:"saved",      Icon:I.bee,            label:"Saved Deals", adminOnly:true},
-  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
-  {id:"deals",      Icon:I.star,           label:"Deals"},
+  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
   {id:"comps",      Icon:I.chart,          label:"Comps",      adminOnly:true},
+  {id:"deals",      Icon:I.star,           label:"Deals",
+    children:[{id:"saved", Icon:I.bee, label:"Saved Deals", adminOnly:true}]},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
 function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
+  const rowStyle = (active, child=false) => ({
+    width:"100%", padding: child ? "7px 12px 7px 40px" : "8px 12px",
+    border:"none", borderRadius:C.r2, cursor:"pointer",
+    display:"flex", alignItems:"center", gap:10, marginBottom:2,
+    background: active ? "rgba(255,255,255,.08)" : "transparent",
+    color: active ? "#fafafa" : C.sidebarText,
+    fontFamily:F, fontSize: child ? 12.5 : 13, fontWeight: active ? 600 : 500,
+    transition:"background-color .12s, color .12s", letterSpacing:"-0.005em",
+  });
+  const [openGroups, setOpenGroups] = useState({});
   return (
     <div style={{width:230, background:C.sidebar, height:"100vh", position:"fixed",
       left:0, top:0, display:"flex", flexDirection:"column", zIndex:100,
@@ -10601,21 +10611,46 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
       <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
         {NAV_ITEMS.filter(item => isAdmin || !item.adminOnly).map(item => {
           const active = page===item.id;
+          const kids = (item.children || []).filter(c => isAdmin || !c.adminOnly);
+          if (!kids.length) {
+            return (
+              <button key={item.id} onClick={()=>setPage(item.id)}
+                className={active ? undefined : "dh-nav-item"} style={rowStyle(active)}>
+                <item.Icon size={16} stroke={active?2.2:1.8}/>
+                <span>{item.label}</span>
+              </button>
+            );
+          }
+          // Parent with a dropdown (Deals → Saved Deals). Clicking the label
+          // navigates; the chevron toggles the group. Auto-open when a child
+          // or the parent itself is the active page.
+          const open = openGroups[item.id] ?? (active || kids.some(k => k.id === page));
           return (
-            <button key={item.id} onClick={()=>setPage(item.id)}
-              className={active ? undefined : "dh-nav-item"}
-              style={{
-                width:"100%", padding:"8px 12px", border:"none", borderRadius:C.r2,
-                cursor:"pointer", display:"flex", alignItems:"center", gap:10, marginBottom:2,
-                background: active ? "rgba(255,255,255,.08)" : "transparent",
-                color: active ? "#fafafa" : C.sidebarText,
-                fontFamily:F, fontSize:13, fontWeight:active?600:500,
-                transition:"background-color .12s, color .12s",
-                letterSpacing:"-0.005em",
-              }}>
-              <item.Icon size={16} stroke={active?2.2:1.8}/>
-              <span>{item.label}</span>
-            </button>
+            <div key={item.id}>
+              <div className={active ? undefined : "dh-nav-item"}
+                style={{...rowStyle(active), justifyContent:"space-between", gap:6}}>
+                <div onClick={()=>setPage(item.id)}
+                  style={{display:"flex", alignItems:"center", gap:10, flex:1, minWidth:0}}>
+                  <item.Icon size={16} stroke={active?2.2:1.8}/>
+                  <span>{item.label}</span>
+                </div>
+                <div onClick={(e)=>{e.stopPropagation(); setOpenGroups(g=>({...g, [item.id]: !open}));}}
+                  style={{padding:"3px 2px", display:"flex", alignItems:"center", opacity:.75}}>
+                  <I.chevronDown size={13} stroke={2}
+                    style={{transform: open ? "rotate(180deg)" : "none", transition:"transform .16s"}}/>
+                </div>
+              </div>
+              {open && kids.map(k => {
+                const kActive = page === k.id;
+                return (
+                  <button key={k.id} onClick={()=>setPage(k.id)}
+                    className={kActive ? undefined : "dh-nav-item"} style={rowStyle(kActive, true)}>
+                    {k.Icon && <k.Icon size={14} stroke={kActive?2.2:1.8}/>}
+                    <span>{k.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           );
         })}
       </div>
