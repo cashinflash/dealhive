@@ -66,9 +66,6 @@ const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
 // IL (convertfleet InvestorLift scraper) runs in shadow: capped small, and
 // its results are inspected in debug only until addresses verify.
 const IL_MAX            = parseInt(process.env.IL_MAX            || "25",  10);
-// By Owner lane quality floor: untagged by-owner listings must clear this
-// much conservative financed cash flow — the feed never shows negatives.
-const BYOWNER_MIN_CF    = parseInt(process.env.BYOWNER_MIN_CF    || "200", 10);
 // The browser actor outgrows run-sync's 300s ceiling, so it runs
 // start -> poll -> collect: a server-side kill switch (timeout= on the run
 // start) and our poll gives up at LONG_RUN_WAIT_MS, keeping the partial
@@ -660,11 +657,10 @@ async function runPipeline(apifyKey, _rentcastKey) {
       return {...d, tags: c.tags, buyHoldScore: c.buyHoldScore, flipScore: c.flipScore,
         cfEst: Math.round(c.finCF), methods: c.methods};
     })
-    // Strategy-tagged deals always ship. By-owner listings additionally ship
-    // only when they clear the lane's quality floor: at least BYOWNER_MIN_CF
-    // of conservative financed cash flow — the page never shows negatives.
-    .filter(d => d.tags.length > 0 ||
-      (d.source === "DealHive 2" && (d.price || 0) >= 20000 && d.cfEst >= BYOWNER_MIN_CF));
+    // Underwriting is the door: a deal ships only if at least one of the
+    // six purchase-method x exit-strategy paths clears its gate. Anything
+    // that doesn't pencil never reaches the page.
+    .filter(d => d.tags.length > 0);
   const deduped = dedupByAddress(scored);
 
   // 4. Safety net: only skip the write if every source ERRORED. If Apify

@@ -8588,7 +8588,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
            flipScore:    d.flipScore    ?? c.flipScore}
         : c};
     })
-    .filter(({d, c}) => c.tags.length > 0 || d.source === "DealHive 2");
+    .filter(({c}) => c.tags.length > 0);
 
   // Build the market dropdown options from the actual data — InvestorLift
   // goes nationwide, so hardcoding 6 markets would hide most of the feed.
