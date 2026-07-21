@@ -82,6 +82,33 @@ source and how many survived the residential + classification filter. Refresh
 the Deals page on dealhive.io — the **Preview data** pill should flip to
 **Live** with an "Updated 30s ago" timestamp.
 
+## Skip tracing (Endato) — one-time key setup
+
+The "Reveal Owner Phone" evaluation uses [Endato](https://endato.com) (the
+developer API of Enformion). To plug in your account:
+
+1. Sign in at endato.com → open the dashboard → **API Keys** (sometimes shown
+   under your profile menu). You'll see a key **pair**: a Name (sometimes
+   called Key ID) and a Password (Secret). Copy both.
+2. → https://github.com/cashinflash/dealhive/settings/secrets/actions
+   → **New repository secret** twice:
+
+   | Name                 | Value                          |
+   |----------------------|--------------------------------|
+   | `ENDATO_AP_NAME`     | The key Name / ID              |
+   | `ENDATO_AP_PASSWORD` | The key Password / Secret      |
+
+3. Re-run the deploy workflow (step 5 above) so the keys reach Secret Manager.
+4. Smoke-test against the live feed (same passcode as the pipeline trigger):
+
+   ```
+   https://us-central1-darallc.cloudfunctions.net/skipTraceTest?secret=YOUR_SECRET&n=15
+   ```
+
+   The JSON reports hit rate, connected-phone rate, and per-owner results.
+   Each attempted lookup can consume one search from the Endato plan, and `n`
+   is capped at 25 per run.
+
 ## Tuning daily pull volume
 
 Defaults are tuned for "Conservative ~200 deals/day":
