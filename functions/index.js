@@ -1110,7 +1110,12 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
     state: mail.state || "",
     zip:   mail.zipCode || "",
   } : null;
-  return {name, ownerOccupied: rec.ownerOccupied === true, mailing};
+  const mailingStr = mail
+    ? (mail.formattedAddress || [mail.addressLine1, mail.city,
+        [mail.state, mail.zipCode].filter(Boolean).join(" ")].filter(Boolean).join(", "))
+    : null;
+  return {name, ownerOccupied: rec.ownerOccupied === true, mailing,
+    mailingStr, county: rec.county || null};
 }
 
 // == Reveal Owner Phone (paid add-on) ===========================================
@@ -1121,10 +1126,10 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
 // cross-member cache under skipCache/{addrKey} means a second member's reveal
 // of the same address costs us zero provider spend.
 // Bump when the trace method changes in a way that should re-run for cached
-// and already-unlocked addresses. v2 = anchor on the owner's mailing address
-// instead of the subject property. A member who already paid for an address
-// gets the improved result free.
-const REVEAL_V = 2;
+// and already-unlocked addresses. v2 = anchor on the owner's mailing address.
+// v3 = carry owner name, mailing and county into the result so a free-account
+// report is self-contained. An already-paid address refreshes free.
+const REVEAL_V = 3;
 const addrKeyOf = (street, city, state, zip) =>
   (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
@@ -1143,8 +1148,12 @@ exports.revealOwner = onRequest({
     const user = await verifyUser(req);
     if (!user) { res.status(401).json({error: "auth"}); return; }
     const isAdmin = user.email === "harut@ymail.com";
+    // Reveal is open to any signed-in member: free accounts buy a single $4.99
+    // report, Pro buys cheaper credit packs. The credit balance governs access
+    // from here, so there's no tier gate. isFree only controls how much county
+    // data we return on a non-charged (miss/entity) result.
     const tier = (await admin.database().ref(`billing/${user.uid}/tier`).get()).val();
-    if (!isAdmin && tier !== "pro") { res.status(403).json({error: "pro"}); return; }
+    const isFree = !isAdmin && tier !== "pro";
 
     const balRef = admin.database().ref(`credits/${user.uid}/balance`);
     const balance = (await balRef.get()).val() || 0;
@@ -1228,6 +1237,8 @@ exports.revealOwner = onRequest({
           ownerName: rec.name,
           matchedName: out.matchedName || null,
           ownerOccupied: rec.ownerOccupied === true,
+          mailingStr: rec.mailingStr || null,
+          county: rec.county || null,
           usedMailing: useMailing,
           phones: sortPhones(out.phones).slice(0, 5),
           emails: (out.emails || []).slice(0, 3),
@@ -1237,7 +1248,16 @@ exports.revealOwner = onRequest({
       await cacheRef.set(result);
     }
 
-    if (!result.found) { res.json({revealed: result, balance, ...flags}); return; }
+    if (!result.found) {
+      // Free accounts don't get owner name/mailing on a non-charged result —
+      // otherwise a single $4.99 credit could harvest county data on every
+      // entity/no-phone address without ever being spent.
+      const safe = isFree
+        ? {found: false, v: REVEAL_V, reason: result.reason, at: result.at}
+        : result;
+      res.json({revealed: safe, balance, ...flags});
+      return;
+    }
 
     // Exactly one credit, atomically, only for a hit. Admin runs unmetered.
     // A free refresh of an address the member already paid for skips the charge.
@@ -1502,19 +1522,25 @@ exports.createCheckoutSession = onRequest(
 
       const plan = (req.body && req.body.plan) || "monthly";
       let session;
-      if (plan === "credits8") {
-        // One-time 8-pack of Reveal credits. Amount is pinned here — the
-        // client only ever names the plan, never a price.
+      if (plan === "credits10" || plan === "reveal1") {
+        // One-time Reveal credit purchase. Amounts are pinned here — the client
+        // only ever names the plan, never a price. The 10-pack ($1/credit) is a
+        // Pro perk; free accounts buy a single report at $4.99.
+        const isProBuyer = user.email === "harut@ymail.com" ||
+          (await billingRef(user.uid).child("tier").get()).val() === "pro";
+        const pack = (plan === "credits10" && isProBuyer)
+          ? {name: "DealHive Reveal Credits (10 pack)", amount: "1000", credits: "10"}
+          : {name: "DealHive Owner Contact Report", amount: "499", credits: "1"};
         session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
           "mode": "payment",
           "customer": customerId,
           "line_items[0][price_data][currency]": "usd",
-          "line_items[0][price_data][product_data][name]": "DealHive Reveal Credits (8 pack)",
-          "line_items[0][price_data][unit_amount]": "1000",
+          "line_items[0][price_data][product_data][name]": pack.name,
+          "line_items[0][price_data][unit_amount]": pack.amount,
           "line_items[0][quantity]": "1",
           "client_reference_id": user.uid,
           "metadata[firebaseUid]": user.uid,
-          "metadata[credits]": "8",
+          "metadata[credits]": pack.credits,
           "allow_promotion_codes": "true",
           "success_url": `${APP_ORIGIN}/?billing=credits&session_id={CHECKOUT_SESSION_ID}`,
           "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
