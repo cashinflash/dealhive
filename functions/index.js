@@ -419,46 +419,79 @@ function classifyDeal(deal) {
   const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
   const monthlyTax = Math.round((deal.price * taxRate) / 12);
 
-  // Buy-and-hold — 75% LTV @ 7.5%/30yr, 8% vacancy, 8% mgmt on collected
-  // rent, 5% maintenance + 5% capex on gross, taxes + $100 insurance.
+  // Operating pro forma shared by every method: 8% vacancy, 8% management of
+  // collected rent, 5% maintenance + 5% capex of gross, taxes + $100 ins.
+  const price      = deal.price || 0;
+  const closing    = 10895; // DEFAULT_CLOSING parity with the analyzer
   const collected  = rent * 0.92;
   const exp        = monthlyTax + 100 + Math.round(collected * 0.08) + Math.round(rent * 0.10);
-  const PI         = monthlyPI((deal.price || 0) * 0.75, 7.5);
-  const finCF      = collected - exp - PI;
-  const noi        = (collected - exp) * 12;
-  const finCap     = deal.price > 0 ? (noi / deal.price) * 100 : 0;
+  const noiMo      = collected - exp;
+  const cap        = price > 0 ? (noiMo * 12 / price) * 100 : 0;
 
-  // Fix-and-flip — ARV less total-in, 6% agent + 2% closing on the sale, plus
-  // 6 months of holding (taxes + insurance + utilities).
-  const totalIn      = (deal.price || 0) + repair;
-  const sellingCosts = arv * 0.08;
-  const holdingCost  = 6 * (monthlyTax + 500 /* ins + utilities + misc */);
-  const flipProfit   = Math.round(arv - totalIn - sellingCosts - holdingCost);
-  const flipROI      = totalIn > 0 ? (flipProfit / totalIn) * 100 : 0;
+  // Buy & Hold, both ways. Financed: 75% LTV @ 7.5%/30yr conventional.
+  const PI      = monthlyPI(price * 0.75, 7.5);
+  const finCF   = noiMo - PI;
+  const finIn   = price * 0.25 + repair + closing;
+  const finCoC  = finIn > 0 ? (finCF * 12 / finIn) * 100 : 0;
+  const cashCF  = noiMo;
+  const cashIn  = price + repair + closing;
+  const cashCoC = cashIn > 0 ? (cashCF * 12 / cashIn) * 100 : 0;
+  const bhFin   = cap >= 8 && finCF  >= 200;
+  const bhCash  = cap >= 8 && cashCF >= 200;
 
-  // BRRRR — all-cash buy + rehab + closing, refi at 75% of ARV, rental math
-  // against the refi payment. Overlay tag: brrrr deals also carry buyhold or
-  // flip. Mirrors the app's classifier exactly.
-  const allIn        = (deal.price || 0) + repair + 10895; // DEFAULT_CLOSING
+  // Fix & Flip, both ways. Financed: hard money at 75% LTV, 12% interest
+  // only for the six-month hold, rehab paid in cash — analyzer defaults.
+  const sellingCosts  = arv * 0.08;
+  const holdingCost   = 6 * (monthlyTax + 500 /* ins + utilities + misc */);
+  const flipInCash    = price + repair;
+  const flipProfit    = Math.round(arv - flipInCash - sellingCosts - holdingCost);
+  const flipROI       = flipInCash > 0 ? (flipProfit / flipInCash) * 100 : 0;
+  const hmInterest    = Math.round(price * 0.75 * 0.12 / 12 * 6);
+  const flipInFin     = price * 0.25 + repair;
+  const flipProfitFin = flipProfit - hmInterest;
+  const flipROIFin    = flipInFin > 0 ? (flipProfitFin / flipInFin) * 100 : 0;
+  const flCash = flipROI    >= 18 && flipProfit    >= 25000;
+  const flFin  = flipROIFin >= 18 && flipProfitFin >= 25000;
+
+  // BRRRR, both ways. Cash: buy + rehab all cash, refi at 75% of ARV.
+  // Financed: hard money buys it and the refinance pays that loan off.
   const refiLoan     = Math.round(arv * 0.75);
-  const recoveredPct = allIn > 0 ? Math.min(100, Math.round((refiLoan / allIn) * 100)) : 0;
   const refiPmt      = monthlyPI(refiLoan, 7.5);
   const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.92 * 0.08) + Math.round(rent * 0.10);
   const brrrrCF      = rent - brrrrOpEx - refiPmt;
+  const allInCash    = price + repair + closing;
+  const recCash      = allInCash > 0 ? Math.min(100, Math.round((refiLoan / allInCash) * 100)) : 0;
+  const brInFin      = price * 0.25 + repair + closing + hmInterest;
+  const backFin      = refiLoan - price * 0.75;
+  const recFin       = brInFin > 0 ? Math.min(100, Math.round((backFin / brInFin) * 100)) : 0;
+  const brCash = repair >= 10000 && recCash >= 70 && brrrrCF >= 100;
+  const brFin  = repair >= 10000 && recFin  >= 70 && brrrrCF >= 100;
 
-  // Tighter gates — users complained about $30/mo cash-flow deals making the
-  // list. We're selling these leads, so only "good" passes.
-  //   Buy-and-hold: cap >= 8% AND >= $200/mo cash flow
-  //   Fix-and-flip: ROI >= 18% AND >= $25k profit
-  const tags = [];
-  if (finCap >= 8   && finCF      >= 200)   tags.push("buyhold");
-  if (flipROI >= 18 && flipProfit >= 25000) tags.push("flip");
-  if (repair >= 10000 && recoveredPct >= 70 && brrrrCF >= 100) tags.push("brrrr");
+  // A strategy qualifies if EITHER purchase method clears its gate. The
+  // stamped method is the passing one with the better return, so the card
+  // proposes not just what to do with the property but how to buy it.
+  const tags = [], methods = {};
+  if (bhFin || bhCash) {
+    tags.push("buyhold");
+    methods.buyhold = (bhFin && bhCash) ? (finCoC >= cashCoC ? "finance" : "cash")
+      : bhFin ? "finance" : "cash";
+  }
+  if (flCash || flFin) {
+    tags.push("flip");
+    methods.flip = (flCash && flFin) ? (flipROIFin >= flipROI ? "finance" : "cash")
+      : flFin ? "finance" : "cash";
+  }
+  if (brCash || brFin) {
+    tags.push("brrrr");
+    methods.brrrr = (brCash && brFin) ? (recFin >= recCash ? "finance" : "cash")
+      : brFin ? "finance" : "cash";
+  }
 
-  // Same score formula the page sorts by.
-  const buyHoldScore = (finCF   >= 200 ? 30 : 0) + Math.min(finCap, 15) * 2;
-  const flipScore    = (flipROI >= 18  ? 30 : 0) + Math.min(flipROI, 50);
-  return {tags, buyHoldScore, flipScore, finCF};
+  const bhBestCF     = methods.buyhold === "cash" ? cashCF : finCF;
+  const buyHoldScore = (bhBestCF >= 200 ? 30 : 0) + Math.min(cap, 15) * 2;
+  const bestFlipROI  = methods.flip === "finance" ? flipROIFin : flipROI;
+  const flipScore    = (bestFlipROI >= 18 ? 30 : 0) + Math.min(bestFlipROI, 50);
+  return {tags, buyHoldScore, flipScore, finCF, methods};
 }
 
 function monthlyPI(principal, rate) {
@@ -625,7 +658,7 @@ async function runPipeline(apifyKey, _rentcastKey) {
     .map(d => {
       const c = classifyDeal(d);
       return {...d, tags: c.tags, buyHoldScore: c.buyHoldScore, flipScore: c.flipScore,
-        cfEst: Math.round(c.finCF)};
+        cfEst: Math.round(c.finCF), methods: c.methods};
     })
     // Strategy-tagged deals always ship. By-owner listings additionally ship
     // only when they clear the lane's quality floor: at least BYOWNER_MIN_CF
