@@ -63,6 +63,9 @@ const RESIDENTIAL_TYPES = new Set([
 // Pull caps — env-tunable for live tuning without redeploy. FSBO.com is the
 // feed's sole source: address-rich by-owner listings with seller contact.
 const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
+// IL (convertfleet InvestorLift scraper) runs in shadow: capped small, and
+// its results are inspected in debug only until addresses verify.
+const IL_MAX            = parseInt(process.env.IL_MAX            || "25",  10);
 // The browser actor outgrows run-sync's 300s ceiling, so it runs
 // start -> poll -> collect: a server-side kill switch (timeout= on the run
 // start) and our poll gives up at LONG_RUN_WAIT_MS, keeping the partial
@@ -532,17 +535,48 @@ function hashId(s) {
 // by un-commenting the call below) but is intentionally not used: RentCast
 // surfaces generic public listings with no photos, which dilutes the Deals
 // page. Sticking to the exclusive InvestorLift Network feed only.
+// -- Source: IL (convertfleetdotonline/investorlift-property-scraper) ----------
+// SHADOW MODE: this actor claims to expose full addresses for InvestorLift
+// deals. Until a sample of its addresses is verified against listing photos
+// and county records, the pull reports schema and counts in debug but ships
+// ZERO items to the feed — a wrong address in front of users is worse than
+// a hidden one.
+async function pullFromIL(token) {
+  if (!token) return {items: [], debug: {error: "APIFY_API_KEY not set"}, ok: false};
+  const {parsed, status, debug} = await apifyRunCollect(
+    token, "convertfleetdotonline~investorlift-property-scraper", {
+      mode:          "active",
+      propertyUrls:  [],
+      propertyTypes: [],
+      states:        [],
+    }, {memory: 1024, timeoutS: LONG_RUN_TIMEOUT_S, waitMs: LONG_RUN_WAIT_MS});
+  if (!parsed) return {items: [], debug: {...debug, shadow: true}, ok: false};
+  const sample = parsed.slice(0, IL_MAX);
+  const first  = sample[0];
+  return {
+    items: [], // shadow: nothing ships until addresses verify
+    debug: {
+      ...debug,
+      shadow:       true,
+      rawCount:     parsed.length,
+      sampleKeys:   first ? Object.keys(first).slice(0, 60) : [],
+      sampleValues: first ? sampleValuePeek(first) : null,
+    },
+    ok: status === "SUCCEEDED" || parsed.length > 0,
+  };
+}
+
 async function runPipeline(apifyKey, _rentcastKey) {
-  const sources = {dealhive2: 0};
-  const errors  = {dealhive2: false};
+  const sources = {dealhive2: 0, il: 0};
+  const errors  = {dealhive2: false, il: false};
   const debug   = {};
   const raw     = [];
 
   // FSBO.com drives a real browser and can poll up to ~7 minutes, all
   // inside this function's 540s ceiling.
   if (!apifyKey) {
-    errors.dealhive2 = true;
-    debug.fsbo = {error: "APIFY_API_KEY not set"};
+    errors.dealhive2 = errors.il = true;
+    debug.fsbo = debug.il = {error: "APIFY_API_KEY not set"};
   } else {
     const sourceTasks = [
       {
@@ -550,6 +584,12 @@ async function runPipeline(apifyKey, _rentcastKey) {
         debugKey: "fsbo",
         label:    "FSBO.com (DealHive 2)",
         run:      () => pullFromFsbo(apifyKey, FSBO_MAX),
+      },
+      {
+        name:     "il",
+        debugKey: "il",
+        label:    "InvestorLift (IL, shadow)",
+        run:      () => pullFromIL(apifyKey),
       },
     ];
 
