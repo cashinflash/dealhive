@@ -9,6 +9,8 @@
 #   APIFY_API_KEY             — rotated Apify token
 #   RENTCAST_API_KEY          — RentCast API key for the listings endpoint
 #   MANUAL_TRIGGER_SECRET     — any random string, guards the /pullDealsNow URL
+#   ENDATO_AP_NAME            — optional: Endato skip-trace key name
+#   ENDATO_AP_PASSWORD        — optional: Endato skip-trace key password
 #
 # See functions/README.md for the click-by-click on generating each secret.
 
@@ -72,6 +74,8 @@ jobs:
           APIFY_KEY:     ${{ secrets.APIFY_API_KEY }}
           RENTCAST_KEY:  ${{ secrets.RENTCAST_API_KEY }}
           MANUAL_SECRET: ${{ secrets.MANUAL_TRIGGER_SECRET }}
+          ENDATO_NAME:   ${{ secrets.ENDATO_AP_NAME }}
+          ENDATO_PASS:   ${{ secrets.ENDATO_AP_PASSWORD }}
         run: |
           for var in APIFY_KEY RENTCAST_KEY MANUAL_SECRET; do
             if [ -z "${!var}" ]; then
@@ -82,6 +86,10 @@ jobs:
           printf '%s' "$APIFY_KEY"     | firebase functions:secrets:set APIFY_API_KEY         --data-file=- --project darallc --force
           printf '%s' "$RENTCAST_KEY"  | firebase functions:secrets:set RENTCAST_API_KEY      --data-file=- --project darallc --force
           printf '%s' "$MANUAL_SECRET" | firebase functions:secrets:set MANUAL_TRIGGER_SECRET --data-file=- --project darallc --force
+          # Optional skip-trace keys: store an "unset" placeholder until the
+          # real GitHub secrets exist so functions referencing them still deploy.
+          printf '%s' "${ENDATO_NAME:-unset}" | firebase functions:secrets:set ENDATO_AP_NAME     --data-file=- --project darallc --force
+          printf '%s' "${ENDATO_PASS:-unset}" | firebase functions:secrets:set ENDATO_AP_PASSWORD --data-file=- --project darallc --force
 
       - name: Deploy DB rules + functions
         run: firebase deploy --only database,functions --project darallc --force --non-interactive
@@ -100,4 +108,6 @@ jobs:
             echo "- Scheduled: \`pullDeals\` runs every day at 6am ET"
             echo "- Manual trigger:"
             echo "  \`curl \"https://us-central1-darallc.cloudfunctions.net/pullDealsNow?secret=YOUR_MANUAL_TRIGGER_SECRET\"\`"
+            echo "- Skip-trace bake-off (needs ENDATO secrets):"
+            echo "  \`curl \"https://us-central1-darallc.cloudfunctions.net/skipTraceTest?secret=YOUR_MANUAL_TRIGGER_SECRET&n=15\"\`"
           } >> "$GITHUB_STEP_SUMMARY"

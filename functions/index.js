@@ -14,6 +14,8 @@
 //   firebase functions:secrets:set APIFY_API_KEY
 //   firebase functions:secrets:set RENTCAST_API_KEY
 //   firebase functions:secrets:set MANUAL_TRIGGER_SECRET   (for /pullDealsNow)
+//   firebase functions:secrets:set ENDATO_AP_NAME          (skip trace, optional)
+//   firebase functions:secrets:set ENDATO_AP_PASSWORD      (skip trace, optional)
 //
 // Manual trigger for testing the pipeline without waiting for the cron:
 //   curl "https://<region>-darallc.cloudfunctions.net/pullDealsNow?secret=XXXX"
@@ -903,6 +905,144 @@ exports.pullDealsNow = onRequest({
     res.json(result);
   } catch (e) {
     logger.error("Manual pipeline run failed", {error: e.message});
+    res.status(500).json({error: e.message});
+  }
+});
+
+// == Skip tracing (Endato / EnformionGO) ========================================
+// Provider-evaluation plumbing for the future "Reveal Owner Phone" add-on.
+// Endato's Contact Enrich takes a name + address and returns known phones and
+// emails; they bill per successful match. Keys are optional: the deploy
+// workflow stores an "unset" placeholder until the real GitHub secrets exist,
+// and the endpoint reports "not configured" instead of failing.
+const ENDATO_AP_NAME     = defineSecret("ENDATO_AP_NAME");
+const ENDATO_AP_PASSWORD = defineSecret("ENDATO_AP_PASSWORD");
+const ENDATO_BASE        = "https://devapi.endato.com";
+
+// Entity owners (LLCs, trusts, holding companies) can't be traced through a
+// people-search API — count them separately instead of burning searches.
+const ENTITY_RX = /\b(llc|l\.l\.c|inc|corp|corporation|trust|estate|properties|investments|holdings|ventures|homes|realty|group|partners|lp|llp)\b/i;
+
+async function endatoEnrich(apName, apPassword, {name, address1, address2}) {
+  const parts = String(name || "").trim().split(/\s+/);
+  const FirstName = parts.length > 1 ? parts[0] : "";
+  const LastName  = parts.length > 1 ? parts.slice(1).join(" ") : (parts[0] || "");
+  const t0 = Date.now();
+  const r = await fetch(ENDATO_BASE + "/Contact/Enrich", {
+    method: "POST",
+    headers: {
+      "Content-Type":       "application/json",
+      "galaxy-ap-name":     apName,
+      "galaxy-ap-password": apPassword,
+      "galaxy-search-type": "DevAPIContactEnrich",
+    },
+    body: JSON.stringify({
+      FirstName, LastName,
+      Address: {addressLine1: address1, addressLine2: address2},
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const text = await r.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* non-JSON error body */ }
+  const person = (json && (json.person ||
+    (Array.isArray(json.persons) && json.persons[0]))) || null;
+  const phones = (person && Array.isArray(person.phones) ? person.phones : [])
+    .map(p => ({
+      number:      p.number || p.phoneNumber || null,
+      type:        p.type || p.phoneType || null,
+      isConnected: p.isConnected === true,
+      lastSeen:    p.lastReportedDate || null,
+    }))
+    .filter(p => p.number);
+  return {
+    status: r.status,
+    ms: Date.now() - t0,
+    phones,
+    emails: (person && Array.isArray(person.emails) ? person.emails : [])
+      .map(e => (typeof e === "string" ? e : e.email || e.emailAddress || null))
+      .filter(Boolean),
+    matchedName: (person && person.name &&
+      [person.name.firstName, person.name.lastName].filter(Boolean).join(" ")) || null,
+    error: r.ok ? null : (text || "").slice(0, 300),
+    // When a 200 comes back with no phones, the top-level keys tell us whether
+    // the response shape differs from what we mapped (same trick as IL shadow).
+    rawKeys: json ? Object.keys(json).slice(0, 20) : null,
+  };
+}
+
+// Admin bake-off: run the live feed's FSBO sellers through Endato and report
+// the hit rate BEFORE any customer-facing reveal button gets built. Read-only
+// (writes nothing, shows nothing to members), same passcode as /pullDealsNow:
+//   https://us-central1-darallc.cloudfunctions.net/skipTraceTest?secret=XXXX&n=15
+// n is capped at 25 so a test run stays well inside the 100-search trial.
+exports.skipTraceTest = onRequest({
+  timeoutSeconds: 300,
+  secrets: [MANUAL_TRIGGER_SECRET, ENDATO_AP_NAME, ENDATO_AP_PASSWORD],
+}, async (req, res) => {
+  const expected = MANUAL_TRIGGER_SECRET.value();
+  if (!expected || req.query.secret !== expected) {
+    res.status(403).send("Forbidden");
+    return;
+  }
+  const apName = ENDATO_AP_NAME.value();
+  const apPass = ENDATO_AP_PASSWORD.value();
+  if (!apName || apName === "unset" || !apPass || apPass === "unset") {
+    res.status(503).json({error: "Endato keys not configured. Add ENDATO_AP_NAME and " +
+      "ENDATO_AP_PASSWORD as GitHub Actions secrets, then re-run the Deploy Firebase workflow."});
+    return;
+  }
+  try {
+    const n = Math.min(Math.max(parseInt(req.query.n || "10", 10) || 10, 1), 25);
+    const snap = await admin.database().ref("/deals/items").get();
+    const all = Object.values(snap.val() || {});
+    const entitySkipped = [];
+    const candidates = [];
+    for (const d of all) {
+      const nm = d.seller && d.seller.name;
+      if (!nm || !d.streetAddress || !d.city || !d.state) continue;
+      if (ENTITY_RX.test(nm)) { entitySkipped.push({name: nm, address: d.streetAddress}); continue; }
+      candidates.push(d);
+    }
+    const results = [];
+    for (const d of candidates.slice(0, n)) {
+      const address2 = `${d.city}, ${d.state}${d.zip ? " " + d.zip : ""}`;
+      let out;
+      try {
+        out = await endatoEnrich(apName, apPass,
+          {name: d.seller.name, address1: d.streetAddress, address2});
+      } catch (e) {
+        out = {status: 0, ms: 0, phones: [], emails: [],
+          error: String(e.message || e).slice(0, 200)};
+      }
+      results.push({
+        address: `${d.streetAddress}, ${address2}`,
+        seller:  d.seller.name,
+        hit:     out.phones.length > 0,
+        phones:  out.phones,
+        emails:  (out.emails || []).slice(0, 3),
+        matchedName: out.matchedName || null,
+        status:  out.status,
+        ms:      out.ms,
+        ...(out.error ? {error: out.error} : {}),
+        ...(out.rawKeys && !out.phones.length ? {rawKeys: out.rawKeys} : {}),
+      });
+    }
+    const hits = results.filter(r => r.hit);
+    res.json({
+      provider:           "endato",
+      eligibleInFeed:     candidates.length,
+      entityOwnersInFeed: entitySkipped.length,
+      attempted:          results.length,
+      hits:               hits.length,
+      hitRate:            results.length ? Math.round((hits.length / results.length) * 100) + "%" : "n/a",
+      withConnectedPhone: results.filter(r => r.phones.some(p => p.isConnected)).length,
+      withMobile:         results.filter(r => r.phones.some(p => /mobile|wireless|cell/i.test(p.type || ""))).length,
+      results,
+      entitySkippedSample: entitySkipped.slice(0, 5),
+    });
+  } catch (e) {
+    logger.error("skipTraceTest", {error: e.message});
     res.status(500).json({error: e.message});
   }
 });
