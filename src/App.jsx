@@ -7424,6 +7424,7 @@ function RevealBlock({deal, rcAuth}) {
   const [st, setSt]   = useState({loading: true, balance: null, revealed: null, admin: false});
   const [busy, setBusy] = useState(false);
   const [err, setErr]   = useState("");
+  const [confirming, setConfirming] = useState(false);
   const call = async (body) => {
     const r = await fetch(`${FN_BASE}/revealOwner`, {method: "POST",
       headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
@@ -7477,6 +7478,7 @@ function RevealBlock({deal, rcAuth}) {
       }
     }
     setBusy(false);
+    setConfirming(false);
   };
   const rv = st.revealed;
   // Always-visible balance pill so a member never wonders what they have left.
@@ -7569,11 +7571,40 @@ function RevealBlock({deal, rcAuth}) {
             : "County records don't show a traceable owner for this address."}
           {" "}No credit was used.
         </div>
-      ) : st.balance == null ? null : (
+      ) : st.balance == null ? null : confirming ? (
+        <div style={{border:"1px solid "+C.amberBorder, background:C.amberSubtle,
+          borderRadius:C.r3, padding:"14px 15px"}}>
+          <div style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F,
+            letterSpacing:"-0.01em"}}>
+            Reveal this owner's phone &amp; email?
+          </div>
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5, marginTop:4}}>
+            {st.admin
+              ? "Runs a skip trace on the owner of record."
+              : "Uses 1 credit — and only if a number is found. Misses cost nothing."}
+          </div>
+          <div style={{display:"flex", gap:8, marginTop:13}}>
+            <button onClick={reveal} disabled={busy}
+              {...btnStyle("primary", "md", {flex:1, justifyContent:"center"})}>
+              {busy ? "Tracing owner…" : st.admin ? "Reveal" : "Confirm · 1 credit"}
+            </button>
+            <button onClick={() => { setConfirming(false); setErr(""); }} disabled={busy}
+              {...btnStyle("secondary", "md", {justifyContent:"center"})}>
+              Cancel
+            </button>
+          </div>
+          {err && (
+            <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:9,
+              textAlign:"center"}}>{err}</div>
+          )}
+        </div>
+      ) : (
         <>
-          <button onClick={(st.admin || st.balance >= 1) ? reveal : buyCredits} disabled={busy}
+          <button
+            onClick={(st.admin || st.balance >= 1) ? () => { setErr(""); setConfirming(true); } : buyCredits}
+            disabled={busy}
             {...btnStyle("primary", "md", {width:"100%", justifyContent:"center"})}>
-            {busy ? "Tracing owner…" : st.admin
+            {busy ? "Opening…" : st.admin
               ? "Reveal Phone & Email"
               : st.balance >= 1
               ? "Reveal Phone & Email · 1 credit"
