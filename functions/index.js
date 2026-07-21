@@ -718,9 +718,19 @@ exports.usageReport = onRequest(
         const got = await admin.auth().getUsers(ids.slice(i, i + 100)).catch(() => null);
         if (got) got.users.forEach(u => { emails[u.uid] = u.email || u.uid; });
       }
+      // Full member roster, newest first — signups visible without ever
+      // opening the Firebase console.
+      const listed = await admin.auth().listUsers(1000).catch(() => null);
+      const users = listed ? listed.users.map(u => ({
+        email: u.email || u.uid,
+        tier: (billing[u.uid] && billing[u.uid].tier) || "free",
+        created: u.metadata.creationTime || null,
+        lastSignIn: u.metadata.lastSignInTime || null,
+      })).sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0)) : [];
       res.json({
         month: mo,
         costPerLookup: 0.074,
+        users,
         rows: rows.map(r => ({
           email: emails[r.uid] || r.uid, tier: r.tier, lookups: r.lookups,
           estCost: Math.round(r.lookups * 7.4) / 100,
