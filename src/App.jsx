@@ -6603,9 +6603,17 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
               )}
             </>
           ) : (
-            <button onClick={onUpgrade} {...btnStyle("primary","md", {width:"100%"})}>
-              <I.lock size={13} stroke={2.4}/> Unlock with Pro
-            </button>
+            <>
+              {deal.streetAddress && (
+                <button onClick={() => setShowOwner(true)}
+                  {...btnStyle("secondary","md", {width:"100%"})}>
+                  <I.user size={13}/> Find the Owner
+                </button>
+              )}
+              <button onClick={onUpgrade} {...btnStyle("primary","md", {width:"100%"})}>
+                <I.lock size={13} stroke={2.4}/> Unlock the full deal with Pro
+              </button>
+            </>
           )}
         </div>
         {showOwner && (
@@ -7365,7 +7373,7 @@ function AppreciationSheet({deal, onClose, mobile}) {
 // to revealOwner / createCheckoutSession directly with the session token.
 const isMobilePhone = t => /mobile|wireless|cell/i.test(t || "");
 // Always-visible reveal-credit balance for Settings, with an inline buy. Gives
-// members a home to see "how many do I have left" outside the Owner Lookup sheet.
+// members a home to see how many credits they hold outside the Owner Lookup sheet.
 function RevealCreditsRow({authToken, isAdmin, mobile}) {
   const [balance, setBalance] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -7384,7 +7392,7 @@ function RevealCreditsRow({authToken, isAdmin, mobile}) {
     try {
       const r = await fetch(`${FN_BASE}/createCheckoutSession`, {method: "POST",
         headers: {Authorization: `Bearer ${authToken}`, "Content-Type": "application/json"},
-        body: JSON.stringify({plan: "credits8"})});
+        body: JSON.stringify({plan: "credits10"})});
       const d = await r.json().catch(() => ({}));
       if (d.url) { window.location.assign(d.url); return; }
       setBusy(false);
@@ -7402,29 +7410,149 @@ function RevealCreditsRow({authToken, isAdmin, mobile}) {
         <div style={{minWidth:0}}>
           <div style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
             letterSpacing:"-0.01em"}}>
-            {isAdmin ? "Owner reveals · unmetered"
+            {isAdmin ? "Owner reveals, unmetered"
               : balance == null ? "Reveal credits" : `${balance} reveal credit${balance === 1 ? "" : "s"}`}
           </div>
           <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
-            Reveal a property owner's phone &amp; email from Owner Lookup. A credit
+            Reveal a property owner's phone and email from Owner Lookup. A credit
             is only used when a number is found.
           </div>
         </div>
       </div>
       {!isAdmin && (
         <button onClick={buy} disabled={busy} {...btnStyle("secondary","md")}>
-          {busy ? "Opening…" : balance >= 1 ? "Add credits · $10" : "Get 8 credits · $10"}
+          {busy ? "Opening…" : balance >= 1 ? "Add 10 credits for $10" : "Get 10 credits for $10"}
         </button>
       )}
     </div>
   );
 }
 
-function RevealBlock({deal, rcAuth}) {
-  const [st, setSt]   = useState({loading: true, balance: null, revealed: null, admin: false});
+// ---- Owner reveal: shared premium pieces ------------------------------------
+const ownerInitials = (name) => {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  const a = parts[0][0] || "";
+  const b = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return (a + b).toUpperCase();
+};
+
+function OwnerHeroCard({name, occupied, absentee}) {
+  return (
+    <div style={{position:"relative", background:`linear-gradient(158deg, #fff 0%, ${C.greenSubtle} 100%)`,
+      border:"1px solid "+C.greenBorder, borderRadius:C.r5, padding:"22px 18px 20px",
+      textAlign:"center", boxShadow:C.sh3, overflow:"hidden"}}>
+      <div style={{position:"absolute", top:-40, right:-40, width:120, height:120, borderRadius:"50%",
+        background:"radial-gradient(circle, rgba(232,115,28,.10), transparent 70%)", pointerEvents:"none"}}/>
+      <div style={{width:60, height:60, borderRadius:"50%", margin:"0 auto 13px",
+        background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+        display:"flex", alignItems:"center", justifyContent:"center", fontSize:21, fontWeight:800,
+        letterSpacing:".02em", boxShadow:"0 8px 18px -4px rgba(232,115,28,.5)", position:"relative"}}>
+        {ownerInitials(name)}
+      </div>
+      <div style={{fontSize:10.5, fontWeight:800, color:C.greenDark, fontFamily:F,
+        letterSpacing:".09em", textTransform:"uppercase"}}>Owner of Record</div>
+      <div style={{fontSize:22, fontWeight:800, color:C.text, fontFamily:F,
+        letterSpacing:"-0.025em", marginTop:6, lineHeight:1.2}}>
+        {name || "Not disclosed in records"}
+      </div>
+      {(absentee || occupied) && (
+        <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:12,
+          padding:"5px 13px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+          background: absentee ? C.amberSubtle : C.greenSubtle,
+          border:"1px solid "+(absentee ? C.amberBorder : C.greenBorder),
+          color: absentee ? C.amberDark : C.greenDark}}>
+          <span style={{width:6, height:6, borderRadius:"50%", background: absentee ? C.amber : C.green}}/>
+          {absentee ? "Absentee Owner" : "Owner Occupied"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OwnerInfoCard({mailingStr, county}) {
+  const rows = [];
+  if (mailingStr) rows.push(["Mailing Address", mailingStr, I.pin]);
+  if (county) rows.push(["County", county, I.building]);
+  if (!rows.length) return null;
+  return (
+    <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
+      boxShadow:C.sh2, marginTop:13, overflow:"hidden"}}>
+      {rows.map(([label, val, Ic], i) => (
+        <div key={label} style={{display:"flex", alignItems:"center", gap:13, padding:"14px 16px",
+          borderTop: i ? "1px solid #f1f1f3" : "none"}}>
+          <div style={{width:38, height:38, borderRadius:11, flex:"0 0 auto", display:"flex",
+            alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+            border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+            <Ic size={17} stroke={2}/>
+          </div>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:10.5, fontWeight:700, letterSpacing:".06em",
+              textTransform:"uppercase", color:C.textMuted, fontFamily:F}}>{label}</div>
+            <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, marginTop:2,
+              lineHeight:1.35}}>{val}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RevealChip({tone, children}) {
+  const t = tone === "green"
+    ? {c:C.cashPos, bg:"#ecfdf5", bd:"#a7f3d0"}
+    : {c:C.textSub, bg:C.bgSubtle, bd:C.border};
+  return <span style={{fontSize:10, fontWeight:700, borderRadius:9999, padding:"2px 8px",
+    color:t.c, background:t.bg, border:"1px solid "+t.bd, fontFamily:F}}>{children}</span>;
+}
+
+// The premium "Owner Contact" card shell + header, shared across states.
+function RevealCardShell({free, children}) {
+  return (
+    <div style={{marginTop: free ? 0 : 14, background:`linear-gradient(160deg, #fff, ${C.bg})`,
+      border:"1px solid "+C.border, borderRadius:C.r5, boxShadow:C.sh3, padding:"17px 17px 18px"}}>
+      {children}
+    </div>
+  );
+}
+function RevealCardHeader({subtitle, admin, balance}) {
+  const has = admin || balance >= 1;
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
+      <div style={{width:42, height:42, borderRadius:12, flex:"0 0 auto", display:"flex",
+        alignItems:"center", justifyContent:"center",
+        background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+        boxShadow:"0 6px 14px -4px rgba(232,115,28,.5)"}}>
+        <I.phone size={20} stroke={2}/>
+      </div>
+      <div style={{minWidth:0}}>
+        <div style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+          letterSpacing:"-0.01em"}}>Owner Contact</div>
+        <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{subtitle}</div>
+      </div>
+      {(admin || balance != null) && (
+        <span style={{marginLeft:"auto", flex:"0 0 auto", fontSize:11, fontWeight:800,
+          color: has ? C.greenDark : C.textMuted, background: has ? C.greenSubtle : C.bgSubtle,
+          border:"1px solid "+(has ? C.greenBorder : C.border), borderRadius:9999,
+          padding:"5px 11px", whiteSpace:"nowrap", fontFamily:F}}>
+          {admin ? "Unmetered" : `${balance} credit${balance === 1 ? "" : "s"}`}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Owner phone/email reveal. mode "pro" renders just the contact card (the sheet
+// shows the county hero above it); mode "free" is self-contained: a premium
+// unlock teaser, then the full report (owner hero, mailing, phone, email) once
+// a free member buys a single report and reveals.
+function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
+  const free = mode === "free";
+  const [st, setSt] = useState({loading: true, balance: null, revealed: null, admin: false});
   const [busy, setBusy] = useState(false);
-  const [err, setErr]   = useState("");
+  const [err, setErr] = useState("");
   const [confirming, setConfirming] = useState(false);
+
   const call = async (body) => {
     const r = await fetch(`${FN_BASE}/revealOwner`, {method: "POST",
       headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
@@ -7437,198 +7565,257 @@ function RevealBlock({deal, rcAuth}) {
   };
   useEffect(() => {
     let alive = true;
-    call({}).then(d => alive && setSt({loading: false, balance: d.balance, revealed: d.revealed, admin: !!d.admin}))
-      .catch(() => alive && setSt({loading: false, balance: null, revealed: null, admin: false}));
+    call({}).then(d => alive && setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin}))
+      .catch(() => alive && setSt({loading:false, balance:null, revealed:null, admin:false}));
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const buyCredits = async () => {
+
+  const buy = async () => {
     if (busy) return;
     setBusy(true); setErr("");
     try {
       const r = await fetch(`${FN_BASE}/createCheckoutSession`, {method: "POST",
         headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
-        body: JSON.stringify({plan: "credits8"})});
+        body: JSON.stringify({plan: free ? "reveal1" : "credits10"})});
       const d = await r.json().catch(() => ({}));
       if (d.url) { window.location.assign(d.url); return; }
-      throw new Error(d.error || "checkout");
-    } catch {
-      setErr("Could not start checkout — try again in a moment.");
-      setBusy(false);
-    }
+      throw new Error();
+    } catch { setErr("Could not start checkout. Try again in a moment."); setBusy(false); }
   };
   const reveal = async () => {
     if (busy) return;
     setBusy(true); setErr("");
     try {
       const d = await call({confirm: true});
-      setSt({loading: false, balance: d.balance, revealed: d.revealed, admin: !!d.admin});
+      setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin});
     } catch (e) {
-      // On a credits error, trust the server's reported balance (it rides the
-      // 402) rather than assuming zero — a transient failure must never make a
-      // funded member look empty. Fall back to a re-check if it's absent.
-      if (e.code === "cap") {
-        setErr("Daily reveal limit reached — resets tomorrow. No credit was used.");
-      } else if (e.code === "credits") {
-        const bal = typeof e.balance === "number" ? e.balance : null;
-        if (bal != null) setSt(x => ({...x, balance: bal}));
-        else { try { const d = await call({balanceOnly: true}); setSt(x => ({...x, balance: d.balance})); } catch { /* keep prior */ } }
-        setErr("That reveal didn't go through — no credit was used.");
-      } else {
-        setErr("Reveal is unavailable right now — no credit was used.");
-      }
+      if (e.code === "cap") setErr("Daily reveal limit reached. It resets tomorrow, and no credit was used.");
+      else if (e.code === "credits") {
+        const b2 = typeof e.balance === "number" ? e.balance : null;
+        if (b2 != null) setSt(x => ({...x, balance: b2}));
+        else { try { const d2 = await call({balanceOnly: true}); setSt(x => ({...x, balance: d2.balance})); } catch { /* keep prior */ } }
+        setErr("That reveal did not go through, and no credit was used.");
+      } else setErr("Reveal is unavailable right now, and no credit was used.");
     }
-    setBusy(false);
-    setConfirming(false);
+    setBusy(false); setConfirming(false);
   };
+
   const rv = st.revealed;
-  // Always-visible balance pill so a member never wonders what they have left.
-  const balPill = st.admin
-    ? {txt: "Unmetered", bg: C.greenSubtle, bd: C.greenBorder, c: C.greenDark}
-    : (st.balance != null
-      ? {txt: `${st.balance} credit${st.balance === 1 ? "" : "s"}`,
-         bg: st.balance >= 1 ? C.greenSubtle : C.bgSubtle,
-         bd: st.balance >= 1 ? C.greenBorder : C.border,
-         c:  st.balance >= 1 ? C.greenDark : C.textMuted}
-      : null);
-  return (
-    <div style={{marginTop:14, borderTop:"1px solid "+C.border, paddingTop:14}}>
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
-        gap:8, marginBottom:9}}>
-        <span style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
-          letterSpacing:".07em", textTransform:"uppercase"}}>
-          Owner Contact
-        </span>
-        {balPill && !st.loading && (
-          <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:balPill.c,
-            background:balPill.bg, border:"1px solid "+balPill.bd, borderRadius:9999,
-            padding:"2px 9px", whiteSpace:"nowrap"}}>{balPill.txt}</span>
-        )}
-      </div>
-      {st.loading ? (
-        <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>
-      ) : rv && rv.found ? (
-        <>
-          <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:10}}>
-            Numbers and emails linked to <strong style={{color:C.text}}>{rv.ownerName || "this owner"}</strong> in
-            public records, most-likely first. Skip-traced data can include past,
-            household, and relatives' numbers — try the most recent mobile first.
+  const bal = st.balance;
+  const canReveal = st.admin || (bal != null && bal >= 1);
+
+  if (st.loading) {
+    return <div style={{marginTop: free ? 0 : 14, fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>;
+  }
+
+  // Revealed, number found: the full report.
+  if (rv && rv.found) {
+    const phones = rv.phones || [];
+    return (
+      <>
+        {free && <OwnerHeroCard name={rv.ownerName} occupied={rv.ownerOccupied === true} absentee={rv.ownerOccupied === false}/>}
+        {free && <OwnerInfoCard mailingStr={rv.mailingStr} county={rv.county}/>}
+        {free && <div style={{height:14}}/>}
+        <RevealCardShell free={free}>
+          <RevealCardHeader subtitle="Most likely numbers first" admin={st.admin} balance={bal}/>
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:11}}>
+            Numbers linked to <strong style={{color:C.text}}>{rv.ownerName || "this owner"}</strong> in
+            public records. Skip traced data can include past, household and family
+            numbers, so try the most recent mobile first.
           </div>
-          {(rv.phones || []).map(p => (
-            <div key={p.number} style={{display:"flex", alignItems:"center",
-              justifyContent:"space-between", gap:10, padding:"9px 0",
-              borderBottom:"1px solid "+C.border}}>
-              <a href={`tel:${String(p.number).replace(/[^\d+]/g, "")}`}
-                style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
-                  textDecoration:"none", fontVariantNumeric:"tabular-nums",
-                  letterSpacing:"-0.01em"}}>
-                {p.number}
-              </a>
-              <div style={{display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end"}}>
-                {isMobilePhone(p.type) && (
-                  <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.greenDark,
-                    background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-                    borderRadius:9999, padding:"2px 8px"}}>Mobile</span>
-                )}
-                {p.isConnected && (
-                  <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.greenDark,
-                    background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-                    borderRadius:9999, padding:"2px 8px"}}>Active</span>
-                )}
-                {p.lastSeen && (
-                  <span style={{fontSize:10.5, fontWeight:600, fontFamily:F, color:C.textSub,
-                    background:C.bgSubtle, border:"1px solid "+C.border,
-                    borderRadius:9999, padding:"2px 8px"}}>Seen {p.lastSeen}</span>
-                )}
+          {phones.map(p => (
+            <a key={p.number} href={`tel:${String(p.number).replace(/[^\d+]/g, "")}`}
+              style={{display:"flex", alignItems:"center", gap:13, background:C.card,
+                border:"1px solid "+C.border, borderRadius:C.r3, boxShadow:C.sh1,
+                padding:"12px 14px", marginBottom:9, textDecoration:"none"}}>
+              <div style={{width:40, height:40, borderRadius:11, flex:"0 0 auto", display:"flex",
+                alignItems:"center", justifyContent:"center", background:"#ecfdf5",
+                border:"1px solid #a7f3d0", color:C.cashPos}}>
+                <I.phone size={18} stroke={2}/>
+              </div>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:16, fontWeight:800, color:C.text, fontFamily:F,
+                  letterSpacing:"-0.01em", fontVariantNumeric:"tabular-nums"}}>{p.number}</div>
+                <div style={{display:"flex", gap:6, marginTop:5, flexWrap:"wrap"}}>
+                  {isMobilePhone(p.type) && <RevealChip tone="green">Mobile</RevealChip>}
+                  {p.isConnected && <RevealChip tone="green">Active</RevealChip>}
+                  {p.lastSeen && <RevealChip tone="gray">{`Seen ${p.lastSeen}`}</RevealChip>}
+                </div>
+              </div>
+            </a>
+          ))}
+          {(rv.emails || []).length > 0 && (
+            <div style={{display:"flex", alignItems:"center", gap:13, background:C.card,
+              border:"1px solid "+C.border, borderRadius:C.r3, boxShadow:C.sh1, padding:"12px 14px", marginTop:3}}>
+              <div style={{width:40, height:40, borderRadius:11, flex:"0 0 auto", display:"flex",
+                alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+                border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+                <I.message size={18} stroke={2}/>
+              </div>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:10.5, fontWeight:700, letterSpacing:".06em",
+                  textTransform:"uppercase", color:C.textMuted, fontFamily:F}}>Email</div>
+                <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F,
+                  marginTop:2, wordBreak:"break-all"}}>{rv.emails.join(", ")}</div>
               </div>
             </div>
-          ))}
-          {(rv.emails || []).length > 0 &&
-            <DataRow label="Email" value={rv.emails.join(", ")} />}
-          {rv.matchedName && rv.ownerName &&
-            rv.matchedName.toLowerCase() !== rv.ownerName.toLowerCase() &&
-            <DataRow label="Matched Record" value={rv.matchedName} />}
-          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
-            From public and proprietary records — check the National Do Not Call
-            Registry before cold-calling. See our Terms for outreach rules.
-            {!st.admin && st.balance != null &&
-              ` You have ${st.balance} reveal credit${st.balance === 1 ? "" : "s"} left.`}
+          )}
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:11}}>
+            From public and proprietary records. Please check the National Do Not Call
+            Registry before calling. See our Terms for outreach rules.
+            {!st.admin && bal != null && ` You have ${bal} reveal credit${bal === 1 ? "" : "s"} left.`}
           </div>
           {rv.stale && (
             <button onClick={reveal} disabled={busy}
               {...btnStyle("secondary","sm", {marginTop:12, width:"100%", justifyContent:"center"})}>
-              {busy ? "Refreshing…" : "Refresh with improved matching · free"}
+              {busy ? "Refreshing…" : "Refresh with improved matching, free"}
             </button>
           )}
-        </>
-      ) : rv && rv.found === false ? (
+        </RevealCardShell>
+      </>
+    );
+  }
+
+  // Revealed, nothing found: gentle message, no charge.
+  if (rv && rv.found === false) {
+    const msg = rv.reason === "entity"
+      ? (free ? "This property is owned by a company or trust, so there is no personal phone to reveal."
+              : `${rv.ownerName || "This owner"} is a company or trust, so there is no personal phone to reveal. The mailing address above is the outreach path.`)
+      : rv.reason === "no-phone"
+      ? (free ? "No current phone number was found for this property owner."
+              : `No current phone number was found for ${rv.ownerName || "this owner"}.`)
+      : "County records do not show a traceable owner for this address.";
+    return (
+      <RevealCardShell free={free}>
+        <RevealCardHeader subtitle="No number found" admin={st.admin} balance={bal}/>
         <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
-          background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
-          padding:"11px 13px"}}>
-          {rv.reason === "entity"
-            ? `${rv.ownerName} is a company or trust, so there's no personal phone line to reveal. The mailing address above is the outreach path.`
-            : rv.reason === "no-phone"
-            ? `No current phone number found for ${rv.ownerName || "this owner"}.`
-            : "County records don't show a traceable owner for this address."}
-          {" "}No credit was used.
+          background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r3, padding:"13px 15px"}}>
+          {msg} Your credit was not used.
         </div>
-      ) : st.balance == null ? null : confirming ? (
-        <div style={{border:"1px solid "+C.amberBorder, background:C.amberSubtle,
-          borderRadius:C.r3, padding:"14px 15px"}}>
-          <div style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F,
-            letterSpacing:"-0.01em"}}>
-            Reveal this owner's phone &amp; email?
-          </div>
-          <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5, marginTop:4}}>
-            {st.admin
-              ? "Runs a skip trace on the owner of record."
-              : "Uses 1 credit — and only if a number is found. Misses cost nothing."}
-          </div>
-          <div style={{display:"flex", gap:8, marginTop:13}}>
-            <button onClick={reveal} disabled={busy}
-              {...btnStyle("primary", "md", {flex:1, justifyContent:"center"})}>
-              {busy ? "Tracing owner…" : st.admin ? "Reveal" : "Confirm · 1 credit"}
-            </button>
-            <button onClick={() => { setConfirming(false); setErr(""); }} disabled={busy}
-              {...btnStyle("secondary", "md", {justifyContent:"center"})}>
-              Cancel
-            </button>
-          </div>
-          {err && (
-            <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:9,
-              textAlign:"center"}}>{err}</div>
-          )}
+      </RevealCardShell>
+    );
+  }
+
+  // Confirm step.
+  if (confirming) {
+    return (
+      <div style={{marginTop: free ? 0 : 14, background:C.card, border:"1px solid "+C.greenBorder,
+        borderRadius:C.r5, boxShadow:C.sh4, padding:"22px 20px", textAlign:"center"}}>
+        <div style={{width:52, height:52, borderRadius:"50%", margin:"0 auto 14px", display:"flex",
+          alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+          border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+          <I.phone size={24} stroke={2}/>
         </div>
-      ) : (
-        <>
-          <button
-            onClick={(st.admin || st.balance >= 1) ? () => { setErr(""); setConfirming(true); } : buyCredits}
-            disabled={busy}
-            {...btnStyle("primary", "md", {width:"100%", justifyContent:"center"})}>
-            {busy ? "Opening…" : st.admin
-              ? "Reveal Phone & Email"
-              : st.balance >= 1
-              ? "Reveal Phone & Email · 1 credit"
-              : "Get 8 Reveal Credits · $10"}
+        <div style={{fontSize:16.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+          Reveal this owner's phone and email?
+        </div>
+        <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:7,
+          maxWidth:300, marginLeft:"auto", marginRight:"auto"}}>
+          {st.admin ? "This runs a skip trace on the owner of record."
+            : "This uses 1 credit, and only when a number is found. Misses cost you nothing."}
+        </div>
+        <div style={{display:"flex", gap:10, marginTop:18}}>
+          <button onClick={reveal} disabled={busy}
+            {...btnStyle("primary","md", {flex:1, justifyContent:"center", whiteSpace:"nowrap"})}>
+            {busy ? "Tracing owner…" : st.admin ? "Reveal" : "Confirm Reveal"}
           </button>
-          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:7}}>
-            {st.admin
-              ? "Owner account · unmetered"
-              : st.balance >= 1
-              ? `${st.balance} credit${st.balance === 1 ? "" : "s"} left · a credit is only used when a phone is found`
-              : "$1.25 per reveal · a credit is only used when a phone is found"}
+          <button onClick={() => { setConfirming(false); setErr(""); }} disabled={busy}
+            {...btnStyle("secondary","md", {flex:"0 0 100px", justifyContent:"center"})}>
+            Cancel
+          </button>
+        </div>
+        {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:10, textAlign:"center"}}>{err}</div>}
+      </div>
+    );
+  }
+
+  // Not revealed, credits available (or admin): the reveal card.
+  if (canReveal) {
+    return (
+      <RevealCardShell free={free}>
+        <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal}/>
+        <button onClick={() => { setErr(""); setConfirming(true); }} disabled={busy}
+          {...btnStyle("primary","md", {width:"100%", justifyContent:"center", marginTop:4})}>
+          <I.phone size={17} stroke={2.2}/> Reveal Phone &amp; Email
+        </button>
+        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:10, lineHeight:1.5}}>
+          {st.admin ? "Owner account, unmetered."
+            : "Costs 1 credit, and only when a number is found. Misses cost nothing."}
+        </div>
+        {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
+      </RevealCardShell>
+    );
+  }
+
+  // Free account, no credit yet: the premium unlock teaser.
+  if (free) {
+    return (
+      <div style={{background:`linear-gradient(160deg, #fff, ${C.greenSubtle})`,
+        border:"1px solid "+C.greenBorder, borderRadius:C.r5, boxShadow:C.sh3,
+        padding:"24px 20px", textAlign:"center"}}>
+        <div style={{width:56, height:56, borderRadius:16, margin:"0 auto 14px", display:"flex",
+          alignItems:"center", justifyContent:"center",
+          background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+          boxShadow:"0 8px 18px -4px rgba(232,115,28,.5)"}}>
+          <I.lock size={24} stroke={2}/>
+        </div>
+        <div style={{fontSize:18, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+          See who owns this property
+        </div>
+        <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6, margin:"8px auto 0", maxWidth:320}}>
+          Unlock the owner's name, mailing address, phone and email for this property.
+        </div>
+        <div style={{textAlign:"left", maxWidth:280, margin:"16px auto 0", display:"grid", gap:9}}>
+          {["Owner name of record", "Mailing address and county", "Phone numbers and email"].map(t => (
+            <div key={t} style={{display:"flex", alignItems:"center", gap:10, fontSize:13,
+              color:C.text, fontWeight:600, fontFamily:F}}>
+              <span style={{width:19, height:19, borderRadius:"50%", flex:"0 0 auto", display:"inline-flex",
+                alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+                border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+                <I.check size={11} stroke={2.8}/>
+              </span>
+              {t}
+            </div>
+          ))}
+        </div>
+        <button onClick={buy} disabled={busy}
+          {...btnStyle("primary","lg", {marginTop:18, width:"100%", justifyContent:"center"})}>
+          {busy ? "Opening…" : "Unlock for $4.99"}
+        </button>
+        <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:8}}>
+          One property. You only pay when a number is found.
+        </div>
+        {onUpgrade && (
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:12}}>
+            Reveal often? <span onClick={onUpgrade} style={{color:C.greenDark, fontWeight:700, cursor:"pointer"}}>DealHive Pro</span> includes it from $1 each.
           </div>
-          {err && (
-            <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:6,
-              textAlign:"center"}}>{err}</div>
-          )}
-        </>
-      )}
-    </div>
+        )}
+        {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
+      </div>
+    );
+  }
+
+  // Pro account, out of credits: buy the 10 pack.
+  return (
+    <RevealCardShell free={free}>
+      <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal}/>
+      <button onClick={buy} disabled={busy}
+        {...btnStyle("primary","md", {width:"100%", justifyContent:"center", marginTop:4})}>
+        {busy ? "Opening…" : "Get 10 Reveal Credits for $10"}
+      </button>
+      <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:10, lineHeight:1.5}}>
+        A dollar per reveal, and a credit is only used when a number is found.
+      </div>
+      {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
+    </RevealCardShell>
   );
 }
 
 function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
-  const st  = usePropertyRecord(deal, apiLookup, rcAuth, isPro);
+  // Admin accounts are Pro-tier; the sheet's county hero comes from the record
+  // lookup for entitled members, and RevealBlock also guards via the server.
+  const entitled = isPro;
+  const st  = usePropertyRecord(deal, apiLookup, rcAuth, entitled);
   const rec = st.rec || {};
   const names = (rec.owner && Array.isArray(rec.owner.names) ? rec.owner.names : []).filter(Boolean);
   const mail  = rec.owner && rec.owner.mailingAddress;
@@ -7641,60 +7828,19 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
   return (
     <SheetShell title="Owner Lookup" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
-      {!isPro ? (
-        <div style={{textAlign:"center", padding:"10px 4px 4px"}}>
-          <div style={{width:52, height:52, borderRadius:"50%", margin:"0 auto 12px",
-            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
-            display:"flex", alignItems:"center", justifyContent:"center"}}>
-            <I.user size={22} stroke={2}/>
-          </div>
-          <div style={{fontSize:16, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
-            Who owns this property?
-          </div>
-          <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6, marginTop:6, maxWidth:340, margin:"6px auto 0"}}>
-            Pro reveals the owner's name, the mailing address where their tax bill goes,
-            and whether they're an absentee owner — straight from county records.
-          </div>
-          {onUpgrade && (
-            <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:16, justifyContent:"center", width:"100%"})}>
-              <I.star size={14}/> Unlock with Pro
-            </button>
-          )}
-        </div>
+      {!entitled ? (
+        <RevealBlock deal={deal} rcAuth={rcAuth} mode="free" onUpgrade={onUpgrade}/>
       ) : st.loading ? sheetSpinner("Pulling county records…")
         : st.err ? sheetError(st.err)
         : (
         <>
-          <div style={{
-            background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
-            border:"1px solid "+C.greenBorder, borderRadius:C.r4,
-            padding:"16px", textAlign:"center", boxShadow:C.sh1, marginBottom:14,
-          }}>
-            <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
-              letterSpacing:".07em", textTransform:"uppercase"}}>Owner of Record</div>
-            <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F,
-              letterSpacing:"-0.02em", marginTop:4, lineHeight:1.3}}>
-              {names.length ? names.join(" & ") : "Not disclosed in records"}
-            </div>
-            {(absentee || occupied) && (
-              <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:8,
-                padding:"3px 11px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
-                background: absentee ? C.amberSubtle : C.greenSubtle,
-                border: "1px solid " + (absentee ? C.amberBorder : C.greenBorder),
-                color: absentee ? C.amberDark : C.greenDark}}>
-                <span style={{width:6, height:6, borderRadius:"50%",
-                  background: absentee ? C.amber : C.green}}/>
-                {absentee ? "Absentee Owner" : "Owner Occupied"}
-              </div>
-            )}
-          </div>
-          {mailStr && <DataRow label="Mailing Address" value={mailStr} />}
-          {rec.county && <DataRow label="County" value={rec.county} />}
-          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
-            From county assessor records. Names can lag a recent sale by a few weeks.
+          <OwnerHeroCard name={names.length ? names.join(" & ") : ""} occupied={occupied} absentee={absentee}/>
+          <OwnerInfoCard mailingStr={mailStr} county={rec.county}/>
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.6, marginTop:13}}>
+            Sourced from county assessor records. Names can lag a recent sale by a few weeks.
             {absentee ? " Absentee owners are often the most open to offers." : ""}
           </div>
-          <RevealBlock deal={deal} rcAuth={rcAuth}/>
+          <RevealBlock deal={deal} rcAuth={rcAuth} mode="pro"/>
         </>
       )}
     </SheetShell>
@@ -8608,7 +8754,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
               onClick={()=>setSheet("sales")}/>
             <Row Ic={I.dollar} label="Rental Comps & Estimate"
               onClick={()=>setSheet("comps")}/>
-            <Row Ic={I.user} label="Owner Lookup" pro
+            <Row Ic={I.user} label="Owner Lookup"
               onClick={()=>setSheet("owner")}/>
             <Row Ic={I.receipt} label="Property Records"
               onClick={()=>setSheet("records")} last/>
