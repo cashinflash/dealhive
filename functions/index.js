@@ -66,6 +66,9 @@ const FSBO_MAX          = parseInt(process.env.FSBO_MAX          || "150", 10);
 // IL (convertfleet InvestorLift scraper) runs in shadow: capped small, and
 // its results are inspected in debug only until addresses verify.
 const IL_MAX            = parseInt(process.env.IL_MAX            || "25",  10);
+// Nightly budget for fresh RentCast rent lookups during feed underwriting.
+// Cached rents are free, so steady-state spend is only never-seen listings.
+const RENT_LOOKUPS_MAX  = parseInt(process.env.RENT_LOOKUPS_MAX  || "60",  10);
 // The browser actor outgrows run-sync's 300s ceiling, so it runs
 // start -> poll -> collect: a server-side kill switch (timeout= on the run
 // start) and our poll gives up at LONG_RUN_WAIT_MS, keeping the partial
@@ -599,7 +602,48 @@ async function pullFromIL(token) {
   };
 }
 
-async function runPipeline(apifyKey, _rentcastKey) {
+// Fill missing rents with real RentCast estimates before underwriting.
+// Cheapest candidates first (cash flow lives at the low end), 30-day cache
+// under /rentCache so a listing only ever costs one lookup, hard budget cap.
+async function enrichRents(deals, key) {
+  if (!key) return {error: "RENTCAST_API_KEY not set"};
+  const need = deals.filter(d => !(d.rent > 0) && d.streetAddress && d.city && d.state
+    && d.price >= 30000 && d.price <= 400000);
+  need.sort((a, b) => a.price - b.price);
+  const cacheRef = admin.database().ref("rentCache");
+  const cache = (await cacheRef.get()).val() || {};
+  const now = Date.now(), TTL = 30 * 86400000;
+  let fresh = 0, cached = 0, filled = 0;
+  for (const d of need) {
+    const k = hashId(`${d.streetAddress}|${d.city}|${d.state}`.toLowerCase());
+    const hit = cache[k];
+    if (hit && now - hit.ts < TTL) {
+      cached++;
+      if (hit.rent > 0) { d.rent = hit.rent; filled++; }
+      continue;
+    }
+    if (fresh >= RENT_LOOKUPS_MAX) continue;
+    fresh++;
+    try {
+      const q = encodeURIComponent(`${d.streetAddress}, ${d.city}, ${d.state} ${d.zip || ""}`.trim());
+      const extras = [
+        d.beds ? `&bedrooms=${d.beds}` : "",
+        d.baths ? `&bathrooms=${d.baths}` : "",
+        d.sqft ? `&squareFootage=${d.sqft}` : "",
+      ].join("");
+      const r = await fetch(`https://api.rentcast.io/v1/avm/rent/long-term?address=${q}${extras}`,
+        {headers: {"X-Api-Key": key}});
+      const j = r.ok ? await r.json() : null;
+      const rent = j && j.rent ? Math.round(j.rent) : 0;
+      await cacheRef.child(k).set({rent, ts: now});
+      cache[k] = {rent, ts: now};
+      if (rent > 0) { d.rent = rent; filled++; }
+    } catch { /* skip this listing, keep the run alive */ }
+  }
+  return {considered: need.length, fresh, cached, filled};
+}
+
+async function runPipeline(apifyKey, rentcastKey) {
   const sources = {dealhive2: 0, il: 0};
   const errors  = {dealhive2: false, il: false};
   const debug   = {};
@@ -650,8 +694,11 @@ async function runPipeline(apifyKey, _rentcastKey) {
   }
 
   // 3. Filter to residential + only deals that score on at least one strategy.
-  const scored  = raw
-    .filter(isResidential)
+  const residential = raw.filter(isResidential);
+  // Real rents before real verdicts — underwriting quality is bounded by
+  // input quality, and rent is the load-bearing input.
+  debug.rents = await enrichRents(residential, rentcastKey);
+  const scored  = residential
     .map(d => {
       const c = classifyDeal(d);
       return {...d, tags: c.tags, buyHoldScore: c.buyHoldScore, flipScore: c.flipScore,
