@@ -1194,11 +1194,20 @@ exports.revealOwner = onRequest({
 
     // Exactly one credit, atomically, only for a hit. Admin runs unmetered.
     if (!isAdmin) {
+      // RTDB runs the update fn first against the (empty) local cache — v is
+      // null on that pass in a cold function. Returning undefined there would
+      // ABORT before ever seeing the real balance (the bug that flipped a
+      // funded member to "buy credits"). Propose 0 on null so RTDB re-runs
+      // against the true server value; only a genuine <1 balance aborts.
       const tx = await balRef.transaction(v => {
-        if ((v || 0) < 1) return; // abort → not committed
+        if (v === null) return 0;
+        if (v < 1) return; // truly out of credits → abort, no charge
         return v - 1;
       });
-      if (!tx.committed) { res.status(402).json({error: "credits", balance: 0}); return; }
+      if (!tx.committed) {
+        res.status(402).json({error: "credits", balance: (await balRef.get()).val() || 0});
+        return;
+      }
       await admin.database().ref(`creditsLedger/${user.uid}`).push(
         {delta: -1, reason: "reveal", addr: k, at: Date.now()});
     }

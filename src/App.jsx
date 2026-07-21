@@ -7364,6 +7364,62 @@ function AppreciationSheet({deal, onClose, mobile}) {
 // back — misses, entity owners, and re-opens are free. Self-contained: talks
 // to revealOwner / createCheckoutSession directly with the session token.
 const isMobilePhone = t => /mobile|wireless|cell/i.test(t || "");
+// Always-visible reveal-credit balance for Settings, with an inline buy. Gives
+// members a home to see "how many do I have left" outside the Owner Lookup sheet.
+function RevealCreditsRow({authToken, isAdmin, mobile}) {
+  const [balance, setBalance] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${FN_BASE}/revealOwner`, {method: "POST",
+      headers: {Authorization: `Bearer ${authToken}`, "Content-Type": "application/json"},
+      body: JSON.stringify({balanceOnly: true})})
+      .then(r => r.json()).then(d => alive && setBalance(typeof d.balance === "number" ? d.balance : 0))
+      .catch(() => alive && setBalance(0));
+    return () => { alive = false; };
+  }, [authToken]);
+  const buy = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${FN_BASE}/createCheckoutSession`, {method: "POST",
+        headers: {Authorization: `Bearer ${authToken}`, "Content-Type": "application/json"},
+        body: JSON.stringify({plan: "credits8"})});
+      const d = await r.json().catch(() => ({}));
+      if (d.url) { window.location.assign(d.url); return; }
+      setBusy(false);
+    } catch { setBusy(false); }
+  };
+  return (
+    <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+      gap:14, flexWrap:"wrap"}}>
+      <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+        <div style={{width:40, height:40, borderRadius:C.r3, background:C.amberSubtle,
+          border:"1px solid "+C.amberBorder, color:C.amberDark, display:"flex",
+          alignItems:"center", justifyContent:"center", flexShrink:0}}>
+          <I.phone size={18} stroke={2.2}/>
+        </div>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+            letterSpacing:"-0.01em"}}>
+            {isAdmin ? "Owner reveals · unmetered"
+              : balance == null ? "Reveal credits" : `${balance} reveal credit${balance === 1 ? "" : "s"}`}
+          </div>
+          <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+            Reveal a property owner's phone &amp; email from Owner Lookup. A credit
+            is only used when a number is found.
+          </div>
+        </div>
+      </div>
+      {!isAdmin && (
+        <button onClick={buy} disabled={busy} {...btnStyle("secondary","md")}>
+          {busy ? "Opening…" : balance >= 1 ? "Add credits · $10" : "Get 8 credits · $10"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RevealBlock({deal, rcAuth}) {
   const [st, setSt]   = useState({loading: true, balance: null, revealed: null, admin: false});
   const [busy, setBusy] = useState(false);
@@ -7374,7 +7430,8 @@ function RevealBlock({deal, rcAuth}) {
       body: JSON.stringify({street: deal.streetAddress || deal.address,
         city: deal.city, state: deal.state, zip: deal.zip || "", ...body})});
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(d.error || "unavailable"), {code: d.error});
+    if (!r.ok) throw Object.assign(new Error(d.error || "unavailable"),
+      {code: d.error, balance: typeof d.balance === "number" ? d.balance : undefined});
     return d;
   };
   useEffect(() => {
@@ -7405,17 +7462,43 @@ function RevealBlock({deal, rcAuth}) {
       const d = await call({confirm: true});
       setSt({loading: false, balance: d.balance, revealed: d.revealed, admin: !!d.admin});
     } catch (e) {
-      if (e.code === "credits") setSt(x => ({...x, balance: 0}));
-      else setErr("Reveal is unavailable right now — no credit was used.");
+      // On a credits error, trust the server's reported balance (it rides the
+      // 402) rather than assuming zero — a transient failure must never make a
+      // funded member look empty. Fall back to a re-check if it's absent.
+      if (e.code === "credits") {
+        const bal = typeof e.balance === "number" ? e.balance : null;
+        if (bal != null) setSt(x => ({...x, balance: bal}));
+        else { try { const d = await call({balanceOnly: true}); setSt(x => ({...x, balance: d.balance})); } catch { /* keep prior */ } }
+        setErr("That reveal didn't go through — no credit was used.");
+      } else {
+        setErr("Reveal is unavailable right now — no credit was used.");
+      }
     }
     setBusy(false);
   };
   const rv = st.revealed;
+  // Always-visible balance pill so a member never wonders what they have left.
+  const balPill = st.admin
+    ? {txt: "Unmetered", bg: C.greenSubtle, bd: C.greenBorder, c: C.greenDark}
+    : (st.balance != null
+      ? {txt: `${st.balance} credit${st.balance === 1 ? "" : "s"}`,
+         bg: st.balance >= 1 ? C.greenSubtle : C.bgSubtle,
+         bd: st.balance >= 1 ? C.greenBorder : C.border,
+         c:  st.balance >= 1 ? C.greenDark : C.textMuted}
+      : null);
   return (
     <div style={{marginTop:14, borderTop:"1px solid "+C.border, paddingTop:14}}>
-      <div style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
-        letterSpacing:".07em", textTransform:"uppercase", marginBottom:9}}>
-        Owner Contact
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+        gap:8, marginBottom:9}}>
+        <span style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".07em", textTransform:"uppercase"}}>
+          Owner Contact
+        </span>
+        {balPill && !st.loading && (
+          <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:balPill.c,
+            background:balPill.bg, border:"1px solid "+balPill.bd, borderRadius:9999,
+            padding:"2px 9px", whiteSpace:"nowrap"}}>{balPill.txt}</span>
+        )}
       </div>
       {st.loading ? (
         <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>
@@ -7458,6 +7541,8 @@ function RevealBlock({deal, rcAuth}) {
           <div style={{fontSize:11, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
             From public and proprietary records — check the National Do Not Call
             Registry before cold-calling. See our Terms for outreach rules.
+            {!st.admin && st.balance != null &&
+              ` You have ${st.balance} reveal credit${st.balance === 1 ? "" : "s"} left.`}
           </div>
         </>
       ) : rv && rv.found === false ? (
@@ -10111,6 +10196,12 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
           </div>
         )}
       </SectionBlock>
+
+      {authToken && (tier === "pro" || isAdmin) && (
+        <SectionBlock title="Reveal Credits" color={C.amber} icon={I.phone}>
+          <RevealCreditsRow authToken={authToken} isAdmin={isAdmin} mobile={mobile}/>
+        </SectionBlock>
+      )}
 
       {isAdmin && authToken && (
         <SectionBlock title="Members & Usage (Admin)" color={C.blue} icon={I.chart}>
