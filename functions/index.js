@@ -971,14 +971,39 @@ async function endatoEnrich(apName, apPassword, {name, address1, address2}) {
   };
 }
 
-// Admin bake-off: run the live feed's FSBO sellers through Endato and report
-// the hit rate BEFORE any customer-facing reveal button gets built. Read-only
-// (writes nothing, shows nothing to members), same passcode as /pullDealsNow:
+// County-record owner name for an address via RentCast /properties — the
+// same record Owner Lookup shows members. Returns {name, ownerOccupied} or
+// null. County names sometimes arrive "LAST, FIRST M" — reorder on comma.
+async function rcOwnerName(rcKey, street, city, state, zip) {
+  const q = encodeURIComponent(`${street}, ${city}, ${state}${zip ? " " + zip : ""}`);
+  const r = await fetch(`https://api.rentcast.io/v1/properties?address=${q}`, {
+    headers: {"X-Api-Key": rcKey},
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!r.ok) return {error: `rc ${r.status}`};
+  const body = await r.json().catch(() => null);
+  const rec = Array.isArray(body) ? body[0] : body;
+  const names = (rec && rec.owner && Array.isArray(rec.owner.names) ? rec.owner.names : []).filter(Boolean);
+  if (!names.length) return null;
+  let name = String(names[0]).trim();
+  if (name.includes(",")) {
+    const [last, first] = name.split(",").map(s => s.trim());
+    if (first) name = `${first} ${last}`;
+  }
+  return {name, ownerOccupied: rec.ownerOccupied === true};
+}
+
+// Admin bake-off: trace the live feed's owners through Endato and report the
+// hit rate BEFORE any customer-facing reveal button gets built. The FSBO feed
+// ships no listing seller names, so owner names come from county records
+// (RentCast) first, exactly like the real feature would. Read-only (writes
+// nothing, shows nothing to members), same passcode as /pullDealsNow:
 //   https://us-central1-darallc.cloudfunctions.net/skipTraceTest?secret=XXXX&n=15
-// n is capped at 25 so a test run stays well inside the 100-search trial.
+// n is capped at 25 so a test run stays well inside the 100-search trial;
+// each traced deal also spends one RentCast property-record call.
 exports.skipTraceTest = onRequest({
   timeoutSeconds: 300,
-  secrets: [MANUAL_TRIGGER_SECRET, ENDATO_AP_NAME, ENDATO_AP_PASSWORD],
+  secrets: [MANUAL_TRIGGER_SECRET, ENDATO_AP_NAME, ENDATO_AP_PASSWORD, RENTCAST_API_KEY],
 }, async (req, res) => {
   const expected = MANUAL_TRIGGER_SECRET.value();
   if (!expected || req.query.secret !== expected) {
@@ -994,30 +1019,49 @@ exports.skipTraceTest = onRequest({
   }
   try {
     const n = Math.min(Math.max(parseInt(req.query.n || "10", 10) || 10, 1), 25);
+    const rcKey = RENTCAST_API_KEY.value();
     const snap = await admin.database().ref("/deals/items").get();
     const all = Object.values(snap.val() || {});
-    const entitySkipped = [];
-    const candidates = [];
-    for (const d of all) {
-      const nm = d.seller && d.seller.name;
-      if (!nm || !d.streetAddress || !d.city || !d.state) continue;
-      if (ENTITY_RX.test(nm)) { entitySkipped.push({name: nm, address: d.streetAddress}); continue; }
-      candidates.push(d);
-    }
+    const addressComplete = all.filter(d => d.streetAddress && d.city && d.state);
+    const withListingName = addressComplete.filter(d => d.seller && d.seller.name);
+    const entityOwners = [];
+    const noOwnerFound = [];
     const results = [];
-    for (const d of candidates.slice(0, n)) {
+    let rcCalls = 0;
+    for (const d of addressComplete) {
+      if (results.length >= n) break;
       const address2 = `${d.city}, ${d.state}${d.zip ? " " + d.zip : ""}`;
+      const full = `${d.streetAddress}, ${address2}`;
+
+      // Owner name: the listing's seller name when the source shipped one,
+      // else the county record — the path every deal supports.
+      let name = (d.seller && d.seller.name) || null;
+      let nameSource = name ? "listing" : "county";
+      let ownerOccupied = null;
+      if (!name) {
+        let rec = null;
+        try { rcCalls++; rec = await rcOwnerName(rcKey, d.streetAddress, d.city, d.state, d.zip); }
+        catch (e) { rec = {error: String(e.message || e).slice(0, 120)}; }
+        if (rec && rec.error) { noOwnerFound.push({address: full, why: rec.error}); continue; }
+        if (!rec || !rec.name) { noOwnerFound.push({address: full, why: "no owner on record"}); continue; }
+        name = rec.name;
+        ownerOccupied = rec.ownerOccupied;
+      }
+      if (ENTITY_RX.test(name)) { entityOwners.push({name, address: full}); continue; }
+
       let out;
       try {
         out = await endatoEnrich(apName, apPass,
-          {name: d.seller.name, address1: d.streetAddress, address2});
+          {name, address1: d.streetAddress, address2});
       } catch (e) {
         out = {status: 0, ms: 0, phones: [], emails: [],
           error: String(e.message || e).slice(0, 200)};
       }
       results.push({
-        address: `${d.streetAddress}, ${address2}`,
-        seller:  d.seller.name,
+        address: full,
+        owner:   name,
+        nameSource,
+        ...(ownerOccupied != null ? {ownerOccupied} : {}),
         hit:     out.phones.length > 0,
         phones:  out.phones,
         emails:  (out.emails || []).slice(0, 3),
@@ -1031,15 +1075,22 @@ exports.skipTraceTest = onRequest({
     const hits = results.filter(r => r.hit);
     res.json({
       provider:           "endato",
-      eligibleInFeed:     candidates.length,
-      entityOwnersInFeed: entitySkipped.length,
+      diag: {
+        dealsInFeed:          all.length,
+        addressComplete:      addressComplete.length,
+        withListingSellerName: withListingName.length,
+        countyRecordLookups:  rcCalls,
+        ownerNotFound:        noOwnerFound.length,
+        entityOwners:         entityOwners.length,
+      },
       attempted:          results.length,
       hits:               hits.length,
       hitRate:            results.length ? Math.round((hits.length / results.length) * 100) + "%" : "n/a",
       withConnectedPhone: results.filter(r => r.phones.some(p => p.isConnected)).length,
       withMobile:         results.filter(r => r.phones.some(p => /mobile|wireless|cell/i.test(p.type || ""))).length,
       results,
-      entitySkippedSample: entitySkipped.slice(0, 5),
+      entityOwnersSample: entityOwners.slice(0, 5),
+      ownerNotFoundSample: noOwnerFound.slice(0, 5),
     });
   } catch (e) {
     logger.error("skipTraceTest", {error: e.message});
