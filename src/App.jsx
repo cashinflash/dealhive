@@ -5507,23 +5507,55 @@ const classifyDeal = (deal) => {
   const brrrrOpEx    = monthlyTax + 100 + Math.round(rent * 0.92 * 0.08) + Math.round(rent * 0.10);
   const brrrrCF      = rent - brrrrOpEx - refiPmt;
 
-  // Tighter gates — no $30/mo cash-flow noise. Only "good" deals pass.
-  // BRRRR additionally requires a real rehab (that's the second R) and is an
-  // overlay tag: every brrrr deal is also in the feed via buyhold or flip.
-  const tags = [];
-  if (buyHold.finCap >= 8  && buyHold.finCF >= 200)   tags.push("buyhold");
-  if (flipROI       >= 18 && flipProfit     >= 25000) tags.push("flip");
-  if (repair >= 10000 && recoveredPct >= 70 && brrrrCF >= 100) tags.push("brrrr");
+  // Financed flip — hard money at 75% LTV, 12% interest-only for the hold,
+  // rehab in cash (the analyzer's hard-money defaults).
+  const hmInterest    = Math.round((deal.price || 0) * 0.75 * 0.12 / 12 * 6);
+  const flipInFin     = (deal.price || 0) * 0.25 + repair;
+  const flipProfitFin = flipProfit - hmInterest;
+  const flipROIFin    = flipInFin > 0 ? (flipProfitFin / flipInFin) * 100 : 0;
+  // Financed BRRRR — hard money buys it; the refinance pays that loan off.
+  const brInFin = (deal.price || 0) * 0.25 + repair + DEFAULT_CLOSING + hmInterest;
+  const backFin = refiLoan - (deal.price || 0) * 0.75;
+  const recFin  = brInFin > 0 ? Math.min(100, Math.round((backFin / brInFin) * 100)) : 0;
 
-  // Score picks the "primary" strategy when both fit.
-  const buyHoldScore = (buyHold.finCF >= 200 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
-  const flipScore    = (flipROI       >= 18 ? 30 : 0) + Math.min(flipROI, 50);
+  // Both purchase methods count: a strategy qualifies if either clears its
+  // gate, and the better-returning method is the one the card proposes.
+  const bhFin  = buyHold.finCap  >= 8 && buyHold.finCF  >= 200;
+  const bhCash = buyHold.cashCap >= 8 && buyHold.cashCF >= 200;
+  const flCash = flipROI    >= 18 && flipProfit    >= 25000;
+  const flFin  = flipROIFin >= 18 && flipProfitFin >= 25000;
+  const brCash = repair >= 10000 && recoveredPct >= 70 && brrrrCF >= 100;
+  const brFin  = repair >= 10000 && recFin       >= 70 && brrrrCF >= 100;
+
+  const tags = [], methods = {};
+  if (bhFin || bhCash) {
+    tags.push("buyhold");
+    methods.buyhold = (bhFin && bhCash)
+      ? (buyHold.finCoC >= buyHold.cashCoC ? "finance" : "cash")
+      : bhFin ? "finance" : "cash";
+  }
+  if (flCash || flFin) {
+    tags.push("flip");
+    methods.flip = (flCash && flFin) ? (flipROIFin >= flipROI ? "finance" : "cash")
+      : flFin ? "finance" : "cash";
+  }
+  if (brCash || brFin) {
+    tags.push("brrrr");
+    methods.brrrr = (brCash && brFin) ? (recFin >= recoveredPct ? "finance" : "cash")
+      : brFin ? "finance" : "cash";
+  }
+
+  const bhBestCF     = methods.buyhold === "cash" ? buyHold.cashCF : buyHold.finCF;
+  const buyHoldScore = (bhBestCF >= 200 ? 30 : 0) + Math.min(buyHold.finCap, 15) * 2;
+  const bestFlipROI  = methods.flip === "finance" ? flipROIFin : flipROI;
+  const flipScore    = (bestFlipROI >= 18 ? 30 : 0) + Math.min(bestFlipROI, 50);
 
   return {
-    tags, buyHoldScore, flipScore,
+    tags, buyHoldScore, flipScore, methods,
     buyHold,
-    flip: {arv, totalIn, profit:flipProfit, roi:flipROI},
-    brrrr: {allIn, refiLoan, capitalLeft, recoveredPct, cashFlow: brrrrCF},
+    flip: {arv, totalIn, profit:flipProfit, roi:flipROI,
+      finIn: flipInFin, finProfit: flipProfitFin, finROI: flipROIFin},
+    brrrr: {allIn, refiLoan, capitalLeft, recoveredPct, cashFlow: brrrrCF, recFin},
   };
 };
 
@@ -5803,6 +5835,8 @@ function StrategySegments({value, onChange, counts}) {
 // snapshot (displayed verbatim); feed deals fall back to the classifier.
 const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const c = classifyDeal(deal);
+  // The pipeline stamp wins; local classification covers samples and saves.
+  const methods = deal.methods || c.methods || {};
   // BRRRR is an overlay: it never drives the primary badge (that stays a
   // buyhold/flip/multi call) — it gets its own chip beside the primary.
   const coreTags = c.tags.filter(t => t !== "brrrr");
@@ -5819,13 +5853,17 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   // cash-vs-finance choice for the rental math.
   const primary = savedScenario || autoPrimary;
   const strat = STRATEGY_LABELS[primary] || STRATEGY_LABELS.buyhold;
-  const cashMode = savedFinancing === "cash" || savedFinancing === "owned";
+  const cashMode = savedFinancing
+    ? (savedFinancing === "cash" || savedFinancing === "owned")
+    : methods.buyhold === "cash";
 
   const a = savedScenario ? deal.analysis : null;
   const heroNumber =
     primary === "flip"      ? (a
       ? {label:"Est. profit", value:$(a.flipProfit), color:cfC(a.flipProfit)}
-      : {label:"Est. profit", value:$(c.flip.profit), color:cfC(c.flip.profit)})
+      : (methods.flip === "finance"
+        ? {label:"Est. profit", value:$(c.flip.finProfit), color:cfC(c.flip.finProfit)}
+        : {label:"Est. profit", value:$(c.flip.profit), color:cfC(c.flip.profit)}))
   : primary === "brrrr"     ? (a
       ? {label:"Cash Flow", value:$mo(a.brrrrCF), color:cfC(a.brrrrCF)}
       : {label:"Cash Flow", value:$mo(c.brrrr.cashFlow), color:cfC(c.brrrr.cashFlow)})
@@ -5838,7 +5876,9 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const secondaryMetrics =
     primary === "flip"      ? (a
       ? [["ARV", $(a.arv)], ["ROI", pct(a.flipROI)], ["Total Spent", $(a.oop)]]
-      : [["ARV",  $(c.flip.arv)], ["ROI",  pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]])
+      : (methods.flip === "finance"
+        ? [["ARV", $(c.flip.arv)], ["ROI", pct(c.flip.finROI)], ["Cash In", $(c.flip.finIn)]]
+        : [["ARV", $(c.flip.arv)], ["ROI", pct(c.flip.roi)], ["Total Spent", $(c.flip.totalIn)]]))
   : primary === "brrrr"     ? (a
       ? [["Cap Rate", pct(a.capRate)],
          ["Cash Out Refi", $(a.brrrrNetCash), C.cashPos],
@@ -5852,14 +5892,14 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
         ? [["Cap rate", pct(c.buyHold.cashCap)], ["CoC", pct(c.buyHold.cashCoC), null, true], ["Total Spent", $(c.buyHold.cashOOP)]]
         : [["Cap rate", pct(c.buyHold.finCap)], ["CoC", pct(c.buyHold.finCoC), null, true], ["Down", $(c.buyHold.down)]]);
 
-  return {c, isBrrrr, primary, strat, cashMode, heroNumber, secondaryMetrics};
+  return {c, isBrrrr, primary, strat, cashMode, heroNumber, secondaryMetrics, methods};
 };
 
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
                     analyzeLabel = "Analyze", hideSource = false,
                     savedScenario = null, savedFinancing = null, showAddress = false}) {
-  const {c, isBrrrr, strat: stratAuto, heroNumber, secondaryMetrics} =
+  const {c, isBrrrr, primary, strat: stratAuto, heroNumber, secondaryMetrics, methods} =
     dealHeroMetrics(deal, savedScenario, savedFinancing);
   // FSBO.com cards are the "By Owner" inventory lane: they render even when
   // the fallback math proves no strategy, chipped honestly instead of with
@@ -5912,6 +5952,15 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                 letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
               }}>
                 {savedFinancing === "owned" ? "Owned" : savedFinancing === "cash" ? "Cash" : "Finance"}
+              </span>
+            ) : !savedScenario && methods[primary] ? (
+              <span style={{
+                display:"inline-flex", alignItems:"center", gap:5,
+                background:"rgba(255,255,255,.95)", color:C.text, border:"1px solid "+C.border,
+                padding:"3px 9px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F,
+                letterSpacing:"-0.005em", boxShadow:"0 1px 2px rgba(9,9,11,.15)",
+              }}>
+                {methods[primary] === "cash" ? "Cash" : "Financed"}
               </span>
             ) : isBrrrr && (
               <span style={{
