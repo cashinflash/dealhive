@@ -1458,6 +1458,7 @@ exports.createCheckoutSession = onRequest(
           "client_reference_id": user.uid,
           "metadata[firebaseUid]": user.uid,
           "metadata[credits]": "8",
+          "allow_promotion_codes": "true",
           "success_url": `${APP_ORIGIN}/?billing=credits&session_id={CHECKOUT_SESSION_ID}`,
           "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
         });
@@ -1527,7 +1528,11 @@ async function applyCreditPurchase(session) {
   const uid = (session && (session.client_reference_id ||
     (session.metadata && session.metadata.firebaseUid))) || null;
   const credits = parseInt(session && session.metadata && session.metadata.credits, 10) || 0;
-  if (!uid || !credits || session.payment_status !== "paid") return null;
+  // A 100%-off promotion code completes with "no_payment_required" instead
+  // of "paid" — both mean the session is settled and owed its credits.
+  const settled = session && (session.payment_status === "paid" ||
+    session.payment_status === "no_payment_required");
+  if (!uid || !credits || !settled) return null;
   const marker = admin.database().ref(`creditSessions/${session.id}`);
   const tx = await marker.transaction(v => (v === null ? {uid, credits, at: Date.now()} : undefined));
   if (tx.committed) {
