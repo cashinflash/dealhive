@@ -10254,23 +10254,23 @@ function AdminUsagePanel({token}) {
         font-size:11px;font-weight:700;${t === "pro"
           ? "background:#e8f6ee;color:#1a7f4b;border:1px solid #bfe6cf"
           : "background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7"}">${esc(t)}</span>`;
-      const memberRows = members.map((x, i) => `
+      const usageByEmail = Object.fromEntries(d.rows.map(r => [r.email, r]));
+      const matched = new Set();
+      const rowHtml = (email, tier, joined, lastActive, u, i) => `
         <tr style="background:${i % 2 ? "#fafaf8" : "#fff"}">
-          <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(x.email)}</td>
-          <td style="padding:10px 16px">${tierChip(x.tier)}</td>
-          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${fmtD(x.created)}</td>
-          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${fmtD(x.lastSignIn)}</td>
-        </tr>`).join("");
-      const rowsHtml = d.rows.map((x, i) => `
-        <tr style="background:${i % 2 ? "#fafaf8" : "#fff"}">
-          <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(x.email)}</td>
-          <td style="padding:10px 16px"><span style="display:inline-block;padding:2px 10px;border-radius:999px;
-            font-size:11px;font-weight:700;${x.tier === "pro"
-              ? "background:#e8f6ee;color:#1a7f4b;border:1px solid #bfe6cf"
-              : "background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7"}">${esc(x.tier)}</span></td>
-          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">${x.lookups}</td>
-          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">$${x.estCost.toFixed(2)}</td>
-        </tr>`).join("");
+          <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(email)}</td>
+          <td style="padding:10px 16px">${tierChip(tier)}</td>
+          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${joined}</td>
+          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${lastActive}</td>
+          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">${u ? u.lookups : 0}</td>
+          <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">${u ? "$" + u.estCost.toFixed(2) : "$0.00"}</td>
+        </tr>`;
+      const memberRows = members.map((x, i) => {
+        const u = usageByEmail[x.email];
+        if (u) matched.add(x.email);
+        return rowHtml(x.email, x.tier, fmtD(x.created), fmtD(x.lastSignIn), u, i);
+      }).join("") + d.rows.filter(r => !matched.has(r.email)).map((r, i) =>
+        rowHtml(r.email, r.tier, "—", "—", r, members.length + i)).join("");
       const html = `<!doctype html><html><head><meta charset="utf-8">
         <title>DealHive — Members & Usage ${esc(d.month)}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10290,27 +10290,17 @@ function AdminUsagePanel({token}) {
               </div>`).join("")}
           </div>
           <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Members — newest first</div>
-          <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto;margin-bottom:20px">
-            <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px">
+          <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:680px">
               <thead><tr style="border-bottom:1px solid #e4e4e7">
                 <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Member</th>
                 <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Tier</th>
                 <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Joined</th>
                 <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Last active</th>
-              </tr></thead>
-              <tbody>${memberRows || `<tr><td colspan="4" style="padding:22px;text-align:center;color:#a1a1aa">No members yet.</td></tr>`}</tbody>
-            </table>
-          </div>
-          <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Lookup spend this month</div>
-          <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto">
-            <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:520px">
-              <thead><tr style="border-bottom:1px solid #e4e4e7">
-                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">User</th>
-                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Tier</th>
                 <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Lookups</th>
                 <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Est. cost</th>
               </tr></thead>
-              <tbody>${rowsHtml || `<tr><td colspan="4" style="padding:22px;text-align:center;color:#a1a1aa">No lookups yet this month.</td></tr>`}</tbody>
+              <tbody>${memberRows || `<tr><td colspan="6" style="padding:22px;text-align:center;color:#a1a1aa">No members yet.</td></tr>`}</tbody>
             </table>
           </div>
         </div></body></html>`;
