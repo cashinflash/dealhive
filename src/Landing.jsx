@@ -14,7 +14,7 @@
 // the page it's told to. Self-contained: no imports from App.jsx so the
 // marketing surface stays decoupled from the 400KB app bundle.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 // -- Brand tokens (mirrors App.jsx C palette) ---------------------------------
 const C = {
@@ -753,7 +753,7 @@ const FEATURES = [
   { icon: I.brrrr,  title: "Three strategies, one verdict",
     body: "Every property scored as a Buy & Hold, a BRRRR, and a Fix & Flip, with a clear recommendation on which exit wins and why." },
   { icon: I.search, title: "Live property data built in",
-    body: "Records on 140M+ U.S. properties: beds, baths, square footage, tax bills, home values, and rent estimates. No API keys, no tab-hopping." },
+    body: "Records on 140M+ U.S. properties: beds, baths, square footage, tax bills, home values, and rent estimates. All built in, no tab-hopping." },
   { icon: I.chart,  title: "Comps that actually match",
     body: "Rental and sale comps for any address, right inside the analyzer. See what the market really pays, not what Zillow guesses." },
   { icon: I.home,   title: "Financing modeled like real life",
@@ -994,7 +994,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Where does the property data come from?",
-    a: "Public records and live listing data covering 140M+ U.S. properties in all 50 states: beds, baths, square footage, tax bills, assessed values, home value estimates, and market rents. It's built in, so there are no API keys to manage and no tab-hopping between sites.",
+    a: "Public records and live listing data covering 140M+ U.S. properties in all 50 states: beds, baths, square footage, tax bills, assessed values, home value estimates, and market rents. Everything is built in, so there is nothing to set up and no tab-hopping between sites.",
   },
   {
     q: "Can I analyze a property I already own?",
@@ -2245,7 +2245,7 @@ function HiwRow({l, r, green, red, bold}) {
 function HowItWorksPage({ onSignUp, home = false }) {
   const steps = [
     {
-      title: "Type an address. We do the typing.",
+      title: "One address. Every detail filled in.",
       body: "Enter any U.S. address and DealHive pulls the property's details for you: price, beds, baths, square footage, year built, property taxes at your state's real rate, photos, and live value and rent estimates. Prefer typing it yourself? The calculator never needs a lookup.",
       visual: (
         <HiwMiniCard label="Property Data · Auto Filled">
@@ -2292,7 +2292,7 @@ function HowItWorksPage({ onSignUp, home = false }) {
       ),
     },
     {
-      title: "Comps and the owner, one tap deep.",
+      title: "See the comps. Find the owner.",
       body: "Browse recent sales comps and active rental comps for any address, then tap one for the full picture with a Street View photo. County records Owner Lookup shows who actually owns the property: their name, mailing address, and whether they live there.",
       visual: (
         <HiwMiniCard label="Sales Comps & ARV">
@@ -2310,7 +2310,7 @@ function HowItWorksPage({ onSignUp, home = false }) {
       ),
     },
     {
-      title: "Fresh off-market deals, every single night.",
+      title: "Fresh off-market deals, straight from owners.",
       body: "DealHive's feed restocks nightly with for sale by owner properties across the country's best cash flow metros. Full street addresses, real photos, the numbers already run, and owner contact info for Pro members. No agents, no gatekeepers.",
       visual: (
         <HiwMiniCard label="Tonight's Feed">
@@ -2391,9 +2391,20 @@ function HowItWorksPage({ onSignUp, home = false }) {
           title="Accurate property analysis in just a few clicks."
           subtitle="Five steps between a raw address and a confident decision."
         />
-        <div style={{maxWidth: 1020, margin: "0 auto", display: "flex", flexDirection: "column", gap: 84}}>
+        <div style={{maxWidth: 1020, margin: "0 auto", display: "flex", flexDirection: "column", gap: 48}}>
           {steps.map((s, i) => (
-            <div key={s.title} className={"dh-hiw-step" + (i % 2 ? " flip" : "")}>
+            <Fragment key={s.title}>
+            {i > 0 && (
+              <div aria-hidden="true" style={{display: "flex", alignItems: "center", gap: 14}}>
+                <div style={{flex: 1, height: 1,
+                  background: `linear-gradient(90deg, transparent, ${C.border})`}}/>
+                <span style={{width: 8, height: 8, borderRadius: 2, background: C.orangeBorder,
+                  transform: "rotate(45deg)", opacity: .8, flexShrink: 0}}/>
+                <div style={{flex: 1, height: 1,
+                  background: `linear-gradient(270deg, transparent, ${C.border})`}}/>
+              </div>
+            )}
+            <div className={"dh-hiw-step" + (i % 2 ? " flip" : "")}>
               <div className="dh-hiw-copy">
                 <div style={{display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 34, height: 34, borderRadius: 10, background: C.orangeSubtle,
@@ -2409,6 +2420,7 @@ function HowItWorksPage({ onSignUp, home = false }) {
               </div>
               <div>{s.visual}</div>
             </div>
+            </Fragment>
           ))}
         </div>
       </Section>
