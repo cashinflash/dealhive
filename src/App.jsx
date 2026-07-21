@@ -7955,6 +7955,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   // One provided shot — the straight-on Street View of the front — plus the
   // user's own uploads. Feed deals keep their real listing photos when the
   // source provided them.
+  // Research sheets query RentCast by address, but feed deals carry their
+  // generated title in `address` — hand the sheets the real street instead.
+  const rcDeal = deal.streetAddress ? {...deal, address: deal.streetAddress} : deal;
   const uploads  = Array.isArray(deal.userPhotos) ? deal.userPhotos : [];
   // Drag-to-reorder — slot 1 is the property's cover photo everywhere.
   // Live order rides local state during the drag; the persisted deal
@@ -8356,7 +8359,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
       </div>
 
       {sheet === "comps" && (
-        <RentCompsSheet p={deal} apiLookup={apiLookup} rcAuth={rcAuth}
+        <RentCompsSheet p={rcDeal} apiLookup={apiLookup} rcAuth={rcAuth}
           tier={isPro ? "pro" : "free"} onUpgrade={onUpgrade}
           onClose={()=>setSheet(null)} mobile={mobile} />
       )}
@@ -8364,15 +8367,15 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
         <AppreciationSheet deal={deal} onClose={()=>setSheet(null)} mobile={mobile} />
       )}
       {sheet === "owner" && (
-        <OwnerLookupSheet deal={deal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+        <OwnerLookupSheet deal={rcDeal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
           onUpgrade={onUpgrade} onClose={()=>setSheet(null)} mobile={mobile} />
       )}
       {sheet === "records" && (
-        <RecordsSheet deal={deal} apiLookup={apiLookup} rcAuth={rcAuth}
+        <RecordsSheet deal={rcDeal} apiLookup={apiLookup} rcAuth={rcAuth}
           onClose={()=>setSheet(null)} mobile={mobile} />
       )}
       {sheet === "sales" && (
-        <SalesCompsSheet deal={deal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+        <SalesCompsSheet deal={rcDeal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
           onUpgrade={onUpgrade} onClose={()=>setSheet(null)} mobile={mobile} />
       )}
       {sheet === "proj" && (
