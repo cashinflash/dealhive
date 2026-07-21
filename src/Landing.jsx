@@ -880,7 +880,7 @@ function Pricing({ onSignUp }) {
     features: [
       "Everything in Free",
       "Full off-market deal feed",
-      "Direct owner contact info",
+      "Owner Lookup on every property",
       "Unlimited saved properties",
       "Unlimited property photos",
       "250 live property lookups a month",
@@ -2311,7 +2311,7 @@ function HowItWorksPage({ onSignUp, home = false }) {
     },
     {
       title: "Fresh off-market deals, straight from owners.",
-      body: "DealHive's feed restocks nightly with for sale by owner properties across the country's best cash flow metros. Full street addresses, real photos, the numbers already run, and owner contact info for Pro members. No agents, no gatekeepers.",
+      body: "DealHive's feed restocks nightly with for sale by owner properties across the country's best cash flow metros. Full street addresses, real photos, the numbers already run, and county records Owner Lookup for Pro members. No agents, no gatekeepers.",
       visual: (
         <HiwMiniCard label="Tonight's Feed">
           {[["650 Salisbury Road, Columbus, OH", "$329,900"],

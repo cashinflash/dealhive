@@ -6401,7 +6401,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
                 background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
                 padding:"12px 14px", display:"flex", alignItems:"center", gap:10}}>
                 <I.lock size={14} stroke={2.2} style={{color:C.textMuted, flexShrink:0}}/>
-                <span>Description and seller contact unlocked with DealHive Pro.</span>
+                <span>Description and owner research unlocked with DealHive Pro.</span>
               </div>
             )}
           </div>
@@ -8466,8 +8466,8 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
             The Deal Feed is a Pro feature
           </div>
           <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, lineHeight:1.6, maxWidth:400}}>
-            Off-market, for-sale-by-owner deals land here every night — exact
-            addresses, owner contact, and the numbers already run.
+            Off-market, for-sale-by-owner deals land here every night: exact
+            addresses, owner lookup, and the numbers already run.
           </div>
           <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:2})}>
             <I.star size={14}/> Unlock the Deal Feed — from $20/mo
@@ -9751,7 +9751,7 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
                     ? (billing && billing.cancelAtPeriodEnd
                         ? `Cancels on ${periodEnd} — you keep Pro until then.`
                         : `Renews on ${periodEnd}.`)
-                    : "Full access to every deal, owner contact, and unlimited saves."}
+                    : "Full access to every deal, owner lookup, and unlimited saves."}
                 </div>
               </div>
             </div>
@@ -9779,7 +9779,7 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
               </div>
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr",
                 gap:"9px 18px", marginTop:14}}>
-                {["Full off-market deal feed", "Direct owner contact info",
+                {["Full off-market deal feed", "Owner Lookup on every property",
                   "Unlimited saves & photos", "250 data lookups a month",
                   "Projections & Owner Lookup", "Cancel anytime"].map(f => (
                   <div key={f} style={{display:"flex", alignItems:"center", gap:9,
