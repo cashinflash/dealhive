@@ -10582,10 +10582,10 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
   {id:"saved",      Icon:I.bee,            label:"Saved Deals", adminOnly:true},
-  {id:"deals",      Icon:I.star,           label:"Deals"},
+  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
-  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
+  {id:"deals",      Icon:I.star,           label:"Deals"},
   {id:"comps",      Icon:I.chart,          label:"Comps",      adminOnly:true},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
