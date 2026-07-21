@@ -8453,8 +8453,9 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
           ))}
         </div>
         <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
-          alignItems:"center", justifyContent:"center", gap:12, padding:"0 24px", textAlign:"center",
-          background:"linear-gradient(180deg, rgba(250,250,250,.35) 0%, rgba(250,250,250,.95) 80%)"}}>
+          alignItems:"center", justifyContent: mobile ? "flex-start" : "center", gap:12,
+          padding: mobile ? "96px 24px 0" : "0 24px", textAlign:"center",
+          background:"linear-gradient(180deg, rgba(250,250,250,.55) 0%, rgba(250,250,250,.95) 70%)"}}>
           <div style={{width:52, height:52, borderRadius:"50%",
             background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
             display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
@@ -9681,61 +9682,78 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px", maxWidth:680}}>
       <PageHeader title="Settings"/>
       <SectionBlock title="Account" color={C.green}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:12}}>
-          <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+        <div style={{
+          background:"linear-gradient(140deg, "+C.sidebar+" 0%, #22334a 100%)",
+          borderRadius:C.r3, padding:"18px", position:"relative", overflow:"hidden",
+          display:"flex", justifyContent:"space-between", alignItems:"center", gap:12}}>
+          <div aria-hidden="true" style={{position:"absolute", top:-46, right:-34, width:150,
+            height:150, borderRadius:"50%",
+            background:"radial-gradient(closest-side, rgba(232,115,28,.28), transparent 70%)"}}/>
+          <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0,
+            position:"relative"}}>
             <div style={{
-              width:38, height:38, borderRadius:"50%", background:C.bgSubtle,
+              width:50, height:50, borderRadius:"50%", flexShrink:0,
+              background:"linear-gradient(145deg, #F79A52, #E8731C)",
               display:"flex", alignItems:"center", justifyContent:"center",
-              color:C.textSub, fontSize:15, fontWeight:600, fontFamily:F, flexShrink:0,
+              color:"#fff", fontSize:20, fontWeight:800, fontFamily:F,
+              boxShadow:"0 6px 16px -6px rgba(232,115,28,.55)",
             }}>{(userEmail||"?")[0].toUpperCase()}</div>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
-                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{userEmail}</div>
-              <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2}}>Signed in</div>
+              <div style={{fontSize:14.5, fontWeight:700, color:"#fff", fontFamily:F,
+                letterSpacing:"-0.005em", overflow:"hidden", textOverflow:"ellipsis",
+                whiteSpace:"nowrap"}}>{userEmail}</div>
+              <span style={{display:"inline-flex", alignItems:"center", gap:5, marginTop:5,
+                background: isPro ? "rgba(232,115,28,.18)" : "rgba(255,255,255,.1)",
+                border:"1px solid "+(isPro ? "rgba(247,154,82,.5)" : "rgba(255,255,255,.2)"),
+                color: isPro ? "#F9B97E" : "rgba(255,255,255,.75)",
+                padding:"2px 10px", borderRadius:9999, fontSize:11, fontWeight:700, fontFamily:F}}>
+                <span style={{width:5, height:5, borderRadius:"50%",
+                  background: isPro ? "#F79A52" : "rgba(255,255,255,.5)"}}/>
+                {isPro ? "Pro Member" : "Free Plan"}
+              </span>
             </div>
           </div>
-          <button onClick={onSignOut} {...btnStyle("secondary","md")}>Sign out</button>
+          <button onClick={onSignOut}
+            style={{background:"rgba(255,255,255,.08)", border:"1px solid rgba(255,255,255,.22)",
+              color:"#fff", borderRadius:C.r2, padding:"8px 16px", fontSize:13, fontWeight:600,
+              fontFamily:F, cursor:"pointer", flexShrink:0, position:"relative"}}>
+            Sign out
+          </button>
         </div>
       </SectionBlock>
 
       <SectionBlock title="Subscription" color={C.green}>
-        <div style={{
-          background: isPro
-            ? `linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 70%)`
-            : C.bgSubtle,
-          border:"1px solid "+(isPro ? C.greenBorder : C.border),
-          borderRadius:C.r3, padding:"14px 16px",
-          display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap",
-        }}>
-          <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
-            <div style={{
-              width:38, height:38, borderRadius:C.r3,
-              background: isPro ? C.green : C.card, color: isPro ? "#fff" : C.textMuted,
-              border:"1px solid "+(isPro ? C.green : C.border),
-              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
-            }}>
-              <I.star size={18} stroke={2.2}/>
-            </div>
-            <div style={{minWidth:0}}>
-              <div style={{display:"flex", alignItems:"center", gap:8}}>
-                <span style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>
-                  DealHive {isPro ? "Pro" : "Free"}
-                </span>
-                {isPro && <Badge label="Active" bg={C.greenLight} c={C.greenDark} dot/>}
+        {isPro ? (
+          <div style={{
+            background:`linear-gradient(135deg, ${C.greenSubtle} 0%, ${C.card} 70%)`,
+            border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"16px 18px",
+            display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+            flexWrap:"wrap",
+          }}>
+            <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+              <div style={{
+                width:40, height:40, borderRadius:C.r3, background:C.green, color:"#fff",
+                border:"1px solid "+C.green, display:"flex", alignItems:"center",
+                justifyContent:"center", flexShrink:0, boxShadow:C.sh2,
+              }}>
+                <I.star size={18} stroke={2.2}/>
               </div>
-              <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2, lineHeight:1.5}}>
-                {isPro
-                  ? (periodEnd
-                      ? (billing && billing.cancelAtPeriodEnd
-                          ? `Cancels on ${periodEnd} — you keep Pro until then.`
-                          : `Renews on ${periodEnd} at $29.99/month.`)
-                      : "Full access to all deals, exact addresses, unlimited saves, and every photo.")
-                  : "Upgrade for the full deal feed, exact addresses, unlimited saves, and every photo. $29.99/month, cancel anytime."}
+              <div style={{minWidth:0}}>
+                <div style={{display:"flex", alignItems:"center", gap:8}}>
+                  <span style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+                    letterSpacing:"-0.01em"}}>DealHive Pro</span>
+                  <Badge label="Active" bg={C.greenLight} c={C.greenDark} dot/>
+                </div>
+                <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.5}}>
+                  {periodEnd
+                    ? (billing && billing.cancelAtPeriodEnd
+                        ? `Cancels on ${periodEnd} — you keep Pro until then.`
+                        : `Renews on ${periodEnd}.`)
+                    : "Full access to every deal, owner contact, and unlimited saves."}
+                </div>
               </div>
             </div>
-          </div>
-          {isPro ? (
-            isAdmin ? (
+            {isAdmin ? (
               <button onClick={onDowngrade} {...btnStyle("secondary","md")}>Switch to Free</button>
             ) : billing && billing.customerId ? (
               <button onClick={onDowngrade} disabled={billingBusy} {...btnStyle("secondary","md")}>
@@ -9743,13 +9761,47 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
               </button>
             ) : (
               <Badge label="Complimentary access" bg={C.greenLight} c={C.greenDark} dot/>
-            )
-          ) : (
-            <button onClick={onUpgrade} disabled={billingBusy} {...btnStyle("primary","md")}>
-              <I.star size={13}/> {billingBusy ? "Opening checkout…" : "Upgrade to Pro"}
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        ) : (
+          <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden"}}>
+            <div style={{padding:"16px 18px 14px"}}>
+              <div style={{display:"flex", alignItems:"baseline", justifyContent:"space-between",
+                gap:10, flexWrap:"wrap"}}>
+                <span style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+                  letterSpacing:"-0.01em"}}>DealHive Free</span>
+                <span style={{fontSize:12.5, color:C.textSub, fontFamily:F}}>
+                  Pro from <span style={{fontWeight:800, color:C.text}}>$20/mo</span> billed
+                  yearly · $29.99 monthly
+                </span>
+              </div>
+              <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr",
+                gap:"9px 18px", marginTop:14}}>
+                {["Full off-market deal feed", "Direct owner contact info",
+                  "Unlimited saves & photos", "250 data lookups a month",
+                  "Projections & Owner Lookup", "Cancel anytime"].map(f => (
+                  <div key={f} style={{display:"flex", alignItems:"center", gap:9,
+                    fontSize:13, color:C.textSub, fontFamily:F}}>
+                    <span style={{width:18, height:18, borderRadius:"50%", flexShrink:0,
+                      background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+                      color:C.greenDark, display:"inline-flex", alignItems:"center",
+                      justifyContent:"center"}}>
+                      <I.check size={10} stroke={2.8}/>
+                    </span>
+                    {f}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{padding:"12px 18px", background:C.bgSubtle,
+              borderTop:"1px solid "+C.border}}>
+              <button onClick={onUpgrade} disabled={billingBusy}
+                {...btnStyle("primary","lg", {width:"100%", justifyContent:"center"})}>
+                <I.star size={14}/> {billingBusy ? "Opening checkout…" : "Upgrade to Pro"}
+              </button>
+            </div>
+          </div>
+        )}
       </SectionBlock>
 
       {isAdmin && authToken && (
@@ -10580,7 +10632,6 @@ export default function App() {
         } catch { /* next sign-in retries */ }
       })();
     }
-    if (!silent) { setToast("Welcome to DealHive! 🐝"); setTimeout(()=>setToast(""), 3000); }
   };
 
   const handleSignOut = () => {
