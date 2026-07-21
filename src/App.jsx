@@ -71,7 +71,7 @@ const CACHE_MAX     = 50;             // most recent entries kept; older ones pr
 const monthKey      = () => new Date().toISOString().slice(0, 7);   // "2026-05"
 const lookupKey     = (...parts) =>
   parts.map(p => String(p == null ? "" : p).toLowerCase().replace(/\s+/g, " ").trim()).join("|");
-const LOOKUP_CAP_MSG = `You've used all ${LOOKUP_CAP} property lookups for this month. They reset on the 1st — re-opening addresses you've already looked up is always free.`;
+const LOOKUP_CAP_MSG = `You've used all ${LOOKUP_CAP} property lookups for this month. They reset on the 1st, and re-opening an address you already looked up is always free.`;
 
 // -- Firebase Auth -------------------------------------------------------------
 const fbSignUp = async (email, password) => {
@@ -6404,7 +6404,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
           <h2 style={{margin:0, fontSize: mobile?17:19, fontWeight:700, color:C.text, fontFamily:F,
             letterSpacing:"-0.01em", lineHeight:1.3}}>
             {isPro
-              ? (deal.address || `Off-market deal in ${deal.city}`)
+              ? (deal.streetAddress || deal.address || `Off-market deal in ${deal.city}`)
               : `Off-market deal in ${deal.city}, ${deal.state}`}
           </h2>
           <div style={{display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap"}}>
@@ -7253,7 +7253,7 @@ function usePropertyRecord(deal, apiLookup, rcAuth, enabled = true) {
         const data = await apiLookup(key, () => rentcastFetch(deal.address, deal.city, deal.state, deal.zip, rcAuth));
         if (!alive) return;
         const rec = (data && data.property) || null;
-        setSt({loading:false, err: rec ? null : "No county records found for this address yet.", rec});
+        setSt({loading:false, err: rec ? null : "County records aren't available for this address.", rec});
       } catch (e) {
         if (!alive) return;
         setSt({loading:false, err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Lookup failed. Try again in a moment.", rec:null});
@@ -8598,7 +8598,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
             {finLabel && pill(finLabel, "#fff", C.text, C.border, null)}
           </div>
           <div style={{fontSize:20, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em", lineHeight:1.25}}>
-            {deal.address}
+            {deal.streetAddress || deal.address}
           </div>
           {(deal.city || deal.state) && (
             <div style={{fontSize:14, color:C.textSub, fontFamily:F, fontWeight:600, marginTop:2}}>
@@ -9305,6 +9305,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // becomes null and we'd lose the signal otherwise.
   const [fromDeals]     = useState(() => !!initial);
   const [basicsLoading, setBasicsLoading] = useState(false);
+  const [capMsg, setCapMsg] = useState("");
 
   // Auto-fill beds/baths/sqft/year/type from property records (light endpoint,
   // cached, not counted against the monthly cap — the full "Pull property
@@ -9318,13 +9319,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     const key = lookupKey("rc-detail", loc.address, loc.city, loc.state, loc.zip);
     if (pulledKeyRef.current === key) return;
     pulledKeyRef.current = key;
-    setBasicsLoading(true); setErr("");
+    setBasicsLoading(true); setErr(""); setCapMsg("");
+    // A new address clears the previous property's record-derived specs first,
+    // so a blocked (capped) lookup can never leave stale numbers on screen that
+    // look like a fresh pull we paid for.
+    setD(prev => ({...prev, beds:0, baths:0, sqft:0, yearBuilt:0, lotSize:0}));
     (async () => {
       try {
         const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth));
         if (rcHasData(data)) setD(prev => applyRentcast(prev, data, renoRates));
       } catch (e) {
-        setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "");
+        if (e && e.code === "CAP") setCapMsg(e.capMsg || LOOKUP_CAP_MSG);
+        else setErr("");
       }
       setBasicsLoading(false);
     })();
@@ -9684,6 +9690,35 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           </div>
         )}
       </SectionBlock>
+
+      {/* Free lookup limit reached — the auto-pull is blocked, but manual entry
+          below still works. Shown as a branded card, never an error line. */}
+      {capMsg && (
+        <div style={{display:"flex", gap:14, alignItems:"flex-start",
+          background:`linear-gradient(160deg, #fff, ${C.greenSubtle})`,
+          border:"1px solid "+C.greenBorder, borderRadius:C.r4, boxShadow:C.sh2,
+          padding:"16px 18px", marginBottom:18}}>
+          <div style={{width:40, height:40, borderRadius:12, flex:"0 0 auto", display:"flex",
+            alignItems:"center", justifyContent:"center",
+            background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+            boxShadow:"0 6px 14px -4px rgba(232,115,28,.5)"}}>
+            <I.lock size={18} stroke={2.2}/>
+          </div>
+          <div style={{minWidth:0, flex:1}}>
+            <div style={{fontSize:14.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+              Monthly lookup limit reached
+            </div>
+            <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:4}}>
+              {capMsg} You can still enter the details below by hand and analyze this deal for free.
+            </div>
+            {onUpgrade && (
+              <button onClick={onUpgrade} {...btnStyle("primary","sm", {marginTop:12})}>
+                <I.star size={13}/> Upgrade to Pro
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Property basics — auto-filled from records when an address is chosen */}
       {basicsLoading && !(d.beds || d.baths || d.sqft || d.yearBuilt) && (
@@ -11328,8 +11363,8 @@ export default function App() {
           : kind === "rent" ? "rental-comp lookups" : "property lookups";
         const e = new Error("FREE_LIMIT");
         e.code = "CAP";
-        e.capMsg = `You've used your ${FREE_LIMITS[kind]} free ${noun} this month. ` +
-          `Pro includes ${LOOKUP_CAP} lookups a month — or yours reset on the 1st.`;
+        e.capMsg = `You've used all ${FREE_LIMITS[kind]} of your free ${noun} this month. ` +
+          `Upgrade to Pro for ${LOOKUP_CAP} a month, or your free lookups reset on the 1st.`;
         throw e;
       }
     }
