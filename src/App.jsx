@@ -5464,10 +5464,15 @@ const classifyDeal = (deal) => {
   const repair     = deal.repair && deal.repair > 0 ? deal.repair : Math.round(arv * 0.15);
   // State-specific tax — was hardcoded to Ohio's 2.33% on every deal.
   const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
-  const monthlyTax = Math.round((deal.price * taxRate) / 12);
+  const ask        = deal.price || 0;
+
+  // The property's numbers stay fixed; the price is what an underwriter
+  // solves for. `at(price)` runs the full matrix at any candidate price.
+  const at = (price) => {
+  const monthlyTax = Math.round((price * taxRate) / 12);
 
   const buyHoldInputs = {
-    purchasePrice: deal.price || 0,
+    purchasePrice: price,
     repairCosts:   repair,
     rentAmount:    rent,
     expPropTax:    monthlyTax,
@@ -5485,7 +5490,7 @@ const classifyDeal = (deal) => {
   const buyHold = calc(buyHoldInputs);
 
   // Fix-and-flip — ARV − total in − 8% selling − 6 months holding (taxes + ins).
-  const totalIn      = (deal.price || 0) + repair;
+  const totalIn      = price + repair;
   const agentFee     = arv * 0.06;
   const sellClosing  = arv * 0.02;
   const holdingCost  = 6 * (monthlyTax + 500);
@@ -5496,7 +5501,7 @@ const classifyDeal = (deal) => {
   // once stabilized, keep it as a rental on the refi loan. The play works
   // when the refi returns most of your capital AND the property still cash
   // flows against the new payment.
-  const allIn        = (deal.price || 0) + repair + DEFAULT_CLOSING;
+  const allIn        = price + repair + DEFAULT_CLOSING;
   const refiLoan     = Math.round(arv * 0.75);
   const capitalLeft  = Math.max(0, allIn - refiLoan);
   const recoveredPct = allIn > 0 ? Math.min(100, Math.round((refiLoan / allIn) * 100)) : 0;
@@ -5509,13 +5514,13 @@ const classifyDeal = (deal) => {
 
   // Financed flip — hard money at 75% LTV, 12% interest-only for the hold,
   // rehab in cash (the analyzer's hard-money defaults).
-  const hmInterest    = Math.round((deal.price || 0) * 0.75 * 0.12 / 12 * 6);
-  const flipInFin     = (deal.price || 0) * 0.25 + repair;
+  const hmInterest    = Math.round(price * 0.75 * 0.12 / 12 * 6);
+  const flipInFin     = price * 0.25 + repair;
   const flipProfitFin = flipProfit - hmInterest;
   const flipROIFin    = flipInFin > 0 ? (flipProfitFin / flipInFin) * 100 : 0;
   // Financed BRRRR — hard money buys it; the refinance pays that loan off.
-  const brInFin = (deal.price || 0) * 0.25 + repair + DEFAULT_CLOSING + hmInterest;
-  const backFin = refiLoan - (deal.price || 0) * 0.75;
+  const brInFin = price * 0.25 + repair + DEFAULT_CLOSING + hmInterest;
+  const backFin = refiLoan - price * 0.75;
   const recFin  = brInFin > 0 ? Math.min(100, Math.round((backFin / brInFin) * 100)) : 0;
 
   // Both purchase methods count: a strategy qualifies if either clears its
@@ -5557,6 +5562,31 @@ const classifyDeal = (deal) => {
       finIn: flipInFin, finProfit: flipProfitFin, finROI: flipROIFin},
     brrrr: {allIn, refiLoan, capitalLeft, recoveredPct, cashFlow: brrrrCF, recFin},
   };
+  };
+
+  // The pipeline's stamped target offer wins; otherwise underwrite at the
+  // ask, and when nothing passes, solve for the highest price that does,
+  // down to 80% of asking.
+  if (deal.offerPrice > 0 && deal.offerPrice < ask) {
+    const stamped = at(deal.offerPrice);
+    if (stamped.tags.length) return {...stamped, offerPrice: deal.offerPrice};
+  }
+  let offerPrice = ask;
+  let res = at(ask);
+  if (!res.tags.length && ask > 0) {
+    const floor = Math.round(ask * 0.80);
+    if (at(floor).tags.length) {
+      let lo = floor, hi = ask;
+      for (let i = 0; i < 12; i++) {
+        const mid = Math.round((lo + hi) / 2);
+        if (at(mid).tags.length) lo = mid; else hi = mid;
+      }
+      offerPrice = Math.floor(lo / 500) * 500;
+      res = at(offerPrice);
+      if (!res.tags.length) { offerPrice = lo; res = at(lo); }
+    }
+  }
+  return {...res, offerPrice};
 };
 
 // Inverse-ish of dealToProForma: shape an analyzer pro forma like a feed deal
@@ -6091,6 +6121,25 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
             </div>
           ))}
         </div>
+
+        {(() => {
+          const op = deal.offerPrice || c.offerPrice || 0;
+          return op > 0 && deal.price > 0 && op < deal.price ? (
+            <div style={{marginTop:10, background:C.amberSubtle, border:"1px solid "+C.amberBorder,
+              borderRadius:C.r2, padding:"8px 12px", display:"flex", justifyContent:"space-between",
+              alignItems:"center", gap:8, fontFamily:F}}>
+              <span style={{fontSize:11.5, fontWeight:800, color:C.amberDark,
+                letterSpacing:".04em", textTransform:"uppercase"}}>Target Offer</span>
+              <span style={{fontSize:13.5, fontWeight:800, color:C.text,
+                fontVariantNumeric:"tabular-nums"}}>
+                {$(op)}
+                <span style={{color:C.textSub, fontWeight:600, fontSize:11.5}}>
+                  {" "}· {Math.round((1 - op / deal.price) * 100)}% under ask
+                </span>
+              </span>
+            </div>
+          ) : null;
+        })()}
 
         {/* Actions — stopPropagation so the card-level onClick doesn't fire */}
         <div style={{display:"flex", gap:8, marginTop:"auto"}}

@@ -69,6 +69,9 @@ const IL_MAX            = parseInt(process.env.IL_MAX            || "25",  10);
 // Nightly budget for fresh RentCast rent lookups during feed underwriting.
 // Cached rents are free, so steady-state spend is only never-seen listings.
 const RENT_LOOKUPS_MAX  = parseInt(process.env.RENT_LOOKUPS_MAX  || "60",  10);
+// Deals that fail at asking get re-underwritten at lower prices down to
+// this floor; the highest passing price ships as the Target Offer.
+const OFFER_FLOOR_PCT   = parseInt(process.env.OFFER_FLOOR_PCT   || "80",  10);
 // The browser actor outgrows run-sync's 300s ceiling, so it runs
 // start -> poll -> collect: a server-side kill switch (timeout= on the run
 // start) and our poll gives up at LONG_RUN_WAIT_MS, keeping the partial
@@ -419,10 +422,14 @@ function classifyDeal(deal) {
   const taxRate    = STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE;
   const monthlyTax = Math.round((deal.price * taxRate) / 12);
 
-  // Operating pro forma shared by every method: 8% vacancy, 8% management of
-  // collected rent, 5% maintenance + 5% capex of gross, taxes + $100 ins.
-  const price      = deal.price || 0;
-  const closing    = 10895; // DEFAULT_CLOSING parity with the analyzer
+  // The property's attributes are fixed; the PRICE is the variable a real
+  // underwriter solves for. `at(price)` runs the full 2x3 matrix at any
+  // candidate price (taxes re-based on it; rent, ARV, and rehab are the
+  // property's own numbers and stay anchored).
+  const ask     = deal.price || 0;
+  const closing = 10895; // DEFAULT_CLOSING parity with the analyzer
+  const at = (price) => {
+  const monthlyTax = Math.round((price * taxRate) / 12);
   const collected  = rent * 0.92;
   const exp        = monthlyTax + 100 + Math.round(collected * 0.08) + Math.round(rent * 0.10);
   const noiMo      = collected - exp;
@@ -492,6 +499,25 @@ function classifyDeal(deal) {
   const bestFlipROI  = methods.flip === "finance" ? flipROIFin : flipROI;
   const flipScore    = (bestFlipROI >= 18 ? 30 : 0) + Math.min(bestFlipROI, 50);
   return {tags, buyHoldScore, flipScore, finCF, methods};
+  };
+
+  // Ask first; if nothing passes, solve for the highest price that works.
+  let offerPrice = ask;
+  let res = at(ask);
+  if (!res.tags.length && ask > 0) {
+    const floor = Math.round(ask * OFFER_FLOOR_PCT / 100);
+    if (at(floor).tags.length) {
+      let lo = floor, hi = ask;
+      for (let i = 0; i < 12; i++) {
+        const mid = Math.round((lo + hi) / 2);
+        if (at(mid).tags.length) lo = mid; else hi = mid;
+      }
+      offerPrice = Math.floor(lo / 500) * 500;
+      res = at(offerPrice);
+      if (!res.tags.length) { offerPrice = lo; res = at(lo); }
+    }
+  }
+  return {...res, offerPrice};
 }
 
 function monthlyPI(principal, rate) {
@@ -702,7 +728,7 @@ async function runPipeline(apifyKey, rentcastKey) {
     .map(d => {
       const c = classifyDeal(d);
       return {...d, tags: c.tags, buyHoldScore: c.buyHoldScore, flipScore: c.flipScore,
-        cfEst: Math.round(c.finCF), methods: c.methods};
+        cfEst: Math.round(c.finCF), methods: c.methods, offerPrice: c.offerPrice};
     })
     // Underwriting is the door: a deal ships only if at least one of the
     // six purchase-method x exit-strategy paths clears its gate. Anything
