@@ -4610,24 +4610,30 @@ function PropertySection({property, onUpdateProjects, mobile, filterMode, search
         ? {bg: C.greenSubtle,  border: C.greenBorder,  color: C.greenDark,  dot: C.green,  label: "All clear"}
         : {bg: C.bgSubtle,     border: C.border,       color: C.textSub,    dot: C.borderHover, label: `${status.openCount} open`};
 
+  const accent = status.kind === "overdue" ? C.red : status.kind === "due-soon" ? C.amber : null;
   return (
     <Card id={"prop-"+property.id} className="dh-prop-card"
-      style={{marginBottom:14}} padding={0}>
+      style={{marginBottom:14, ...(accent ? {borderLeft:`3px solid ${accent}`} : {})}} padding={0}>
       {!hideHeader && (
-        <header style={{padding:mobile?"14px 16px":"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
+        <header style={{padding:mobile?"13px 15px":"15px 18px", display:"flex", alignItems:"center", gap:13, borderBottom:projects.length||filterMode!=="open"?"1px solid "+C.border:"none"}}>
+          <div style={{width:40, height:40, borderRadius:11, flexShrink:0, display:"flex",
+            alignItems:"center", justifyContent:"center", color:"#fff", boxShadow:C.sh1,
+            background:`linear-gradient(150deg, #2b3a4d, ${C.sidebar})`}}>
+            <I.building size={19} stroke={2}/>
+          </div>
           <div style={{minWidth:0, flex:1}}>
-            <h3 style={{margin:0, fontSize:mobile?15:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
+            <h3 style={{margin:0, fontSize:mobile?15:16.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.015em",
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{property.address}</h3>
-            <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2,
+            <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F, marginTop:1,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-              {property.city}{property.state?`, ${property.state}`:""}
+              {property.city}{property.state?`, ${property.state}`:""}{property.zip?` ${property.zip}`:""}
             </div>
           </div>
           <span style={{
             display:"inline-flex", alignItems:"center", gap:6, flexShrink:0,
-            padding:"4px 9px", borderRadius:9999, fontFamily:F,
+            padding:"5px 11px", borderRadius:9999, fontFamily:F,
             background:pill.bg, border:"1px solid "+pill.border, color:pill.color,
-            fontSize:11, fontWeight:600, letterSpacing:"-0.005em",
+            fontSize:11, fontWeight:800, letterSpacing:"-0.005em",
           }}>
             <span className={status.kind === "overdue" ? "dh-pulse" : undefined}
               style={{width:6, height:6, borderRadius:"50%", background:pill.dot, flexShrink:0}}/>
@@ -4850,8 +4856,8 @@ function ProjectsCalendar({allOpen, mobile, selectedDate, onSelectDate}) {
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, gap:8}}>
         <div style={{display:"flex", alignItems:"center", gap:2}}>
           {navBtn(<I.chevronLeft size={16}/>, prevMonth, "Previous month")}
-          <span style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
-            padding:"0 8px", letterSpacing:"-0.01em", minWidth: mobile?130:150, textAlign:"center"}}>
+          <span style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+            padding:"0 8px", letterSpacing:"-0.015em", minWidth: mobile?130:150, textAlign:"center"}}>
             {monthLabel}
           </span>
           {navBtn(<I.chevronRight size={16}/>, nextMonth, "Next month")}
@@ -4901,8 +4907,8 @@ function ProjectsCalendar({allOpen, mobile, selectedDate, onSelectDate}) {
               className="dh-cal-day"
               style={{
                 aspectRatio:"1 / 1", padding:0, border:"none", cursor:"pointer",
-                borderRadius:C.r2,
-                background: isSelected ? C.green
+                borderRadius:10,
+                background: isSelected ? `linear-gradient(150deg, ${C.green}, ${C.greenMid})`
                           : isToday    ? C.greenSubtle
                           : "transparent",
                 color:      isSelected ? "#fff"
@@ -4912,10 +4918,10 @@ function ProjectsCalendar({allOpen, mobile, selectedDate, onSelectDate}) {
                 display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:1,
                 transition:"background .12s, color .12s",
                 fontFamily:F, fontSize: mobile ? 13 : 14,
-                fontWeight: isToday || isSelected ? 700 : 500,
+                fontWeight: isToday || isSelected ? 800 : 500,
                 fontVariantNumeric:"tabular-nums",
-                outline: isToday && !isSelected ? `1px solid ${C.greenBorder}` : "none",
-                outlineOffset: -1,
+                boxShadow: isSelected ? "0 6px 12px -4px rgba(232,115,28,.5)"
+                         : isToday ? `inset 0 0 0 1px ${C.greenBorder}` : "none",
               }}>
               <span style={{lineHeight:1}}>{cell.day}</span>
               {hasItems && (
@@ -4938,6 +4944,17 @@ function ProjectsCalendar({allOpen, mobile, selectedDate, onSelectDate}) {
           );
         })}
       </div>
+      {Object.keys(itemsByDay).length > 0 && (
+        <div style={{display:"flex", gap:16, justifyContent:"center", marginTop:12,
+          paddingTop:11, borderTop:"1px solid "+C.border}}>
+          <span style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.textSub, fontFamily:F, fontWeight:600}}>
+            <span style={{width:5, height:5, borderRadius:"50%", background:C.red}}/>Overdue
+          </span>
+          <span style={{display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.textSub, fontFamily:F, fontWeight:600}}>
+            <span style={{width:5, height:5, borderRadius:"50%", background:C.green}}/>Upcoming
+          </span>
+        </div>
+      )}
     </Card>
   );
 }
@@ -4992,6 +5009,10 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
   const dueNowTotal = overdue.length + todayItems.length + thisWeek.length;
 
   const openTotal = allOpen.length;
+  const dueThisWeekCount = todayItems.length + thisWeek.length;
+  const openBudget = allOpen.reduce((s, {pr}) => s + (pr.budget || 0), 0);
+  const propsWithOpen = new Set(allOpen.map(({property}) => property.id)).size;
+  const fmtK = n => n >= 10000 ? "$" + (n/1000).toFixed(1).replace(/\.0$/, "") + "k" : "$" + Math.round(n).toLocaleString();
 
   const pageBg = "#FAFAF7";
 
@@ -5070,41 +5091,46 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
       paddingLeft:   `calc(${mobile?24:32}px + env(safe-area-inset-left, 0px))`,
       paddingRight:  `calc(${mobile?24:32}px + env(safe-area-inset-right, 0px))`,
     }}>
-      {/* Header with inline stats */}
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-        gap:16, flexWrap:"wrap", marginBottom:20}}>
-        <div style={{minWidth:0}}>
-          <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-            Projects
-          </h1>
-          <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
-            {openTotal === 0
-              ? "All clear across the portfolio."
-              : `Track every follow-up across ${properties.length} ${properties.length===1?"property":"properties"}.`}
-          </p>
-        </div>
-        {openTotal > 0 && (
-          <div style={{display:"flex", gap:0, alignItems:"stretch",
-            background:C.card, border:"1px solid "+C.border, borderRadius:C.r3, padding:2,
-            boxShadow:C.sh1}}>
-            <div style={{padding:"6px 12px", display:"flex", alignItems:"center", gap:6, fontFamily:F}}>
-              <span style={{fontSize:11, color:C.textMuted, fontWeight:600,
-                letterSpacing:".04em", textTransform:"uppercase"}}>Open</span>
-              <span style={{fontSize:14, fontWeight:700, color:C.text, fontVariantNumeric:"tabular-nums"}}>{openTotal}</span>
+      {/* Header */}
+      <div style={{marginBottom:18}}>
+        <h1 style={{margin:0, fontSize: mobile?22:27, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.025em"}}>
+          Projects
+        </h1>
+        <p style={{margin:"4px 0 0", fontSize:14, color:C.textSub, fontFamily:F}}>
+          {openTotal === 0
+            ? "All clear across the portfolio."
+            : `Every follow-up across your ${properties.length} ${properties.length===1?"property":"properties"}, in one place.`}
+        </p>
+      </div>
+
+      {/* Stat strip */}
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)",
+        gap:12, marginBottom:20}}>
+        {[
+          {k:"Open", v:String(openTotal), cap:`across ${propsWithOpen} ${propsWithOpen===1?"property":"properties"}`,
+            Ic:I.clipboardCheck, ibg:"#eef1f4", ibd:"#dbe0e6", ic:C.sidebar, vc:C.text},
+          {k:"Overdue", v:String(overdue.length), cap: overdue.length ? "need attention now" : "nothing overdue",
+            Ic:I.alert, ibg:C.redSubtle, ibd:C.redBorder, ic:C.redDark, vc: overdue.length ? C.redDark : C.text},
+          {k:"Due this week", v:String(dueThisWeekCount), cap:"next 7 days",
+            Ic:I.calendar, ibg:C.amberSubtle, ibd:C.amberBorder, ic:C.amberDark, vc: dueThisWeekCount ? C.amberDark : C.text},
+          {k:"Open budget", v:fmtK(openBudget), cap:"committed, not yet spent",
+            Ic:I.dollar, ibg:C.greenSubtle, ibd:C.greenBorder, ic:C.greenDark, vc:C.text},
+        ].map(s => (
+          <div key={s.k} style={{background:C.card, border:"1px solid "+C.border, borderRadius:14,
+            padding: mobile ? "13px 14px" : "15px 17px", boxShadow:C.sh2}}>
+            <div style={{display:"flex", alignItems:"center", gap:7, fontSize:11, fontWeight:800,
+              letterSpacing:".05em", textTransform:"uppercase", color:C.textMuted, fontFamily:F}}>
+              <span style={{width:26, height:26, borderRadius:8, flexShrink:0, display:"flex",
+                alignItems:"center", justifyContent:"center", background:s.ibg, border:"1px solid "+s.ibd, color:s.ic}}>
+                <s.Ic size={15} stroke={2}/>
+              </span>
+              <span style={{minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{s.k}</span>
             </div>
-            {overdueCount > 0 && (
-              <>
-                <span style={{width:1, background:C.border, margin:"4px 0"}}/>
-                <div style={{padding:"6px 12px", display:"flex", alignItems:"center", gap:6, fontFamily:F}}>
-                  <span style={{width:6, height:6, borderRadius:"50%", background:C.red, flexShrink:0}}/>
-                  <span style={{fontSize:11, color:C.redDark, fontWeight:600,
-                    letterSpacing:".04em", textTransform:"uppercase"}}>Overdue</span>
-                  <span style={{fontSize:14, fontWeight:700, color:C.redDark, fontVariantNumeric:"tabular-nums"}}>{overdueCount}</span>
-                </div>
-              </>
-            )}
+            <div style={{fontSize: mobile?23:27, fontWeight:800, letterSpacing:"-0.03em", marginTop:8,
+              color:s.vc, fontFamily:F, fontVariantNumeric:"tabular-nums", lineHeight:1}}>{s.v}</div>
+            <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:4}}>{s.cap}</div>
           </div>
-        )}
+        ))}
       </div>
 
       {/* Calendar — always visible at the top */}
@@ -11559,12 +11585,10 @@ export default function App() {
     }
     return urls;
   };
-  // The actual save handler the Deals page calls — admin gets portfolio,
-  // everyone else picks a scenario + financing in the save sheet first.
-  const saveDealFromMarket = deal => {
-    if (isAdmin) saveDealToPortfolio(deal);
-    else         setSavePicker({deal, suggested: null});
-  };
+  // The actual save handler the Deals page calls. Everyone — admin included —
+  // gets the scenario + financing suggestion sheet first, exactly like a paid
+  // account. Admin can still move any saved deal into the portfolio afterward.
+  const saveDealFromMarket = deal => setSavePicker({deal, suggested: null});
   // Admin/dev path: flips the tier flag directly (no Stripe). Member tier is
   // set server-side by the Stripe webhook and folded in at sign-in.
   const setTier = (tier) => {
@@ -11599,7 +11623,9 @@ export default function App() {
     // Auth for property-data calls: personal key when present (legacy),
     // else the session token for the server proxy — every signed-in user.
     rcAuth: {key: data.rentcastKey || "", token: user.idToken},
-    tier: data.tier || "free",
+    // The admin account always gets the full Pro experience in the calculator
+    // and everywhere else — never a free-gated view, regardless of billing tier.
+    tier: isAdmin ? "pro" : (data.tier || "free"),
   };
 
   const dealAnalyzerProps = {
