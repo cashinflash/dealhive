@@ -9904,7 +9904,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 // Deals, Analyzer, Comps, and a Saved Deals dashboard.
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
-  {id:"portfolio",  Icon:I.parcel,         label:"Portfolio",  adminOnly:true},
+  {id:"saved",      Icon:I.bee,            label:"Saved Deals", adminOnly:true},
   {id:"deals",      Icon:I.star,           label:"Deals"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
@@ -9988,11 +9988,13 @@ function MobileNav({page, setPage, alertCount, isAdmin}) {
     {id:"deal",       Icon:I.search,         label:"Analyze"},
     {id:"properties", Icon:I.building,       label:"Props",   adminOnly:true},
     {id:"projects",   Icon:I.clipboardCheck, label:"Tasks",   adminOnly:true},
-    {id:"deals",      Icon:I.star,           label:"Deals"},
-    {id:"comps",      Icon:I.chart,          label:"Comps",   adminOnly:true},
+    // Admins reach Deals and Comps from the header hamburger instead — the
+    // bottom bar stays five tabs. Members keep Deals right here.
+    {id:"deals",      Icon:I.star,           label:"Deals",   menu:true},
+    {id:"comps",      Icon:I.chart,          label:"Comps",   adminOnly:true, menu:true},
     {id:"settings",   Icon:I.settings,       label:"More"},
   ];
-  const tabs = allTabs.filter(t => isAdmin || !t.adminOnly);
+  const tabs = allTabs.filter(t => (isAdmin || !t.adminOnly) && !(isAdmin && t.menu));
   return (
     <div style={{position:"fixed", bottom:0, left:0, right:0, background:"rgba(255,255,255,.92)",
       borderTop:"1px solid "+C.border, zIndex:100,
@@ -10029,10 +10031,12 @@ function MobileNav({page, setPage, alertCount, isAdmin}) {
 }
 
 // -- Mobile Header -------------------------------------------------------------
-function MobileHeader({page, onBack, toast, onAddProperty}) {
+function MobileHeader({page, onBack, toast, onAddProperty, isAdmin=false, onMenuNav}) {
   const showBack = page==="property";
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { setMenuOpen(false); }, [page]);
   const titles = {
-    dashboard:"Dashboard", portfolio:"Portfolio", properties:"Properties", projects:"Projects",
+    dashboard:"Dashboard", saved:"Saved Deals", properties:"Properties", projects:"Projects",
     deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:"Property"
   };
@@ -10070,6 +10074,35 @@ function MobileHeader({page, onBack, toast, onAddProperty}) {
               <I.plus size={13} stroke={2.4}/> Add Property
             </button>
           )}
+          {isAdmin && onMenuNav && (
+            <button onClick={()=>setMenuOpen(o=>!o)} aria-label="Menu"
+              style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r2,
+                width:34, height:34, cursor:"pointer", color:C.text, flexShrink:0,
+                display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh1}}>
+              <I.menu size={16}/>
+            </button>
+          )}
+        </>
+      )}
+      {menuOpen && (
+        <>
+          <div onClick={()=>setMenuOpen(false)}
+            style={{position:"fixed", inset:0, zIndex:198}}/>
+          <div style={{position:"absolute", top:"100%", right:12, marginTop:6, zIndex:199,
+            background:C.card, border:"1px solid "+C.border, borderRadius:C.r3,
+            boxShadow:C.sh4, overflow:"hidden", minWidth:180}}>
+            {[["deals", "Deals", I.star], ["comps", "Comps", I.chart],
+              ["saved", "Saved Deals", I.bee]].map(([id, label, Ic], i, arr) => (
+              <button key={id} onClick={()=>{ setMenuOpen(false); onMenuNav(id); }}
+                style={{display:"flex", alignItems:"center", gap:10, width:"100%",
+                  padding:"12px 16px", background: page===id ? C.bgSubtle : C.card,
+                  border:"none", cursor:"pointer", textAlign:"left", fontFamily:F,
+                  fontSize:14, fontWeight:600, color:C.text,
+                  borderBottom: i === arr.length-1 ? "none" : "1px solid "+C.border}}>
+                <Ic size={15} stroke={2}/> {label}
+              </button>
+            ))}
+          </div>
         </>
       )}
     </div>
@@ -10238,7 +10271,7 @@ function Toast({msg}) {
 // -- Desktop Top Bar -----------------------------------------------------------
 function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
   const titles = {
-    dashboard:"Dashboard", portfolio:"Portfolio", properties:"Properties", projects:"Projects",
+    dashboard:"Dashboard", saved:"Saved Deals", properties:"Properties", projects:"Projects",
     deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
     settings:"Settings", property:propAddress||"Property"
   };
@@ -10835,13 +10868,14 @@ export default function App() {
     onUpgrade: handleUpgrade,
     initial: prefilledDeal,
     onConsumeInitial: () => setPrefilledDeal(null),
-    backLabel: analyzerReturn && analyzerReturn.page === "dashboard" ? "Back to saved deal" : "Back to deals",
+    backLabel: analyzerReturn && (analyzerReturn.page === "dashboard" || analyzerReturn.page === "saved")
+      ? "Back to saved deal" : "Back to deals",
     onBackToDeals: () => {
       const r = analyzerReturn;
       setAnalyzerReturn(null);
-      if (r && r.page === "dashboard") {
+      if (r && (r.page === "dashboard" || r.page === "saved")) {
         if (r.dealId) setReopenDealId(r.dealId);
-        setPage("dashboard");
+        setPage(r.page);
       } else {
         setPage("deals");
       }
@@ -10858,7 +10892,8 @@ export default function App() {
       {planOpen && <PlanSheet busy={billingBusy} onClose={()=>setPlanOpen(false)}
         onChoose={p => startCheckout(p)}/>}
       <MobileHeader page={effPage} onBack={()=>setPropId(null)} daysLeft={daysLeft}
-        onAddProperty={()=>setPage("deal")} />
+        onAddProperty={isAdmin ? ()=>setShowAdd(true) : ()=>setPage("deal")}
+        isAdmin={isAdmin} onMenuNav={id=>setPage(id)} />
       <TrialBanner daysLeft={daysLeft} />
       {syncWarn && (
         <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
@@ -10872,7 +10907,9 @@ export default function App() {
           <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
             onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
         ) : page==="dashboard" ? (
-          <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={isAdmin ? "pro" : (data.tier||"free")}
+          isAdmin
+            ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+            : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                 onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                 onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                 onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
@@ -10880,8 +10917,15 @@ export default function App() {
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
                 onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
                 openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
-        ) : page==="portfolio" && isAdmin ? (
-          <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+        ) : page==="saved" && isAdmin ? (
+          <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier="pro"
+            onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+            onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+            onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
+            onAnalyzeNew={()=>setPage("deal")}
+            apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
+            onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
+            openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
         ) : page==="properties" && isAdmin ? (
           <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
         ) : page==="projects" && isAdmin ? (
@@ -10953,7 +10997,9 @@ export default function App() {
               <PropertyDetail prop={activeProp} onBack={()=>setPropId(null)}
                 onChange={updateProp} onDelete={delProp} llcs={data.llcs||[]} {...sharedProps} />
             ) : page==="dashboard" ? (
-              <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={isAdmin ? "pro" : (data.tier||"free")}
+              isAdmin
+                ? <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+                : <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier={data.tier||"free"}
                     onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
                     onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
                     onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
@@ -10961,8 +11007,15 @@ export default function App() {
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
                 onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
                 openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
-            ) : page==="portfolio" && isAdmin ? (
-              <Dashboard properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} mobile={mobile} />
+            ) : page==="saved" && isAdmin ? (
+              <SavedDealsDashboard savedDeals={data.savedDeals||[]} tier="pro"
+            onUpgrade={handleUpgrade} onAnalyze={analyzeDealFromMarket}
+            onRemove={removeFromWatchlist} onBrowse={()=>{setDealsStrategy("all");setPage("deals");}}
+            onBrowseStrategy={st=>{setDealsStrategy(st);setPage("deals");}}
+            onAnalyzeNew={()=>setPage("deal")}
+            apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
+            onUploadPhotos={uploadDealPhotos} onPatchDeal={patchSavedDeal}
+            openDealId={reopenDealId} onConsumeOpenDeal={()=>setReopenDealId(null)} mobile={mobile} />
             ) : page==="properties" && isAdmin ? (
               <MyProperties properties={data.properties||[]} onSelect={id=>setPropId(id)} onAdd={()=>setShowAdd(true)} onDelete={delProp} mobile={mobile} />
             ) : page==="projects" && isAdmin ? (
