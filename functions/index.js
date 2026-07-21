@@ -998,39 +998,28 @@ const ENDATO_PROP_PATHS = [
   "/PropertySearch/V2", "/Property/Search/V2", "/PropertyV2/Search",
   "/PropertyV2", "/Property/V2/Search",
 ];
-let endatoPropPath = null; // locked after the first non-404 answer
+let endatoPropPath = "/PropertyV2Search"; // confirmed live Jul 2026; candidates stay as fallback
 
-// Owner-name walker over the shapes property APIs commonly use. Returns the
-// first plausible name, comma forms ("LAST, FIRST") reordered.
+// PropertyV2 owner extraction — the run-2 sample nailed the schema:
+// propertyV2Records[0].property.summary.currentOwners[].name.fullName, with
+// isCorporationOrBusiness flagging entities better than any keyword regex.
 function extractOwnerName(json) {
-  if (!json || typeof json !== "object") return null;
-  const list = json.properties || json.propertyRecords || json.results ||
-    (Array.isArray(json) ? json : null);
-  const p = (Array.isArray(list) && list[0]) || json.property || json;
-  if (!p || typeof p !== "object") return null;
-  const out = [];
-  const push = v => { if (typeof v === "string" && v.trim()) out.push(v.trim()); };
-  const person = o => o && (o.fullName || o.name ||
-    [o.firstName, o.middleName, o.lastName].filter(Boolean).join(" "));
-  for (const k of ["propertyOwners", "currentOwners", "owners"]) {
-    if (Array.isArray(p[k])) p[k].forEach(o => push(typeof o === "string" ? o : person(o)));
-  }
-  const ow = p.owner || p.currentOwner || p.ownership;
-  if (ow) {
-    if (typeof ow === "string") push(ow);
-    else {
-      (Array.isArray(ow.names) ? ow.names : []).forEach(push);
-      push(person(ow));
+  const rec = json && Array.isArray(json.propertyV2Records) ? json.propertyV2Records[0] : null;
+  const owners = (rec && rec.property && rec.property.summary &&
+    Array.isArray(rec.property.summary.currentOwners))
+    ? rec.property.summary.currentOwners : [];
+  for (const o of owners) {
+    const nm = o && o.name;
+    const full = nm && (nm.fullName ||
+      [nm.firstName, nm.lastName].filter(Boolean).join(" "));
+    if (full && String(full).trim()) {
+      return {
+        name: String(full).trim(),
+        isEntity: o.isCorporationOrBusiness === true || !!(nm.companyName),
+      };
     }
   }
-  push(p.owner1FullName); push(p.ownerName); push(p.owner1Name);
-  if (!out.length) return null;
-  let name = out[0];
-  if (name.includes(",")) {
-    const [last, first] = name.split(",").map(s => s.trim());
-    if (first) name = `${first} ${last}`;
-  }
-  return name;
+  return null;
 }
 
 async function endatoPropertyOwner(apName, apPassword, {address1, address2}) {
@@ -1056,15 +1045,35 @@ async function endatoPropertyOwner(apName, apPassword, {address1, address2}) {
     if (r.status === 404 && !json) { attempts.push({path, status: 404}); continue; }
     endatoPropPath = path;
     if (!r.ok) return {error: `endato ${r.status}`, body: (text || "").slice(0, 220), path};
-    const name = extractOwnerName(json);
+    const own = extractOwnerName(json);
     return {
-      name,
+      name: own ? own.name : null,
+      isEntity: !!(own && own.isEntity),
       path,
-      ...(name ? {} : {rawKeys: json ? Object.keys(json).slice(0, 20) : null,
+      ...(own ? {} : {rawKeys: json ? Object.keys(json).slice(0, 20) : null,
         sample: (text || "").slice(0, 400)}),
     };
   }
   return {error: "endato property endpoint not found", attempts};
+}
+
+// One owner trace: Contact Enrich, then a single first/last-swapped retry on
+// a clean miss (counties sometimes store "LAST FIRST M" with no comma).
+// Shared by the bake-off harness and the production reveal endpoint.
+async function traceOwnerPhones(apName, apPass, {name, address1, address2}) {
+  let out = await endatoEnrich(apName, apPass, {name, address1, address2});
+  let swapRetried = false;
+  if (!out.error && !out.phones.length) {
+    const nm = splitOwnerName(name);
+    if (nm.first && nm.last && nm.first.toLowerCase() !== nm.last.toLowerCase()) {
+      try {
+        const retry = await endatoEnrich(apName, apPass, {name,
+          nameOverride: {first: nm.last, last: nm.first}, address1, address2});
+        if (!retry.error && retry.phones.length) { out = retry; swapRetried = true; }
+      } catch { /* keep the original miss */ }
+    }
+  }
+  return {...out, swapRetried};
 }
 
 // County-record owner name for an address via RentCast /properties — the
@@ -1093,6 +1102,114 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
   }
   return {name, ownerOccupied: rec.ownerOccupied === true};
 }
+
+// == Reveal Owner Phone (paid add-on) ===========================================
+// Pro members buy reveal credits ($10 for 8) and spend 1 per successful trace.
+// A credit is charged ONLY when a phone comes back — entity owners, missing
+// county records, and dry traces are free and say so. Unlocks persist per
+// member under reveals/{uid}/{addrKey} (re-opening is always free), and a
+// cross-member cache under skipCache/{addrKey} means a second member's reveal
+// of the same address costs us zero provider spend.
+const addrKeyOf = (street, city, state, zip) =>
+  (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
+const isMobileType = t => /mobile|wireless|cell/i.test(t || "");
+const sortPhones = phones => [...phones].sort((a, b) =>
+  ((b.isConnected ? 1 : 0) - (a.isConnected ? 1 : 0)) ||
+  ((isMobileType(b.type) ? 1 : 0) - (isMobileType(a.type) ? 1 : 0)) ||
+  ((Date.parse(b.lastSeen) || 0) - (Date.parse(a.lastSeen) || 0)));
+
+exports.revealOwner = onRequest({
+  secrets: [RENTCAST_API_KEY, ENDATO_AP_NAME, ENDATO_AP_PASSWORD],
+  cors: true, region: "us-central1", timeoutSeconds: 60,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const isAdmin = user.email === "harut@ymail.com";
+    const tier = (await admin.database().ref(`billing/${user.uid}/tier`).get()).val();
+    if (!isAdmin && tier !== "pro") { res.status(403).json({error: "pro"}); return; }
+
+    const balRef = admin.database().ref(`credits/${user.uid}/balance`);
+    const balance = (await balRef.get()).val() || 0;
+    const b = req.body || {};
+    // The admin flag rides every response so the client can offer the reveal
+    // without a balance — the owner's own account runs unmetered.
+    const flags = isAdmin ? {admin: true} : {};
+    if (b.balanceOnly) { res.json({balance, ...flags}); return; }
+
+    const street = String(b.street || "").trim();
+    const city   = String(b.city || "").trim();
+    const state  = String(b.state || "").trim();
+    const zip    = String(b.zip || "").trim();
+    if (!street || !city || !state) { res.status(400).json({error: "address"}); return; }
+    const k = addrKeyOf(street, city, state, zip);
+
+    // Already unlocked by this member — re-opening is always free.
+    const mine = (await admin.database().ref(`reveals/${user.uid}/${k}`).get()).val();
+    if (mine) { res.json({revealed: mine, balance, ...flags}); return; }
+    if (!b.confirm) { res.json({revealed: null, balance, ...flags}); return; }
+    if (!isAdmin && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
+
+    const apName = ENDATO_AP_NAME.value();
+    const apPass = ENDATO_AP_PASSWORD.value();
+    if (!apName || apName === "unset" || !apPass || apPass === "unset") {
+      res.status(503).json({error: "unavailable"}); return;
+    }
+
+    // Hits serve from cache for 90 days, misses for 7 (county data moves).
+    const cacheRef = admin.database().ref(`skipCache/${k}`);
+    const cached = (await cacheRef.get()).val();
+    const ageDays = cached ? (Date.now() - (cached.at || 0)) / 86400000 : Infinity;
+    let result = null;
+    if (cached && ageDays < (cached.found ? 90 : 7)) {
+      result = cached;
+    } else {
+      const address2 = `${city}, ${state}${zip ? " " + zip : ""}`;
+      let rec = null;
+      try { rec = await rcOwnerName(RENTCAST_API_KEY.value(), street, city, state, zip); }
+      catch { rec = null; }
+      if (!rec || rec.error || !rec.name) {
+        result = {found: false, reason: "no-record", at: Date.now()};
+      } else if (ENTITY_RX.test(rec.name)) {
+        result = {found: false, reason: "entity", ownerName: rec.name, at: Date.now()};
+      } else {
+        const out = await traceOwnerPhones(apName, apPass,
+          {name: rec.name, address1: street, address2});
+        result = out.phones.length ? {
+          found: true,
+          ownerName: rec.name,
+          matchedName: out.matchedName || null,
+          ownerOccupied: rec.ownerOccupied === true,
+          phones: sortPhones(out.phones).slice(0, 5),
+          emails: (out.emails || []).slice(0, 3),
+          at: Date.now(),
+        } : {found: false, reason: "no-phone", ownerName: rec.name, at: Date.now()};
+      }
+      await cacheRef.set(result);
+    }
+
+    if (!result.found) { res.json({revealed: result, balance, ...flags}); return; }
+
+    // Exactly one credit, atomically, only for a hit. Admin runs unmetered.
+    if (!isAdmin) {
+      const tx = await balRef.transaction(v => {
+        if ((v || 0) < 1) return; // abort → not committed
+        return v - 1;
+      });
+      if (!tx.committed) { res.status(402).json({error: "credits", balance: 0}); return; }
+      await admin.database().ref(`creditsLedger/${user.uid}`).push(
+        {delta: -1, reason: "reveal", addr: k, at: Date.now()});
+    }
+    await admin.database().ref(`reveals/${user.uid}/${k}`).set(result);
+    const newBal = (await balRef.get()).val() || 0;
+    res.json({revealed: result, balance: newBal, ...flags});
+  } catch (e) {
+    logger.error("revealOwner", {error: e.message});
+    res.status(500).json({error: "unavailable"});
+  }
+});
 
 // Admin bake-off: trace the live feed's owners through Endato and report the
 // hit rate BEFORE any customer-facing reveal button gets built. The FSBO feed
@@ -1137,8 +1254,10 @@ exports.skipTraceTest = onRequest({
     let rcFirstError = null;
     let rcErrorStreak = 0;
     let rcBailedEarly = false;
+    let lookupBudget = n * 4; // hard stop — a mapping bug must never walk all 96 again
     for (const d of addressComplete) {
       if (results.length >= n) break;
+      if (--lookupBudget < 0) { rcBailedEarly = true; break; }
       // Five county lookups failing in a row means the key/account is the
       // problem, not the addresses — stop burning calls and report.
       if (rcErrorStreak >= 5) { rcBailedEarly = true; break; }
@@ -1177,36 +1296,23 @@ exports.skipTraceTest = onRequest({
         }
         name = rec.name;
         if (rec.ownerOccupied != null) ownerOccupied = rec.ownerOccupied;
+        if (rec.isEntity) { entityOwners.push({name, address: full}); continue; }
       }
       if (ENTITY_RX.test(name)) { entityOwners.push({name, address: full}); continue; }
 
       let out;
       try {
-        out = await endatoEnrich(apName, apPass,
+        out = await traceOwnerPhones(apName, apPass,
           {name, address1: d.streetAddress, address2});
       } catch (e) {
-        out = {status: 0, ms: 0, phones: [], emails: [],
+        out = {status: 0, ms: 0, phones: [], emails: [], swapRetried: false,
           error: String(e.message || e).slice(0, 200)};
-      }
-      // Counties sometimes store "LAST FIRST M" with no comma to flag it —
-      // a clean miss gets one retry with first/last swapped.
-      let swapRetried = false;
-      if (!out.error && !out.phones.length) {
-        const nm = splitOwnerName(name);
-        if (nm.first && nm.last && nm.first.toLowerCase() !== nm.last.toLowerCase()) {
-          try {
-            const retry = await endatoEnrich(apName, apPass, {name,
-              nameOverride: {first: nm.last, last: nm.first},
-              address1: d.streetAddress, address2});
-            if (!retry.error && retry.phones.length) { out = retry; swapRetried = true; }
-          } catch { /* keep the original miss */ }
-        }
       }
       results.push({
         address: full,
         owner:   name,
         nameSource,
-        ...(swapRetried ? {swapRetried: true} : {}),
+        ...(out.swapRetried ? {swapRetried: true} : {}),
         ...(ownerOccupied != null ? {ownerOccupied} : {}),
         hit:     out.phones.length > 0,
         phones:  out.phones,
@@ -1337,18 +1443,37 @@ exports.createCheckoutSession = onRequest(
         await admin.database().ref(`stripeCustomers/${customerId}`).set(user.uid);
       }
 
-      const plan = (req.body && req.body.plan) === "yearly" ? "yearly" : "monthly";
-      const session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
-        "mode": "subscription",
-        "customer": customerId,
-        "line_items[0][price]": plan === "yearly" ? STRIPE_PRICE_ID_YEARLY : STRIPE_PRICE_ID,
-        "line_items[0][quantity]": "1",
-        "client_reference_id": user.uid,
-        "subscription_data[metadata][firebaseUid]": user.uid,
-        "allow_promotion_codes": "true",
-        "success_url": `${APP_ORIGIN}/?billing=success`,
-        "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
-      });
+      const plan = (req.body && req.body.plan) || "monthly";
+      let session;
+      if (plan === "credits8") {
+        // One-time 8-pack of Reveal credits. Amount is pinned here — the
+        // client only ever names the plan, never a price.
+        session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
+          "mode": "payment",
+          "customer": customerId,
+          "line_items[0][price_data][currency]": "usd",
+          "line_items[0][price_data][product_data][name]": "DealHive Reveal Credits (8 pack)",
+          "line_items[0][price_data][unit_amount]": "1000",
+          "line_items[0][quantity]": "1",
+          "client_reference_id": user.uid,
+          "metadata[firebaseUid]": user.uid,
+          "metadata[credits]": "8",
+          "success_url": `${APP_ORIGIN}/?billing=credits&session_id={CHECKOUT_SESSION_ID}`,
+          "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
+        });
+      } else {
+        session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
+          "mode": "subscription",
+          "customer": customerId,
+          "line_items[0][price]": plan === "yearly" ? STRIPE_PRICE_ID_YEARLY : STRIPE_PRICE_ID,
+          "line_items[0][quantity]": "1",
+          "client_reference_id": user.uid,
+          "subscription_data[metadata][firebaseUid]": user.uid,
+          "allow_promotion_codes": "true",
+          "success_url": `${APP_ORIGIN}/?billing=success`,
+          "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
+        });
+      }
       res.json({url: session.url});
     } catch (e) {
       logger.error("createCheckoutSession", {error: e.message});
@@ -1395,6 +1520,47 @@ exports.syncBilling = onRequest(
     }
   });
 
+// Idempotent credit grant for a paid checkout session — used by both the
+// return-URL claim (below) and the webhook, so credits land even if one path
+// never fires. The creditSessions/{id} marker makes double-grants impossible.
+async function applyCreditPurchase(session) {
+  const uid = (session && (session.client_reference_id ||
+    (session.metadata && session.metadata.firebaseUid))) || null;
+  const credits = parseInt(session && session.metadata && session.metadata.credits, 10) || 0;
+  if (!uid || !credits || session.payment_status !== "paid") return null;
+  const marker = admin.database().ref(`creditSessions/${session.id}`);
+  const tx = await marker.transaction(v => (v === null ? {uid, credits, at: Date.now()} : undefined));
+  if (tx.committed) {
+    await admin.database().ref(`credits/${uid}/balance`).transaction(v => (v || 0) + credits);
+    await admin.database().ref(`creditsLedger/${uid}`).push(
+      {delta: credits, reason: "purchase", sessionId: session.id, at: Date.now()});
+  }
+  return (await admin.database().ref(`credits/${uid}/balance`).get()).val() || 0;
+}
+
+// Webhook-independent credit activation — same lesson as Pro: the client
+// comes back from Stripe holding the session id and claims it directly.
+exports.claimCredits = onRequest(
+  {secrets: [STRIPE_SECRET_KEY], cors: true, region: "us-central1", timeoutSeconds: 30},
+  async (req, res) => {
+    try {
+      if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+      const user = await verifyUser(req);
+      if (!user) { res.status(401).json({error: "Sign in first."}); return; }
+      const sid = req.body && req.body.sessionId;
+      if (!sid || !/^cs_[A-Za-z0-9_]+$/.test(String(sid))) { res.status(400).json({error: "bad session"}); return; }
+      const session = await stripeReq(STRIPE_SECRET_KEY.value(), "GET", `/v1/checkout/sessions/${sid}`);
+      const uid = session.client_reference_id || (session.metadata && session.metadata.firebaseUid);
+      if (uid !== user.uid) { res.status(403).json({error: "not yours"}); return; }
+      const balance = await applyCreditPurchase(session);
+      if (balance === null) { res.status(400).json({error: "not paid yet"}); return; }
+      res.json({balance});
+    } catch (e) {
+      logger.error("claimCredits", {error: e.message});
+      res.status(500).json({error: "claim failed"});
+    }
+  });
+
 exports.stripeWebhook = onRequest(
   {secrets: [STRIPE_SECRET_KEY], region: "us-central1", timeoutSeconds: 30},
   async (req, res) => {
@@ -1424,6 +1590,9 @@ exports.stripeWebhook = onRequest(
           await admin.database().ref(`stripeCustomers/${obj.customer}`).set(uid);
           logger.info("stripe: pro activated", {uid});
         }
+      } else if (event.type === "checkout.session.completed" && obj.mode === "payment") {
+        const balance = await applyCreditPurchase(obj);
+        if (balance != null) logger.info("stripe: reveal credits applied", {balance});
       } else if (event.type === "customer.subscription.updated" ||
                  event.type === "customer.subscription.deleted") {
         const uid = await uidFor(obj.customer, obj.metadata && obj.metadata.firebaseUid);

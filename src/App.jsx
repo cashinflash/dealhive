@@ -7359,6 +7359,145 @@ function AppreciationSheet({deal, onClose, mobile}) {
   );
 }
 
+// Paid add-on inside Owner Lookup: trace the owner of record to their phone
+// numbers and emails. The server charges 1 credit ONLY when a phone comes
+// back — misses, entity owners, and re-opens are free. Self-contained: talks
+// to revealOwner / createCheckoutSession directly with the session token.
+const isMobilePhone = t => /mobile|wireless|cell/i.test(t || "");
+function RevealBlock({deal, rcAuth}) {
+  const [st, setSt]   = useState({loading: true, balance: null, revealed: null, admin: false});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState("");
+  const call = async (body) => {
+    const r = await fetch(`${FN_BASE}/revealOwner`, {method: "POST",
+      headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
+      body: JSON.stringify({street: deal.streetAddress || deal.address,
+        city: deal.city, state: deal.state, zip: deal.zip || "", ...body})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(d.error || "unavailable"), {code: d.error});
+    return d;
+  };
+  useEffect(() => {
+    let alive = true;
+    call({}).then(d => alive && setSt({loading: false, balance: d.balance, revealed: d.revealed, admin: !!d.admin}))
+      .catch(() => alive && setSt({loading: false, balance: null, revealed: null, admin: false}));
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const buyCredits = async () => {
+    if (busy) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch(`${FN_BASE}/createCheckoutSession`, {method: "POST",
+        headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
+        body: JSON.stringify({plan: "credits8"})});
+      const d = await r.json().catch(() => ({}));
+      if (d.url) { window.location.assign(d.url); return; }
+      throw new Error(d.error || "checkout");
+    } catch {
+      setErr("Could not start checkout — try again in a moment.");
+      setBusy(false);
+    }
+  };
+  const reveal = async () => {
+    if (busy) return;
+    setBusy(true); setErr("");
+    try {
+      const d = await call({confirm: true});
+      setSt({loading: false, balance: d.balance, revealed: d.revealed, admin: !!d.admin});
+    } catch (e) {
+      if (e.code === "credits") setSt(x => ({...x, balance: 0}));
+      else setErr("Reveal is unavailable right now — no credit was used.");
+    }
+    setBusy(false);
+  };
+  const rv = st.revealed;
+  return (
+    <div style={{marginTop:14, borderTop:"1px solid "+C.border, paddingTop:14}}>
+      <div style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
+        letterSpacing:".07em", textTransform:"uppercase", marginBottom:9}}>
+        Owner Contact
+      </div>
+      {st.loading ? (
+        <div style={{fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>
+      ) : rv && rv.found ? (
+        <>
+          {(rv.phones || []).map(p => (
+            <div key={p.number} style={{display:"flex", alignItems:"center",
+              justifyContent:"space-between", gap:10, padding:"9px 0",
+              borderBottom:"1px solid "+C.border}}>
+              <a href={`tel:${String(p.number).replace(/[^\d+]/g, "")}`}
+                style={{fontSize:15, fontWeight:800, color:C.text, fontFamily:F,
+                  textDecoration:"none", fontVariantNumeric:"tabular-nums",
+                  letterSpacing:"-0.01em"}}>
+                {p.number}
+              </a>
+              <div style={{display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end"}}>
+                {isMobilePhone(p.type) && (
+                  <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.greenDark,
+                    background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+                    borderRadius:9999, padding:"2px 8px"}}>Mobile</span>
+                )}
+                {p.isConnected && (
+                  <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.greenDark,
+                    background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+                    borderRadius:9999, padding:"2px 8px"}}>Active</span>
+                )}
+                {p.lastSeen && (
+                  <span style={{fontSize:10.5, fontWeight:600, fontFamily:F, color:C.textSub,
+                    background:C.bgSubtle, border:"1px solid "+C.border,
+                    borderRadius:9999, padding:"2px 8px"}}>Seen {p.lastSeen}</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {(rv.emails || []).length > 0 &&
+            <DataRow label="Email" value={rv.emails.join(", ")} />}
+          {rv.matchedName && rv.ownerName &&
+            rv.matchedName.toLowerCase() !== rv.ownerName.toLowerCase() &&
+            <DataRow label="Matched Record" value={rv.matchedName} />}
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
+            From public and proprietary records — check the National Do Not Call
+            Registry before cold-calling. See our Terms for outreach rules.
+          </div>
+        </>
+      ) : rv && rv.found === false ? (
+        <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
+          background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
+          padding:"11px 13px"}}>
+          {rv.reason === "entity"
+            ? `${rv.ownerName} is a company or trust, so there's no personal phone line to reveal. The mailing address above is the outreach path.`
+            : rv.reason === "no-phone"
+            ? `No current phone number found for ${rv.ownerName || "this owner"}.`
+            : "County records don't show a traceable owner for this address."}
+          {" "}No credit was used.
+        </div>
+      ) : st.balance == null ? null : (
+        <>
+          <button onClick={(st.admin || st.balance >= 1) ? reveal : buyCredits} disabled={busy}
+            {...btnStyle("primary", "md", {width:"100%", justifyContent:"center"})}>
+            {busy ? "Tracing owner…" : st.admin
+              ? "Reveal Phone & Email"
+              : st.balance >= 1
+              ? "Reveal Phone & Email · 1 credit"
+              : "Get 8 Reveal Credits · $10"}
+          </button>
+          <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:7}}>
+            {st.admin
+              ? "Owner account · unmetered"
+              : st.balance >= 1
+              ? `${st.balance} credit${st.balance === 1 ? "" : "s"} left · a credit is only used when a phone is found`
+              : "$1.25 per reveal · a credit is only used when a phone is found"}
+          </div>
+          {err && (
+            <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:6,
+              textAlign:"center"}}>{err}</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mobile}) {
   const st  = usePropertyRecord(deal, apiLookup, rcAuth, isPro);
   const rec = st.rec || {};
@@ -7426,6 +7565,7 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
             From county assessor records. Names can lag a recent sale by a few weeks.
             {absentee ? " Absentee owners are often the most open to offers." : ""}
           </div>
+          <RevealBlock deal={deal} rcAuth={rcAuth}/>
         </>
       )}
     </SheetShell>
@@ -10638,11 +10778,42 @@ export default function App() {
   // to land — the subscription already exists by the time Stripe redirects.
   const billingReturnRef = useRef(
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("billing") : null);
+  const creditsSessionRef = useRef(
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("session_id") : null);
   useEffect(() => {
     if (!user || !billingReturnRef.current) return;
     const kind = billingReturnRef.current;
     billingReturnRef.current = null;
     window.history.replaceState({}, "", "/");
+    if (kind === "credits") {
+      // Reveal-credit purchase: claim the paid session directly, same
+      // webhook-independent pattern as Pro activation.
+      const sid = creditsSessionRef.current;
+      creditsSessionRef.current = null;
+      setToast("Payment received! Adding your reveal credits…");
+      (async () => {
+        let done = false;
+        try {
+          const u = (await refreshSession()) || userRef.current;
+          if (u && sid) {
+            const r = await fetch(`${FN_BASE}/claimCredits`, {method: "POST",
+              headers: {Authorization: `Bearer ${u.idToken}`, "Content-Type": "application/json"},
+              body: JSON.stringify({sessionId: sid})});
+            const d = await r.json().catch(() => ({}));
+            if (r.ok && d.balance != null) {
+              done = true;
+              setToast(`Reveal credits added — balance: ${d.balance} 🐝`);
+              setTimeout(() => setToast(""), 3500);
+            }
+          }
+        } catch { /* webhook backstop below */ }
+        if (!done) {
+          setToast("Payment received — credits appear within a minute.");
+          setTimeout(() => setToast(""), 4000);
+        }
+      })();
+      return;
+    }
     if (kind !== "success") {
       setToast("Checkout cancelled — no charge was made.");
       setTimeout(() => setToast(""), 3200);
