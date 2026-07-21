@@ -971,6 +971,85 @@ async function endatoEnrich(apName, apPassword, {name, address1, address2}) {
   };
 }
 
+// Endato Property Search V2 — their own county/assessor records, searched by
+// address, so the owner name and the phones can come from ONE vendor when the
+// bake-off runs with &nameSource=endato. Their docs sit behind a login, so
+// the route is discovered once per instance from a candidate list: a wrong
+// path 404s with a non-JSON body, the real one answers with property JSON
+// (or a readable search-type/permission error).
+const ENDATO_PROP_PATHS = [
+  "/PropertySearch/V2", "/Property/Search/V2", "/PropertyV2/Search",
+  "/PropertyV2", "/Property/V2/Search",
+];
+let endatoPropPath = null; // locked after the first non-404 answer
+
+// Owner-name walker over the shapes property APIs commonly use. Returns the
+// first plausible name, comma forms ("LAST, FIRST") reordered.
+function extractOwnerName(json) {
+  if (!json || typeof json !== "object") return null;
+  const list = json.properties || json.propertyRecords || json.results ||
+    (Array.isArray(json) ? json : null);
+  const p = (Array.isArray(list) && list[0]) || json.property || json;
+  if (!p || typeof p !== "object") return null;
+  const out = [];
+  const push = v => { if (typeof v === "string" && v.trim()) out.push(v.trim()); };
+  const person = o => o && (o.fullName || o.name ||
+    [o.firstName, o.middleName, o.lastName].filter(Boolean).join(" "));
+  for (const k of ["propertyOwners", "currentOwners", "owners"]) {
+    if (Array.isArray(p[k])) p[k].forEach(o => push(typeof o === "string" ? o : person(o)));
+  }
+  const ow = p.owner || p.currentOwner || p.ownership;
+  if (ow) {
+    if (typeof ow === "string") push(ow);
+    else {
+      (Array.isArray(ow.names) ? ow.names : []).forEach(push);
+      push(person(ow));
+    }
+  }
+  push(p.owner1FullName); push(p.ownerName); push(p.owner1Name);
+  if (!out.length) return null;
+  let name = out[0];
+  if (name.includes(",")) {
+    const [last, first] = name.split(",").map(s => s.trim());
+    if (first) name = `${first} ${last}`;
+  }
+  return name;
+}
+
+async function endatoPropertyOwner(apName, apPassword, {address1, address2}) {
+  const body = JSON.stringify({FirstName: "", LastName: "",
+    AddressLine1: address1, AddressLine2: address2, Page: 1, ResultsPerPage: 1});
+  const tryPaths = endatoPropPath ? [endatoPropPath] : ENDATO_PROP_PATHS;
+  const attempts = [];
+  for (const path of tryPaths) {
+    const r = await fetch(ENDATO_BASE + path, {
+      method: "POST",
+      headers: {
+        "Content-Type":       "application/json",
+        "galaxy-ap-name":     apName,
+        "galaxy-ap-password": apPassword,
+        "galaxy-search-type": "PropertyV2",
+      },
+      body,
+      signal: AbortSignal.timeout(20000),
+    });
+    const text = await r.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* HTML/empty body */ }
+    if (r.status === 404 && !json) { attempts.push({path, status: 404}); continue; }
+    endatoPropPath = path;
+    if (!r.ok) return {error: `endato ${r.status}`, body: (text || "").slice(0, 220), path};
+    const name = extractOwnerName(json);
+    return {
+      name,
+      path,
+      ...(name ? {} : {rawKeys: json ? Object.keys(json).slice(0, 20) : null,
+        sample: (text || "").slice(0, 400)}),
+    };
+  }
+  return {error: "endato property endpoint not found", attempts};
+}
+
 // County-record owner name for an address via RentCast /properties — the
 // same record Owner Lookup shows members. Returns {name, ownerOccupied} or
 // null. County names sometimes arrive "LAST, FIRST M" — reorder on comma.
@@ -1024,6 +1103,9 @@ exports.skipTraceTest = onRequest({
   }
   try {
     const n = Math.min(Math.max(parseInt(req.query.n || "10", 10) || 10, 1), 25);
+    // &nameSource=endato swaps the owner-name step to Endato Property Search
+    // V2 so the whole trace runs on one vendor; default stays RentCast.
+    const nameMode = req.query.nameSource === "endato" ? "endato" : "rentcast";
     const rcKey = RENTCAST_API_KEY.value();
     const snap = await admin.database().ref("/deals/items").get();
     const all = Object.values(snap.val() || {});
@@ -1033,6 +1115,8 @@ exports.skipTraceTest = onRequest({
     const noOwnerFound = [];
     const results = [];
     let rcCalls = 0;
+    let propCalls = 0;
+    let propFirstMiss = null;
     let rcFirstError = null;
     let rcErrorStreak = 0;
     let rcBailedEarly = false;
@@ -1047,22 +1131,35 @@ exports.skipTraceTest = onRequest({
       // Owner name: the listing's seller name when the source shipped one,
       // else the county record — the path every deal supports.
       let name = (d.seller && d.seller.name) || null;
-      let nameSource = name ? "listing" : "county";
+      let nameSource = name ? "listing" : (nameMode === "endato" ? "endato-property" : "county");
       let ownerOccupied = null;
       if (!name) {
         let rec = null;
-        try { rcCalls++; rec = await rcOwnerName(rcKey, d.streetAddress, d.city, d.state, d.zip); }
-        catch (e) { rec = {error: String(e.message || e).slice(0, 120)}; }
+        if (nameMode === "endato") {
+          try { propCalls++; rec = await endatoPropertyOwner(apName, apPass, {address1: d.streetAddress, address2}); }
+          catch (e) { rec = {error: String(e.message || e).slice(0, 120)}; }
+        } else {
+          try { rcCalls++; rec = await rcOwnerName(rcKey, d.streetAddress, d.city, d.state, d.zip); }
+          catch (e) { rec = {error: String(e.message || e).slice(0, 120)}; }
+        }
         if (rec && rec.error) {
           rcErrorStreak++;
-          if (!rcFirstError) rcFirstError = {why: rec.error, body: rec.body || null};
+          if (!rcFirstError) rcFirstError = {why: rec.error, body: rec.body || null,
+            ...(rec.attempts ? {attempts: rec.attempts} : {})};
           noOwnerFound.push({address: full, why: rec.error});
           continue;
         }
         rcErrorStreak = 0;
-        if (!rec || !rec.name) { noOwnerFound.push({address: full, why: "no owner on record"}); continue; }
+        if (!rec || !rec.name) {
+          if (nameMode === "endato" && !propFirstMiss) {
+            propFirstMiss = {address: full, rawKeys: rec && rec.rawKeys || null,
+              sample: rec && rec.sample || null};
+          }
+          noOwnerFound.push({address: full, why: "no owner on record"});
+          continue;
+        }
         name = rec.name;
-        ownerOccupied = rec.ownerOccupied;
+        if (rec.ownerOccupied != null) ownerOccupied = rec.ownerOccupied;
       }
       if (ENTITY_RX.test(name)) { entityOwners.push({name, address: full}); continue; }
 
@@ -1093,10 +1190,16 @@ exports.skipTraceTest = onRequest({
     res.json({
       provider:           "endato",
       diag: {
+        nameMode,
         dealsInFeed:          all.length,
         addressComplete:      addressComplete.length,
         withListingSellerName: withListingName.length,
         countyRecordLookups:  rcCalls,
+        ...(nameMode === "endato" ? {
+          endatoPropertyCalls: propCalls,
+          propPathUsed:        endatoPropPath,
+          ...(propFirstMiss ? {propFirstMiss} : {}),
+        } : {}),
         ownerNotFound:        noOwnerFound.length,
         entityOwners:         entityOwners.length,
         ...(rcBailedEarly ? {rcBailedEarly: true} : {}),
