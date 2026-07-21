@@ -9686,12 +9686,13 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
         <div style={{
           background:"linear-gradient(140deg, "+C.sidebar+" 0%, #22334a 100%)",
           borderRadius:C.r3, padding:"18px", position:"relative", overflow:"hidden",
-          display:"flex", justifyContent:"space-between", alignItems:"center", gap:12}}>
+          display:"flex", justifyContent:"space-between", alignItems:"center", gap:12,
+          flexWrap:"wrap"}}>
           <div aria-hidden="true" style={{position:"absolute", top:-46, right:-34, width:150,
             height:150, borderRadius:"50%",
             background:"radial-gradient(closest-side, rgba(232,115,28,.28), transparent 70%)"}}/>
           <div style={{display:"flex", alignItems:"center", gap:14, minWidth:0,
-            position:"relative"}}>
+            flex:"1 1 auto", position:"relative"}}>
             <div style={{
               width:50, height:50, borderRadius:"50%", flexShrink:0,
               background:"linear-gradient(145deg, #F79A52, #E8731C)",
@@ -9700,9 +9701,9 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
               boxShadow:"0 6px 16px -6px rgba(232,115,28,.55)",
             }}>{(userEmail||"?")[0].toUpperCase()}</div>
             <div style={{minWidth:0}}>
-              <div style={{fontSize:14, fontWeight:700, color:"#fff", fontFamily:F,
-                letterSpacing:"-0.005em", wordBreak:"break-word",
-                lineHeight:1.35}}>{userEmail}</div>
+              <div style={{fontSize:13.5, fontWeight:700, color:"#fff", fontFamily:F,
+                letterSpacing:"-0.005em", whiteSpace:"nowrap", overflow:"hidden",
+                textOverflow:"ellipsis"}}>{userEmail}</div>
               <span style={{display:"inline-flex", alignItems:"center", gap:5, marginTop:5,
                 background: isPro ? "rgba(232,115,28,.18)" : "rgba(255,255,255,.1)",
                 border:"1px solid "+(isPro ? "rgba(247,154,82,.5)" : "rgba(255,255,255,.2)"),
@@ -9806,10 +9807,10 @@ function SettingsPage({onSignOut, mobile, userEmail, tier="free", onUpgrade, onD
       </SectionBlock>
 
       {isAdmin && authToken && (
-        <SectionBlock title="API Usage (Admin)" color={C.blue} icon={I.chart}>
+        <SectionBlock title="Members & Usage (Admin)" color={C.blue} icon={I.chart}>
           <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:12}}>
-            What each account's live data lookups cost this month (about 7.4¢ per
-            fresh lookup — repeat views are cached and free).
+            Every member with their tier, join date, and last sign-in, plus what
+            each account's data lookups cost this month.
           </div>
           <AdminUsagePanel token={authToken}/>
         </SectionBlock>
@@ -10245,7 +10246,21 @@ function AdminUsagePanel({token}) {
       if (!r.ok) throw new Error(d.error || "failed");
       const totalLookups = d.rows.reduce((s, x) => s + x.lookups, 0);
       const totalCost    = d.rows.reduce((s, x) => s + x.estCost, 0);
-      const proCount     = d.rows.filter(x => x.tier === "pro").length;
+      const members      = d.users || [];
+      const proMembers   = members.filter(x => x.tier === "pro").length;
+      const fmtD = s => s ? new Date(s).toLocaleDateString("en-US",
+        {month: "short", day: "numeric", year: "numeric"}) : "—";
+      const tierChip = t => `<span style="display:inline-block;padding:2px 10px;border-radius:999px;
+        font-size:11px;font-weight:700;${t === "pro"
+          ? "background:#e8f6ee;color:#1a7f4b;border:1px solid #bfe6cf"
+          : "background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7"}">${esc(t)}</span>`;
+      const memberRows = members.map((x, i) => `
+        <tr style="background:${i % 2 ? "#fafaf8" : "#fff"}">
+          <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(x.email)}</td>
+          <td style="padding:10px 16px">${tierChip(x.tier)}</td>
+          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${fmtD(x.created)}</td>
+          <td style="padding:10px 16px;text-align:right;white-space:nowrap">${fmtD(x.lastSignIn)}</td>
+        </tr>`).join("");
       const rowsHtml = d.rows.map((x, i) => `
         <tr style="background:${i % 2 ? "#fafaf8" : "#fff"}">
           <td style="padding:10px 16px;color:#3f3f46;font-weight:600">${esc(x.email)}</td>
@@ -10257,23 +10272,36 @@ function AdminUsagePanel({token}) {
           <td style="padding:10px 16px;text-align:right;font-variant-numeric:tabular-nums">$${x.estCost.toFixed(2)}</td>
         </tr>`).join("");
       const html = `<!doctype html><html><head><meta charset="utf-8">
-        <title>DealHive — API Usage ${esc(d.month)}</title>
+        <title>DealHive — Members & Usage ${esc(d.month)}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
         </head><body style="margin:0;background:#f7f6f3;font-family:Inter,system-ui,sans-serif;color:#18181b">
         <div style="background:#141d2b;color:#fff;padding:26px 28px">
-          <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">\u{1F41D} DealHive — API Usage</div>
+          <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">\u{1F41D} DealHive — Members & Usage</div>
           <div style="font-size:13px;color:#b8c0cc;margin-top:4px">${esc(d.month)} · about ${(d.costPerLookup * 100).toFixed(1)}\u00A2 per fresh lookup · cached re-opens are free</div>
         </div>
         <div style="max-width:860px;margin:24px auto;padding:0 20px">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">
-            ${[["Active users", d.rows.length], ["Pro accounts", proCount],
+            ${[["Members", members.length], ["Pro members", proMembers],
                ["Total lookups", totalLookups], ["Est. API cost", "$" + totalCost.toFixed(2)]]
               .map(([l, v]) => `<div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:14px 16px">
                 <div style="font-size:11px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.07em">${l}</div>
                 <div style="font-size:22px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums">${v}</div>
               </div>`).join("")}
           </div>
+          <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Members — newest first</div>
+          <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto;margin-bottom:20px">
+            <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px">
+              <thead><tr style="border-bottom:1px solid #e4e4e7">
+                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Member</th>
+                <th style="text-align:left;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Tier</th>
+                <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Joined</th>
+                <th style="text-align:right;padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:#a1a1aa">Last active</th>
+              </tr></thead>
+              <tbody>${memberRows || `<tr><td colspan="4" style="padding:22px;text-align:center;color:#a1a1aa">No members yet.</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Lookup spend this month</div>
           <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto">
             <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:520px">
               <thead><tr style="border-bottom:1px solid #e4e4e7">
@@ -10296,7 +10324,7 @@ function AdminUsagePanel({token}) {
   return (
     <>
       <button onClick={load} disabled={st.busy} {...btnStyle("secondary","md")}>
-        {st.busy ? "Loading…" : <><I.externalLink size={13}/> Open Usage Report</>}
+        {st.busy ? "Loading…" : <><I.externalLink size={13}/> Open Members Report</>}
       </button>
       {st.err && <div style={{fontSize:12.5, color:C.redDark, fontFamily:F, marginTop:8}}>{st.err}</div>}
     </>
