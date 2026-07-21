@@ -11339,6 +11339,11 @@ export default function App() {
       try { const t = await fbRefresh(u.refreshToken); u = { ...u, idToken: t.idToken, refreshToken: t.refreshToken || u.refreshToken }; } catch {}
     }
     setUser(u); saveAuth(u); userRef.current = u;
+    // Meta Pixel: a fresh signup (not a login or a restored session) is the
+    // conversion the ad account optimizes toward.
+    if (isNew && !silent && typeof window !== "undefined" && window.fbq) {
+      try { window.fbq("track", "CompleteRegistration"); } catch {}
+    }
     // Land authenticated users on a clean URL — they came from /login or
     // /signup, but the app itself doesn't care about path-based routing.
     if (typeof window !== "undefined" && (window.location.pathname === "/login" || window.location.pathname === "/signup")) {
