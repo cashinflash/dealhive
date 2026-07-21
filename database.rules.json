@@ -43,6 +43,10 @@
     "skipCache": {
       ".read":  false,
       ".write": false
+    },
+    "revealUsage": {
+      ".read":  false,
+      ".write": false
     }
   }
 }
