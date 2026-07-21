@@ -5606,7 +5606,13 @@ const proFormaToFeedDeal = pf => ({
   rent:   pf.rentAmount || pf.rentEstimate || 0,
   repair: pf.repairCosts || 0,
   arv:    pf.homeValueHigh || pf.flipSalePrice || pf.homeValueMedian || 0,
-  photo: null, photos: [],
+  // Original listing photos survive the analyzer round-trip — without these
+  // a re-save wiped a deal's photos down to the Street View fallback.
+  photo:  pf.srcPhoto || (Array.isArray(pf.srcPhotos) && pf.srcPhotos[0]) || null,
+  photos: Array.isArray(pf.srcPhotos) ? pf.srcPhotos : [],
+  askingPrice: pf.askingPrice || 0,
+  offerPrice:  pf.offerPrice  || 0,
+  description: pf.description || null,
   alreadyOwned: !!pf.alreadyOwned,
   ownedLoanBalance: pf.ownedLoanBalance || 0,
   ownedLoanPayment: pf.ownedLoanPayment || 0,
@@ -5626,7 +5632,7 @@ const proFormaToFeedDeal = pf => ({
   incomeItems:   Array.isArray(pf.incomeItems)  && pf.incomeItems.length  ? pf.incomeItems  : null,
   vacancyRate:   pf.vacancyRate ?? 8,
   otherIncome:   pf.otherIncome   || 0,
-  source: "My analysis",
+  source: pf.listingSource || "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
 });
 
@@ -5664,7 +5670,11 @@ const dealToProForma = (deal) => {
     sqft:         deal.sqft || 0,
     lotSize:      deal.lotSize || 0,
     yearBuilt:    deal.yearBuilt || 0,
-    purchasePrice: deal.price || 0,
+    // A fresh feed deal with a solved target offer opens at that offer, so
+    // the analyzer's verdict matches the strategy tags on the deal card.
+    // Saved deals (savedAt stamp) reopen at whatever price the user saved.
+    purchasePrice: (!deal.savedAt && deal.offerPrice > 0 && deal.offerPrice < (deal.price || 0))
+      ? deal.offerPrice : (deal.price || 0),
     repairCosts:   deal.repair || 0,
     rentAmount:    deal.rent || 0,
     rentEstimate:  deal.rent || 0,
@@ -5688,6 +5698,16 @@ const dealToProForma = (deal) => {
     incomeItems:     (Array.isArray(deal.incomeItems)  && deal.incomeItems.length)  ? deal.incomeItems  : null,
     vacancyRate:     deal.vacancyRate ?? 8,
     otherIncome:     deal.otherIncome   || 0,
+    // Listing context rides along: the analyzer shows it in About This
+    // Listing, and saving from the analyzer keeps the original listing
+    // photos, description and ask instead of dropping them.
+    askingPrice:     deal.askingPrice || deal.price || 0,
+    offerPrice:      deal.offerPrice  || 0,
+    description:     deal.description || null,
+    listingSource:   deal.source || null,
+    srcPhoto:        deal.photo || null,
+    srcPhotos:       (Array.isArray(deal.photos) && deal.photos.length > 0)
+      ? deal.photos : (deal.photo ? [deal.photo] : []),
     // Photos the analyzer should display in its own carousel.
     photos:          [
       ...(Array.isArray(deal.userPhotos) ? deal.userPhotos : []),
@@ -8856,7 +8876,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
-function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, assumptions, initial, onConsumeInitial, onBackToDeals, backLabel}) {
+function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, assumptions, initial, onConsumeInitial, onBackToDeals, backLabel, tier="free"}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
   // a blank form again.
@@ -9286,6 +9306,51 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
               <div style={{fontSize:11, color:C.textSub, fontFamily:F, fontWeight:700,
                 letterSpacing:".06em", textTransform:"uppercase", marginTop:2}}>{l}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Listing context — deals that arrived from the deal feed carry the
+          source listing's story: ask, solved target offer, and description. */}
+      {(d.askingPrice > 0 || d.description) && (
+        <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
+          boxShadow:C.sh2, padding: mobile ? "14px 14px" : "16px 18px", marginBottom:18}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:10}}>
+            <I.tag size={15} stroke={2.2} style={{color:C.amber}}/>
+            <span style={{fontSize:12, fontWeight:800, color:C.textSub, fontFamily:F,
+              letterSpacing:".07em", textTransform:"uppercase"}}>About This Listing</span>
+          </div>
+          <div style={{display:"flex", flexWrap:"wrap", gap:8}}>
+            {d.askingPrice > 0 && (
+              <span style={{fontSize:12.5, fontWeight:700, fontFamily:F, color:C.text,
+                background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+                padding:"4px 12px"}}>Asking {$(d.askingPrice)}</span>
+            )}
+            {d.offerPrice > 0 && d.askingPrice > 0 && d.offerPrice < d.askingPrice && (
+              <span style={{fontSize:12.5, fontWeight:700, fontFamily:F, color:C.amberDark,
+                background:C.amberSubtle, border:"1px solid "+C.amberBorder, borderRadius:9999,
+                padding:"4px 12px"}}>
+                Target Offer {$(d.offerPrice)} · {Math.round((1 - d.offerPrice / d.askingPrice) * 100)}% under ask
+              </span>
+            )}
+            {d.listingSource && d.listingSource !== "My analysis" && (
+              <span style={{fontSize:12.5, fontWeight:600, fontFamily:F, color:C.textSub,
+                background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+                padding:"4px 12px"}}>{d.listingSource}</span>
+            )}
+          </div>
+          {d.description && (tier === "pro" ? (
+            <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.65,
+              whiteSpace:"pre-wrap", marginTop:12}}>
+              {d.description}
+            </div>
+          ) : (
+            <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
+              background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
+              padding:"12px 14px", display:"flex", alignItems:"center", gap:10, marginTop:12}}>
+              <I.lock size={14} stroke={2.2} style={{color:C.textMuted, flexShrink:0}}/>
+              <span>The seller's listing description unlocks with DealHive Pro.</span>
             </div>
           ))}
         </div>
