@@ -1100,7 +1100,17 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
     const [last, first] = name.split(",").map(s => s.trim());
     if (first) name = `${first} ${last}`;
   }
-  return {name, ownerOccupied: rec.ownerOccupied === true};
+  // The owner's MAILING address (where the tax bill goes) is where an absentee
+  // owner actually lives — a far better skip-trace anchor than the subject
+  // property, which they may not occupy. Owner-occupied? It equals the property.
+  const mail = rec.owner && rec.owner.mailingAddress;
+  const mailing = (mail && mail.addressLine1) ? {
+    line1: mail.addressLine1,
+    city:  mail.city  || "",
+    state: mail.state || "",
+    zip:   mail.zipCode || "",
+  } : null;
+  return {name, ownerOccupied: rec.ownerOccupied === true, mailing};
 }
 
 // == Reveal Owner Phone (paid add-on) ===========================================
@@ -1110,6 +1120,11 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
 // member under reveals/{uid}/{addrKey} (re-opening is always free), and a
 // cross-member cache under skipCache/{addrKey} means a second member's reveal
 // of the same address costs us zero provider spend.
+// Bump when the trace method changes in a way that should re-run for cached
+// and already-unlocked addresses. v2 = anchor on the owner's mailing address
+// instead of the subject property. A member who already paid for an address
+// gets the improved result free.
+const REVEAL_V = 2;
 const addrKeyOf = (street, city, state, zip) =>
   (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
@@ -1146,10 +1161,17 @@ exports.revealOwner = onRequest({
     if (!street || !city || !state) { res.status(400).json({error: "address"}); return; }
     const k = addrKeyOf(street, city, state, zip);
 
-    // Already unlocked by this member — re-opening is always free.
-    const mine = (await admin.database().ref(`reveals/${user.uid}/${k}`).get()).val();
-    if (mine) { res.json({revealed: mine, balance, ...flags}); return; }
-    if (!b.confirm) { res.json({revealed: null, balance, ...flags}); return; }
+    // Already unlocked by this member. A current-version unlock re-opens free;
+    // an older-version unlock shows its data with a free refresh offer — the
+    // member already paid for this address, so a refresh never re-charges.
+    const revRef = admin.database().ref(`reveals/${user.uid}/${k}`);
+    const mine = (await revRef.get()).val();
+    const alreadyPaid = !!mine;
+    if (mine && mine.v === REVEAL_V) { res.json({revealed: mine, balance, ...flags}); return; }
+    if (!b.confirm) {
+      res.json({revealed: mine ? {...mine, stale: true} : null, balance, ...flags});
+      return;
+    }
     // Daily attempt cap. Hits charge a credit, but misses are free for the
     // member while still costing us a county lookup (and sometimes a trace)
     // — without this, a scripted client could grind unlimited provider spend
@@ -1163,7 +1185,7 @@ exports.revealOwner = onRequest({
         return;
       }
     }
-    if (!isAdmin && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
+    if (!isAdmin && !alreadyPaid && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
 
     const apName = ENDATO_AP_NAME.value();
     const apPass = ENDATO_AP_PASSWORD.value();
@@ -1176,7 +1198,7 @@ exports.revealOwner = onRequest({
     const cached = (await cacheRef.get()).val();
     const ageDays = cached ? (Date.now() - (cached.at || 0)) / 86400000 : Infinity;
     let result = null;
-    if (cached && ageDays < (cached.found ? 90 : 7)) {
+    if (cached && cached.v === REVEAL_V && ageDays < (cached.found ? 90 : 7)) {
       result = cached;
     } else {
       const address2 = `${city}, ${state}${zip ? " " + zip : ""}`;
@@ -1184,21 +1206,33 @@ exports.revealOwner = onRequest({
       try { rec = await rcOwnerName(RENTCAST_API_KEY.value(), street, city, state, zip); }
       catch { rec = null; }
       if (!rec || rec.error || !rec.name) {
-        result = {found: false, reason: "no-record", at: Date.now()};
+        result = {found: false, v: REVEAL_V, reason: "no-record", at: Date.now()};
       } else if (ENTITY_RX.test(rec.name)) {
-        result = {found: false, reason: "entity", ownerName: rec.name, at: Date.now()};
+        result = {found: false, v: REVEAL_V, reason: "entity", ownerName: rec.name, at: Date.now()};
       } else {
+        // Anchor where the owner LIVES — their county mailing (tax-bill)
+        // address — not the subject property, which an absentee owner doesn't
+        // occupy. That mismatch was pulling in tenants/prior-resident/wrong
+        // -person matches. Owner-occupied properties are unaffected (equal).
+        const m = rec.mailing;
+        const useMailing = !!(m && m.line1);
+        const tAddr1 = useMailing ? m.line1 : street;
+        const tAddr2 = useMailing
+          ? `${m.city}, ${m.state}${m.zip ? " " + m.zip : ""}`.trim()
+          : address2;
         const out = await traceOwnerPhones(apName, apPass,
-          {name: rec.name, address1: street, address2});
+          {name: rec.name, address1: tAddr1, address2: tAddr2});
         result = out.phones.length ? {
           found: true,
+          v: REVEAL_V,
           ownerName: rec.name,
           matchedName: out.matchedName || null,
           ownerOccupied: rec.ownerOccupied === true,
+          usedMailing: useMailing,
           phones: sortPhones(out.phones).slice(0, 5),
           emails: (out.emails || []).slice(0, 3),
           at: Date.now(),
-        } : {found: false, reason: "no-phone", ownerName: rec.name, at: Date.now()};
+        } : {found: false, v: REVEAL_V, reason: "no-phone", ownerName: rec.name, at: Date.now()};
       }
       await cacheRef.set(result);
     }
@@ -1206,7 +1240,8 @@ exports.revealOwner = onRequest({
     if (!result.found) { res.json({revealed: result, balance, ...flags}); return; }
 
     // Exactly one credit, atomically, only for a hit. Admin runs unmetered.
-    if (!isAdmin) {
+    // A free refresh of an address the member already paid for skips the charge.
+    if (!isAdmin && !alreadyPaid) {
       // RTDB runs the update fn first against the (empty) local cache — v is
       // null on that pass in a cold function. Returning undefined there would
       // ABORT before ever seeing the real balance (the bug that flipped a
@@ -1224,7 +1259,7 @@ exports.revealOwner = onRequest({
       await admin.database().ref(`creditsLedger/${user.uid}`).push(
         {delta: -1, reason: "reveal", addr: k, at: Date.now()});
     }
-    await admin.database().ref(`reveals/${user.uid}/${k}`).set(result);
+    await revRef.set(result);
     const newBal = (await balRef.get()).val() || 0;
     res.json({revealed: result, balance: newBal, ...flags});
   } catch (e) {
