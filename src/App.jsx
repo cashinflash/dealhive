@@ -9179,7 +9179,7 @@ function FinderSkeleton() {
   );
 }
 
-function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobile, apiLookup, rcAuth}) {
+function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobile, apiLookup, rcAuth, isAdmin = false}) {
   const isWide = useIsWide();
   const isPro  = tier === "pro";
   const [query, setQuery]         = useState("");
@@ -9245,7 +9245,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
       } else {
         setResults(null);
         setError({kind:"error", title:"Search hit a snag",
-          body: j.message || "Something went wrong reaching the listing service. Give it another try."});
+          body: j.message || "Something went wrong reaching the listing service. Give it another try.",
+          detail: j.detail || null, host: j.host || null, path: j.path || null});
       }
     } catch {
       setResults(null);
@@ -9335,7 +9336,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           {Array.from({length: mobile ? 3 : 6}).map((_, i) => <FinderSkeleton key={i}/>)}
         </div>
       ) : error ? (
-        <FinderNotice error={error} isPro={isPro} onUpgrade={onUpgrade}
+        <FinderNotice error={error} isPro={isPro} isAdmin={isAdmin} onUpgrade={onUpgrade}
           onRetry={error.kind === "limit" ? null : () => runSearch(submitted)}/>
       ) : results === null ? (
         <FinderIntro onPick={c => { setQuery(c); runSearch(c); }}/>
@@ -9457,7 +9458,7 @@ function FinderIntro({onPick}) {
 
 // Recoverable error / limit / staged surface for the Finder — same calm tone as
 // the sheet notices, with a Try Again and (when out of searches) an Upgrade CTA.
-function FinderNotice({error, isPro, onUpgrade, onRetry}) {
+function FinderNotice({error, isPro, isAdmin = false, onUpgrade, onRetry}) {
   const limit = error.kind === "limit";
   return (
     <Card style={{padding:"32px 28px", textAlign:"center", maxWidth:560, margin:"0 auto"}}>
@@ -9474,6 +9475,17 @@ function FinderNotice({error, isPro, onUpgrade, onRetry}) {
         <div style={{fontSize:14, color:C.textSub, fontFamily:F, marginTop:7, lineHeight:1.55,
           maxWidth:420, marginLeft:"auto", marginRight:"auto"}}>
           {error.body}
+        </div>
+      )}
+      {/* Admin-only diagnostic: the real upstream reason, so config issues are
+          visible instead of hidden behind the friendly message. */}
+      {isAdmin && error.detail && (
+        <div style={{marginTop:14, padding:"10px 12px", background:C.bgSubtle, border:"1px solid "+C.border,
+          borderRadius:C.r2, fontSize:12, color:C.textSub, fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",
+          textAlign:"left", wordBreak:"break-word", maxWidth:460, marginLeft:"auto", marginRight:"auto"}}>
+          <div style={{fontWeight:700, marginBottom:3, color:C.textMuted}}>Admin diagnostic</div>
+          {error.detail}
+          {error.host && <div style={{marginTop:4, color:C.textMuted}}>{error.host}{error.path}</div>}
         </div>
       )}
       <div style={{marginTop:20, display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap"}}>
@@ -9523,7 +9535,7 @@ function DealsHub(props) {
         </div>
       </div>
       {tab === "finder" ? (
-        <DealFinderPage tier={props.tier} token={props.token}
+        <DealFinderPage tier={props.tier} token={props.token} isAdmin={props.isAdmin}
           onAnalyzeDeal={props.onAnalyzeDeal} onSaveDeal={props.onSaveDeal}
           onUpgrade={props.onUpgrade} mobile={mobile}
           apiLookup={props.apiLookup} rcAuth={props.rcAuth}/>
@@ -12248,7 +12260,7 @@ export default function App() {
         ) : page==="projects" && isAdmin ? (
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deals" ? (
-          <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
+          <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade} isAdmin={isAdmin}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
             strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
             apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
@@ -12338,7 +12350,7 @@ export default function App() {
             ) : page==="projects" && isAdmin ? (
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deals" ? (
-              <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
+              <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade} isAdmin={isAdmin}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
                 strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
