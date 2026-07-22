@@ -917,10 +917,118 @@ exports.pullDealsNow = onRequest({
 // searches meter per member. The provider config below is filled in once the
 // RapidAPI listing API is chosen; until then the endpoint reports staged.
 const RAPIDAPI_KEY = defineSecret("RAPIDAPI_KEY");
+// Private-Zillow on RapidAPI. One /search/byaddress call returns up to ~200
+// live for-sale listings, and — the make-or-break — each carries inline photos,
+// a rent Zestimate, and a value Zestimate, so we can underwrite every result
+// without a second per-property call.
 const LISTING_PROVIDER = {
-  host: "",        // e.g. "zillow-com1.p.rapidapi.com" — set when the API is chosen
-  searchPath: "",  // e.g. "/propertyExtendedSearch"
+  host: "private-zillow.p.rapidapi.com",
+  searchPath: "/search/byaddress",
 };
+// Monthly search quota per tier. Only FRESH upstream calls burn quota — a city
+// someone already searched today is served from the shared cache for free — so
+// these numbers cap what a member can cost us, not what they can browse.
+const SEARCH_LIMITS = {free: 5, pro: 150};
+// A searched city stays warm for 12h. Fresh enough for a for-sale board, and it
+// means the tenth member to search Cleveland today pays no upstream call.
+const LISTING_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+const numOr0 = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+// Collapse a free-text location into a stable, RTDB-safe cache key so
+// "Cleveland, OH " and "cleveland,  oh" share one warm entry.
+function listingCacheKey(q, page) {
+  const norm = String(q || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+  return `${norm.replace(/\s/g, "_")}__p${page || 1}`;
+}
+
+// Map a Zillow property type to DealHive's residential buckets. The client only
+// analyzes these four; land/commercial map to "Other" and get filtered out.
+function mapZillowType(t) {
+  const s = String(t || "").toLowerCase();
+  if (s.includes("multi")) return "Multi-Family";
+  if (s.includes("town")) return "Townhouse";
+  if (s.includes("condo") || s.includes("apartment") || s.includes("coop") || s.includes("co_op")) return "Condo";
+  if (s.includes("single") || s.includes("manufactured") || s.includes("mobile")) return "Single Family";
+  if (s.includes("lot") || s.includes("land") || s.includes("commercial")) return "Other";
+  return "Single Family";
+}
+
+// Pull the full-size photo URLs off a Zillow media object, preferring the
+// high-resolution set, then medium, then the single cover links.
+function pickZillowPhotos(media) {
+  media = media || {};
+  const out = [];
+  const push = (u) => { if (typeof u === "string" && u.startsWith("http") && !out.includes(u)) out.push(u); };
+  const all = media.allPropertyPhotos || {};
+  (all.highResolution || []).forEach(push);
+  if (out.length === 0) (all.medium || []).forEach(push);
+  const links = media.propertyPhotoLinks || {};
+  push(links.highResolutionLink); push(links.mediumSizeLink);
+  return out.slice(0, 12);
+}
+
+// Normalize one Zillow searchResults entry into the exact deal shape the
+// DealHive feed/analyzer already consume, so the client can classify and render
+// it with the same pipeline as every other deal.
+function mapZillowListing(entry) {
+  const p = entry && entry.property ? entry.property : entry;
+  if (!p || typeof p !== "object") return null;
+  const addr = p.address || {};
+  const loc = p.location || {};
+  const est = p.estimates || {};
+  const priceObj = (p.price && typeof p.price === "object") ? p.price : {};
+  const sub = (p.listing && p.listing.listingSubType) || {};
+  const photos = pickZillowPhotos(p.media);
+  const zpid = p.zpid || p.zpID || p.id || null;
+  const street = addr.streetAddress || p.streetAddress || "";
+  const priceVal = numOr0(priceObj.value != null ? priceObj.value : p.price);
+  const lot = (() => {
+    const l = p.lotSizeWithUnit || {};
+    const size = numOr0(l.lotSize);
+    if (!size) return 0;
+    return String(l.lotSizeUnit || "").toLowerCase().startsWith("acre")
+      ? Math.round(size * 43560) : Math.round(size);
+  })();
+  const hdp = (p.hdpView && p.hdpView.hdpUrl) || p.hdpUrl || "";
+  return {
+    id: "z" + (zpid || `${loc.latitude}_${loc.longitude}_${priceVal}`),
+    zpid: zpid ? String(zpid) : null,
+    address: street || `${addr.city || ""}, ${addr.state || ""}`.replace(/^, |, $/g, "").trim(),
+    streetAddress: street || null,
+    city: addr.city || "",
+    state: addr.state || "",
+    zip: addr.zipcode || addr.zip || "",
+    lat: loc.latitude != null ? loc.latitude : null,
+    lng: loc.longitude != null ? loc.longitude : null,
+    type: mapZillowType(p.propertyType),
+    beds: numOr0(p.bedrooms),
+    baths: numOr0(p.bathrooms),
+    sqft: numOr0(p.livingArea),
+    lotSize: lot,
+    yearBuilt: numOr0(p.yearBuilt),
+    price: priceVal,
+    askingPrice: priceVal,
+    rent: numOr0(est.rentZestimate),
+    arv: numOr0(est.zestimate),
+    repair: 0,
+    photo: photos[0] || null,
+    photos,
+    source: "Zillow",
+    sourceUrl: hdp ? (hdp.startsWith("http") ? hdp : "https://www.zillow.com" + hdp) : null,
+    broker: (p.propertyDisplayRules && p.propertyDisplayRules.mls && p.propertyDisplayRules.mls.brokerName) || null,
+    daysOnMarket: numOr0(p.daysOnZillow),
+    fsbo: !!sub.isFSBO,
+    sourcedAt: new Date().toISOString().slice(0, 10),
+  };
+}
+
+// First day of next month (UTC) — when a member's monthly search quota resets.
+function nextMonthResetISO() {
+  const d = new Date();
+  const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  return new Date(Date.UTC(m === 11 ? y + 1 : y, (m + 1) % 12, 1)).toISOString().slice(0, 10);
+}
 
 exports.searchListings = onRequest({
   secrets: [RAPIDAPI_KEY],
@@ -930,15 +1038,105 @@ exports.searchListings = onRequest({
     if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
     const user = await verifyUser(req);
     if (!user) { res.status(401).json({error: "auth"}); return; }
+    const body = req.body || {};
+
+    // Tier + this month's usage. Admin is unlimited; everyone else meters.
+    const isAdmin = user.email === "harut@ymail.com";
+    const tierVal = (await admin.database().ref(`billing/${user.uid}/tier`).get()).val();
+    const tier = (isAdmin || tierVal === "pro") ? "pro" : "free";
+    const limit = isAdmin ? Infinity : (SEARCH_LIMITS[tier] || SEARCH_LIMITS.free);
+    const mo = new Date().toISOString().slice(0, 7);
+    const usageRef = admin.database().ref(`searchUsage/${user.uid}/${mo}`);
+    const used = numOr0((await usageRef.get()).val());
+    const meter = (u) => ({
+      tier,
+      limit: limit === Infinity ? null : limit,
+      used: u,
+      remaining: limit === Infinity ? null : Math.max(0, limit - u),
+      resets: nextMonthResetISO(),
+    });
+
+    // Meter-only ping: the Deal Finder asks for the quota on mount without
+    // spending a search.
+    if (body.meterOnly) { res.json({meter: meter(used)}); return; }
+
+    const query = String(body.query || "").trim();
+    const page = Math.max(1, Math.min(20, parseInt(body.page, 10) || 1));
+    if (query.length < 2) {
+      res.status(400).json({error: "query", message: "Enter a city, ZIP, or address."});
+      return;
+    }
+
+    // Shared cache first — a warm city is free and never touches the meter.
+    const cacheRef = admin.database().ref(`listingCache/${listingCacheKey(query, page)}`);
+    const cached = (await cacheRef.get()).val();
+    if (cached && cached.ts && (Date.now() - cached.ts) < LISTING_CACHE_TTL_MS && Array.isArray(cached.items)) {
+      res.json({items: cached.items, count: cached.count || cached.items.length,
+        totalPages: cached.totalPages || 1, page, cached: true, meter: meter(used)});
+      return;
+    }
+
     const key = RAPIDAPI_KEY.value();
     if (!key || key === "unset" || !LISTING_PROVIDER.host) {
       res.status(503).json({error: "staged",
-        message: "Listing search is staged and waiting for the RapidAPI provider."});
+        message: "Listing search is warming up. Check back shortly."});
       return;
     }
-    // Provider call + normalization + shared cache + per-tier metering land
-    // here with the chosen API's schema.
-    res.status(503).json({error: "staged"});
+
+    // A fresh upstream call is the part that costs us, so it's what the monthly
+    // quota gates.
+    if (limit !== Infinity && used >= limit) {
+      res.status(429).json({error: "limit", meter: meter(used), message: tier === "pro"
+        ? "You've used all 150 searches this month. They reset on the 1st."
+        : "You've used your 5 free searches this month. Upgrade to Pro for 150 a month."});
+      return;
+    }
+
+    // Call the provider. Primary param is `location` (the common convention);
+    // if that hard-errors we retry once with `address` (the endpoint is
+    // literally /search/byaddress). A valid-but-empty result is trusted as-is.
+    const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LISTING_PROVIDER.host};
+    const base = `https://${LISTING_PROVIDER.host}${LISTING_PROVIDER.searchPath}`;
+    const pickArray = (j) => Array.isArray(j?.searchResults) ? j.searchResults
+      : Array.isArray(j?.results) ? j.results
+      : Array.isArray(j?.props) ? j.props
+      : Array.isArray(j?.data?.searchResults) ? j.data.searchResults
+      : Array.isArray(j) ? j : null;
+    let json = null;
+    for (const param of ["location", "address"]) {
+      let r;
+      try {
+        r = await fetch(`${base}?${param}=${encodeURIComponent(query)}&page=${page}`, {headers});
+      } catch (e) {
+        logger.error("searchListings fetch", {param, error: e.message});
+        continue;
+      }
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        logger.error("searchListings upstream", {param, status: r.status, body: txt.slice(0, 300)});
+        continue;
+      }
+      const j = await r.json().catch(() => null);
+      if (pickArray(j) != null) { json = j; break; }
+      logger.warn("searchListings unrecognized body", {param, keys: j ? Object.keys(j).slice(0, 8) : null});
+    }
+    if (json == null) {
+      res.status(502).json({error: "upstream",
+        message: "The listing service is temporarily unavailable. Try again in a moment."});
+      return;
+    }
+
+    const items = (pickArray(json) || [])
+      .map(mapZillowListing)
+      .filter((x) => x && x.price > 0 && (x.lat != null || x.streetAddress));
+    const totalPages = (json.pagesInfo && json.pagesInfo.totalPages) || 1;
+    const count = (json.resultsCount && json.resultsCount.totalMatchingCount) || items.length;
+
+    // Cache the mapped set (shared across members) and bill one search.
+    await cacheRef.set({ts: Date.now(), items, count, totalPages, query, page});
+    let newUsed = used;
+    if (!isAdmin) { await usageRef.transaction((v) => numOr0(v) + 1); newUsed = used + 1; }
+    res.json({items, count, totalPages, page, cached: false, meter: meter(newUsed)});
   } catch (e) {
     logger.error("searchListings", {error: e.message});
     res.status(500).json({error: "search failed"});

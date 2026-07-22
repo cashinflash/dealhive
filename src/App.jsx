@@ -5875,6 +5875,10 @@ const STRATEGY_LABELS = {
   // FSBO.com inventory lane — listed for the address + seller contact, not
   // because the fallback math proved a strategy.
   byowner: {label:"By Owner",     color:C.sidebar,   bg:C.bgSubtle,    border:C.borderHover, dot:C.amber},
+  // Deal Finder search results that don't clear a strategy gate at asking
+  // still show — chipped neutrally, with the (often red) numbers telling the
+  // honest story rather than a strategy label they didn't earn.
+  listed:  {label:"On Market",    color:C.textSub,   bg:C.bgSubtle,    border:C.border,      dot:C.textMuted},
 };
 
 // Wholesale assignment deals come from the InvestorLift pull ("DealHive 1")
@@ -5994,20 +5998,23 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
 function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
                     saveLabel = "Save", saveIcon = null, saveAriaLabel = "Save to portfolio",
                     analyzeLabel = "Analyze", hideSource = false,
-                    savedScenario = null, savedFinancing = null, showAddress = false}) {
+                    savedScenario = null, savedFinancing = null, showAddress = false,
+                    alwaysShow = false}) {
   const {c, isBrrrr, primary, strat: stratAuto, heroNumber, secondaryMetrics, methods} =
     dealHeroMetrics(deal, savedScenario, savedFinancing);
-  // FSBO.com cards are the "By Owner" inventory lane: they render even when
-  // the fallback math proves no strategy, chipped honestly instead of with
-  // a strategy label they didn't earn.
+  // FSBO.com cards are the "By Owner" inventory lane, and Deal Finder search
+  // results (alwaysShow) are the live-market lane: both render even when the
+  // fallback math proves no strategy, chipped honestly instead of with a
+  // strategy label they didn't earn.
   const byOwner = deal.source === "DealHive 2";
-  const strat = (byOwner && !savedScenario && c.tags.filter(t => t !== "brrrr").length === 0)
-    ? STRATEGY_LABELS.byowner : stratAuto;
+  const noCoreTag = c.tags.filter(t => t !== "brrrr").length === 0;
+  const strat = (!savedScenario && noCoreTag && (byOwner || alwaysShow))
+    ? (byOwner ? STRATEGY_LABELS.byowner : STRATEGY_LABELS.listed) : stratAuto;
   // Feed deals are pre-filtered upstream, so empty tags "shouldn't happen"
   // there — but user-filed watchlist deals (analyzer saves, manual entries)
   // can miss both pro forma gates. If the user chose a scenario at save time,
   // always render the card their way; only auto-classified feed cards bail.
-  if (c.tags.length === 0 && !savedScenario && !byOwner) return null;
+  if (c.tags.length === 0 && !savedScenario && !byOwner && !alwaysShow) return null;
 
   const photo = (Array.isArray(deal.userPhotos) && deal.userPhotos[0])
     || deal.photo || (deal.lat && deal.lng ? svUrl(deal.lat, deal.lng, 800, 320) : null);
@@ -9127,6 +9134,406 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
   );
 }
 
+// -- Deal Finder ---------------------------------------------------------------
+// Search-first Deals: type a city, ZIP, or address and get live for-sale
+// listings from Zillow, each one underwritten by the same engine as the
+// analyzer. Everything routes through the searchListings Cloud Function so the
+// RapidAPI key stays server-side, popular cities are served from a shared cache
+// for free, and fresh searches meter per member.
+const FINDER_SUGGESTIONS = [
+  "Cleveland, OH", "Memphis, TN", "Birmingham, AL", "Indianapolis, IN",
+  "Kansas City, MO", "Columbus, OH", "Jacksonville, FL", "Detroit, MI",
+];
+
+// A meter pill that reads "3 of 5 searches left this month". Hidden for admin
+// (unlimited → meter.limit is null). Turns amber when the tank is nearly empty.
+function SearchMeterPill({meter}) {
+  if (!meter || meter.limit == null) return null;
+  const left = meter.remaining ?? Math.max(0, meter.limit - (meter.used || 0));
+  const low  = left <= Math.max(1, Math.round(meter.limit * 0.2));
+  const bg = low ? C.amberSubtle : C.greenSubtle;
+  const bd = low ? C.amberBorder : C.greenBorder;
+  const fg = low ? C.amberDark   : C.greenDark;
+  return (
+    <span title={`Resets ${meter.resets ? new Date(meter.resets+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "on the 1st"}`}
+      style={{display:"inline-flex", alignItems:"center", gap:6, background:bg, color:fg,
+        border:"1px solid "+bd, padding:"4px 11px", borderRadius:9999, fontSize:12,
+        fontWeight:700, fontFamily:F, letterSpacing:"-0.005em", whiteSpace:"nowrap"}}>
+      <I.search size={12} stroke={2.4}/>
+      {left} of {meter.limit} search{meter.limit===1?"":"es"} left
+    </span>
+  );
+}
+
+// Loading placeholder card — a pulsing photo bar over two metric rows.
+function FinderSkeleton() {
+  return (
+    <Card padding={0} style={{overflow:"hidden"}}>
+      <div className="dh-pulse" style={{height:170, background:C.bgSubtle}}/>
+      <div style={{padding:"14px 16px", display:"flex", flexDirection:"column", gap:12}}>
+        <div className="dh-pulse" style={{height:16, width:"70%", margin:"0 auto", background:C.bgSubtle, borderRadius:6}}/>
+        <div className="dh-pulse" style={{height:66, background:C.bgSubtle, borderRadius:C.r3}}/>
+        <div className="dh-pulse" style={{height:38, background:C.bgSubtle, borderRadius:C.r2}}/>
+      </div>
+    </Card>
+  );
+}
+
+function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobile, apiLookup, rcAuth}) {
+  const isWide = useIsWide();
+  const isPro  = tier === "pro";
+  const [query, setQuery]         = useState("");
+  const [submitted, setSubmitted] = useState("");    // the query behind the current results
+  const [loading, setLoading]     = useState(false);
+  const [results, setResults]     = useState(null);  // array | null (never searched)
+  const [count, setCount]         = useState(0);
+  const [cachedHit, setCachedHit] = useState(false);
+  const [error, setError]         = useState(null);  // {kind, title, body} | null
+  const [meter, setMeter]         = useState(null);
+  const [strategy, setStrategy]   = useState("all");
+  const [maxPrice, setMaxPrice]   = useState(0);
+  const [visN, setVisN]           = useState(36);
+  const [selectedId, setSelectedId] = useState(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  // Quota on mount — a meter-only ping that doesn't spend a search.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${FN_BASE}/searchListings`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json", Authorization:`Bearer ${token}`},
+          body: JSON.stringify({meterOnly:true}),
+        });
+        const j = await r.json().catch(()=>null);
+        if (alive && j && j.meter) setMeter(j.meter);
+      } catch { /* the pill just stays hidden */ }
+    })();
+    return () => { alive = false; };
+  }, [token]);
+
+  const runSearch = async (q) => {
+    const term = String(q ?? query).trim();
+    if (term.length < 2 || loading) return;
+    setLoading(true); setError(null); setSubmitted(term); setVisN(36);
+    setStrategy("all"); setMaxPrice(0);
+    if (inputRef.current) inputRef.current.blur();
+    try {
+      const r = await fetch(`${FN_BASE}/searchListings`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json", Authorization:`Bearer ${token}`},
+        body: JSON.stringify({query: term, page: 1}),
+      });
+      const j = await r.json().catch(()=>({}));
+      if (j.meter) setMeter(j.meter);
+      if (r.ok) {
+        setResults(Array.isArray(j.items) ? j.items : []);
+        setCount(j.count || (j.items||[]).length);
+        setCachedHit(!!j.cached);
+      } else if (j.error === "limit") {
+        setResults(null);
+        setError({kind:"limit",
+          title: isPro ? "You're out of searches this month" : "You've used your free searches",
+          body: j.message || ""});
+      } else if (j.error === "staged") {
+        setResults(null);
+        setError({kind:"staged", title:"Deal Finder is warming up",
+          body:"Live search switches on the moment our listing connection is live. Check back shortly."});
+      } else {
+        setResults(null);
+        setError({kind:"error", title:"Search hit a snag",
+          body: j.message || "Something went wrong reaching the listing service. Give it another try."});
+      }
+    } catch {
+      setResults(null);
+      setError({kind:"error", title:"Couldn't reach the listing service",
+        body:"Check your connection and try again."});
+    }
+    setLoading(false);
+  };
+
+  // Underwrite + filter client-side. Unlike the curated feed we never hide a
+  // listing for failing the gates — the Finder shows the whole market and lets
+  // the (honest, sometimes red) numbers speak. Passing deals just sort first.
+  const classified = (results || [])
+    .filter(isResidential)
+    .map(d => ({d, c: classifyDeal(d)}));
+  const counts = {
+    all:     classified.length,
+    buyhold: classified.filter(({c})=>c.tags.includes("buyhold")).length,
+    brrrr:   classified.filter(({c})=>c.tags.includes("brrrr")).length,
+    flip:    classified.filter(({c})=>c.tags.includes("flip")).length,
+  };
+  const strategyPassed = classified.filter(({c}) => {
+    if (strategy === "buyhold" && !c.tags.includes("buyhold")) return false;
+    if (strategy === "brrrr"   && !c.tags.includes("brrrr"))   return false;
+    if (strategy === "flip"    && !c.tags.includes("flip"))    return false;
+    return true;
+  });
+  const filtered = strategyPassed.filter(({d}) => !(maxPrice > 0 && d.price > maxPrice));
+  filtered.sort((a, b) => {
+    const aPass = a.c.tags.length ? 1 : 0, bPass = b.c.tags.length ? 1 : 0;
+    if (aPass !== bPass) return bPass - aPass;
+    return Math.max(b.c.buyHoldScore, b.c.flipScore) - Math.max(a.c.buyHoldScore, a.c.flipScore);
+  });
+  const passCount = counts.buyhold + counts.flip > 0
+    ? classified.filter(({c}) => c.tags.length > 0).length : 0;
+  const visible = filtered.slice(0, visN);
+
+  const inputWrap = {
+    display:"flex", alignItems:"center", gap:8, background:C.card,
+    border:"1px solid "+C.border, borderRadius:9999, boxShadow:C.sh2,
+    padding:"6px 6px 6px 18px", width:"100%", maxWidth:640,
+  };
+
+  return (
+    <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
+      {/* Header */}
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+        gap:12, flexWrap:"wrap", marginBottom:6}}>
+        <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+          Deal Finder
+        </h1>
+        <SearchMeterPill meter={meter}/>
+      </div>
+      <div style={{fontSize:14, color:C.textSub, fontFamily:F, lineHeight:1.5, marginBottom:18, maxWidth:560}}>
+        Search any market and every live listing comes back already underwritten. The strongest cash flow floats to the top.
+      </div>
+
+      {/* Search bar */}
+      <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{marginBottom:18}}>
+        <div style={inputWrap}>
+          <span style={{display:"inline-flex", color:C.textMuted, flexShrink:0}}>
+            <I.search size={19} stroke={2.2}/>
+          </span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Enter a city, ZIP, or address"
+            enterKeyHint="search"
+            style={{flex:1, minWidth:0, border:"none", outline:"none", background:"transparent",
+              fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+              padding:"8px 0"}}/>
+          <button type="submit" disabled={loading || query.trim().length < 2}
+            {...btnStyle("primary","lg", {borderRadius:9999, flexShrink:0, minWidth:mobile?44:0,
+              opacity: (loading || query.trim().length < 2) ? .6 : 1})}>
+            {loading
+              ? <span className="dh-spin" style={{display:"inline-flex"}}><I.cycle size={16} stroke={2.4}/></span>
+              : <><I.search size={16} stroke={2.4}/>{!mobile && " Search"}</>}
+          </button>
+        </div>
+      </form>
+
+      {/* States */}
+      {loading ? (
+        <div style={{display:"grid",
+          gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
+          {Array.from({length: mobile ? 3 : 6}).map((_, i) => <FinderSkeleton key={i}/>)}
+        </div>
+      ) : error ? (
+        <FinderNotice error={error} isPro={isPro} onUpgrade={onUpgrade}
+          onRetry={error.kind === "limit" ? null : () => runSearch(submitted)}/>
+      ) : results === null ? (
+        <FinderIntro onPick={c => { setQuery(c); runSearch(c); }}/>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<I.search size={20}/>}
+          title={classified.length === 0 ? `No live listings for “${submitted}” right now`
+            : "No listings match this filter"}
+          body={classified.length === 0
+            ? "Try another city or ZIP — inventory shifts constantly, so it's worth another look soon."
+            : "Widen your price or switch strategy tabs to see the rest of this market."}
+        />
+      ) : (
+        <>
+          {/* Result summary + filters */}
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+            gap:12, flexWrap:"wrap", marginBottom:14}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                {count.toLocaleString()} listing{count===1?"":"s"} in {submitted}
+                {cachedHit && (
+                  <span style={{marginLeft:8, fontSize:11, fontWeight:700, color:C.textMuted,
+                    fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>· cached</span>
+                )}
+              </div>
+              {passCount > 0 && (
+                <div style={{fontSize:13, color:C.greenDark, fontFamily:F, marginTop:2, fontWeight:600,
+                  display:"inline-flex", alignItems:"center", gap:5}}>
+                  <I.trendingUp size={13} stroke={2.4}/>
+                  {passCount} clear{passCount===1?"s":""} a strategy at asking
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center"}}>
+            <StrategySegments value={strategy} onChange={setStrategy} counts={counts}/>
+            <div style={{position:"relative", flex:1, minWidth:140, maxWidth: mobile ? "100%" : 200}}>
+              <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+                color:C.greenDark, display:"inline-flex", pointerEvents:"none"}}>
+                <I.dollar size={13} stroke={2.2}/>
+              </span>
+              <input type="text" inputMode="decimal"
+                value={maxPrice ? Number(maxPrice).toLocaleString() : ""}
+                onChange={e => { const raw = e.target.value.replace(/[^0-9]/g, "");
+                  setMaxPrice(raw === "" ? 0 : parseInt(raw, 10)); }}
+                placeholder="Max price"
+                style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:32,
+                  fontWeight:600, background:C.card, boxShadow:C.sh1, marginBottom:0}}/>
+            </div>
+          </div>
+
+          {/* Results grid */}
+          <div style={{display:"grid",
+            gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
+            {visible.map(({d}) => (
+              <DealCard key={d.id} deal={d} isPro alwaysShow showAddress
+                onAnalyze={() => onAnalyzeDeal(d)}
+                onSave={() => onSaveDeal(d)}
+                onUpgrade={onUpgrade}
+                onOpen={() => setSelectedId(d.id)}
+                mobile={mobile}/>
+            ))}
+          </div>
+
+          {filtered.length > visN && (
+            <div style={{display:"flex", justifyContent:"center", marginTop:20}}>
+              <button onClick={() => setVisN(n => n + 36)} {...btnStyle("secondary","md")}>
+                Show more listings
+              </button>
+            </div>
+          )}
+
+          {selectedId && (() => {
+            const entry = classified.find(({d}) => d.id === selectedId);
+            if (!entry) return null;
+            return (
+              <DealDetailModal deal={entry.d} isPro onClose={() => setSelectedId(null)}
+                onAnalyze={onAnalyzeDeal} onSave={onSaveDeal} onUpgrade={onUpgrade}
+                apiLookup={apiLookup} rcAuth={rcAuth} mobile={mobile}/>
+            );
+          })()}
+        </>
+      )}
+    </div>
+  );
+}
+
+// First-run canvas before any search: a friendly prompt plus one-tap city chips.
+function FinderIntro({onPick}) {
+  return (
+    <Card style={{padding:"36px 28px", textAlign:"center",
+      background:`linear-gradient(160deg, ${C.greenSubtle} 0%, ${C.card} 60%)`, borderColor:C.greenBorder}}>
+      <div style={{width:52, height:52, borderRadius:C.r3, background:C.green, color:"#fff",
+        display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:14}}>
+        <I.search size={24} stroke={2.2}/>
+      </div>
+      <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+        Find your next deal
+      </div>
+      <div style={{fontSize:14, color:C.textSub, fontFamily:F, marginTop:6, lineHeight:1.55, maxWidth:460, marginLeft:"auto", marginRight:"auto"}}>
+        Type a city, ZIP, or address above. We pull the live for-sale listings and run the rental, BRRRR, and flip numbers on every one.
+      </div>
+      <div style={{marginTop:20, display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center"}}>
+        <span style={{fontSize:12, fontWeight:700, color:C.textMuted, fontFamily:F, alignSelf:"center",
+          letterSpacing:".04em", textTransform:"uppercase"}}>Popular:</span>
+        {FINDER_SUGGESTIONS.map(c => (
+          <button key={c} onClick={() => onPick(c)}
+            style={{display:"inline-flex", alignItems:"center", gap:6, background:C.card,
+              border:"1px solid "+C.border, borderRadius:9999, padding:"7px 13px",
+              fontSize:13, fontWeight:600, color:C.text, fontFamily:F, cursor:"pointer",
+              boxShadow:C.sh1, letterSpacing:"-0.005em"}}>
+            <span style={{display:"inline-flex", color:C.greenDark}}><I.pin size={12} stroke={2.2}/></span> {c}
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// Recoverable error / limit / staged surface for the Finder — same calm tone as
+// the sheet notices, with a Try Again and (when out of searches) an Upgrade CTA.
+function FinderNotice({error, isPro, onUpgrade, onRetry}) {
+  const limit = error.kind === "limit";
+  return (
+    <Card style={{padding:"32px 28px", textAlign:"center", maxWidth:560, margin:"0 auto"}}>
+      <div style={{width:50, height:50, borderRadius:C.r3,
+        background: limit ? C.amberSubtle : C.bgSubtle,
+        color: limit ? C.amberDark : C.textMuted,
+        display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:14}}>
+        {limit ? <I.lock size={22} stroke={2.2}/> : <I.alert size={22} stroke={2.2}/>}
+      </div>
+      <div style={{fontSize:18, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+        {error.title}
+      </div>
+      {error.body && (
+        <div style={{fontSize:14, color:C.textSub, fontFamily:F, marginTop:7, lineHeight:1.55,
+          maxWidth:420, marginLeft:"auto", marginRight:"auto"}}>
+          {error.body}
+        </div>
+      )}
+      <div style={{marginTop:20, display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap"}}>
+        {limit && !isPro && (
+          <button onClick={onUpgrade} {...btnStyle("primary","lg")}>
+            <I.star size={14}/> Upgrade to Pro
+          </button>
+        )}
+        {onRetry && (
+          <button onClick={onRetry} {...btnStyle(limit ? "secondary" : "primary","lg")}>
+            <I.cycle size={14}/> Try again
+          </button>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// Tabbed shell for the Deals section: the search-first Deal Finder up front,
+// the curated Fresh Finds feed a tap away.
+function DealsHub(props) {
+  const {mobile} = props;
+  const [tab, setTab] = useState("finder");
+  const tabs = [
+    {id:"finder", label:"Deal Finder", Icon:I.search},
+    {id:"fresh",  label:"Fresh Finds", Icon:I.star},
+  ];
+  return (
+    <div>
+      <div style={{padding: mobile ? "14px 16px 0" : "20px 32px 0"}}>
+        <div style={{display:"inline-flex", padding:4, gap:2, background:C.bgSubtle,
+          border:"1px solid "+C.border, borderRadius:9999}}>
+          {tabs.map(({id, label, Icon}) => {
+            const active = tab === id;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                style={{display:"inline-flex", alignItems:"center", gap:7, padding:"8px 16px",
+                  borderRadius:9999, border:"none", cursor:"pointer",
+                  background: active ? C.card : "transparent",
+                  color: active ? C.text : C.textSub,
+                  fontWeight: active ? 700 : 600, fontSize:13.5, fontFamily:F, letterSpacing:"-0.01em",
+                  boxShadow: active ? C.sh1 : "none", transition:"background .12s, color .12s"}}>
+                <Icon size={15} stroke={2.2}/> {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {tab === "finder" ? (
+        <DealFinderPage tier={props.tier} token={props.token}
+          onAnalyzeDeal={props.onAnalyzeDeal} onSaveDeal={props.onSaveDeal}
+          onUpgrade={props.onUpgrade} mobile={mobile}
+          apiLookup={props.apiLookup} rcAuth={props.rcAuth}/>
+      ) : (
+        <DealsPage {...props}/>
+      )}
+    </div>
+  );
+}
+
 function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, locked = false,
                     strategy: strategyProp, onStrategyChange, apiLookup, rcAuth}) {
   const [market, setMarket]     = useState("all");
@@ -11338,6 +11745,7 @@ export default function App() {
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
 
       @keyframes dhSpin{to{transform:rotate(360deg)}}
+      .dh-spin{animation:dhSpin .8s linear infinite}
       @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
@@ -11840,7 +12248,7 @@ export default function App() {
         ) : page==="projects" && isAdmin ? (
           <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
         ) : page==="deals" ? (
-          <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
+          <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
             onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
             strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
             apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
@@ -11930,7 +12338,7 @@ export default function App() {
             ) : page==="projects" && isAdmin ? (
               <ProjectsPage properties={data.properties||[]} onUpdateProperty={updateProp} mobile={mobile} />
             ) : page==="deals" ? (
-              <DealsPage tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
+              <DealsHub tier={isAdmin ? "pro" : (data.tier||"free")} onUpgrade={handleUpgrade}
                 onAnalyzeDeal={analyzeDealFromMarket} onSaveDeal={saveDealFromMarket}
                 strategy={dealsStrategy} onStrategyChange={setDealsStrategy}
                 apiLookup={apiLookup} rcAuth={sharedProps.rcAuth}
