@@ -1092,37 +1092,51 @@ exports.searchListings = onRequest({
       return;
     }
 
-    // Call the provider. Primary param is `location` (the common convention);
-    // if that hard-errors we retry once with `address` (the endpoint is
-    // literally /search/byaddress). A valid-but-empty result is trusted as-is.
+    // Resolve the exact (path, param) this API wants. Its sidebar labels the
+    // endpoints "/search/byaddress", but the real cURL path is bare ("/byurl"),
+    // so the search path is almost certainly "/byaddress". We try a short
+    // candidate list and REMEMBER the winner in config/listingResolved, so every
+    // later search leads with it — one call, no waste.
     const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LISTING_PROVIDER.host};
-    const base = `https://${LISTING_PROVIDER.host}${LISTING_PROVIDER.searchPath}`;
     const pickArray = (j) => Array.isArray(j?.searchResults) ? j.searchResults
       : Array.isArray(j?.results) ? j.results
       : Array.isArray(j?.props) ? j.props
       : Array.isArray(j?.data?.searchResults) ? j.data.searchResults
       : Array.isArray(j) ? j : null;
-    let json = null, lastStatus = 0, lastDetail = "";
-    for (const param of ["location", "address"]) {
+    const CANDIDATES = [
+      {path: "/byaddress", param: "location"},
+      {path: "/byaddress", param: "address"},
+      {path: "/search/byaddress", param: "location"},
+      {path: "/search/byaddress", param: "address"},
+      {path: "/byaddress", param: "query"},
+    ];
+    const resolvedRef = admin.database().ref("config/listingResolved");
+    const resolved = (await resolvedRef.get()).val();
+    const order = [];
+    if (resolved && resolved.path && resolved.param) order.push(resolved);
+    for (const c of CANDIDATES) {
+      if (!order.some((o) => o.path === c.path && o.param === c.param)) order.push(c);
+    }
+    let json = null, winner = null, lastStatus = 0, lastDetail = "";
+    for (const {path, param} of order) {
       let r;
       try {
-        r = await fetch(`${base}?${param}=${encodeURIComponent(query)}&page=${page}`, {headers});
+        r = await fetch(`https://${LISTING_PROVIDER.host}${path}?${param}=${encodeURIComponent(query)}&page=${page}`, {headers});
       } catch (e) {
-        lastDetail = `fetch failed (${param}): ${e.message}`;
-        logger.error("searchListings fetch", {param, error: e.message});
+        lastDetail = `${path}?${param} → fetch failed: ${e.message}`;
         continue;
       }
       lastStatus = r.status;
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
-        lastDetail = `${param}: ${txt.slice(0, 160)}`;
-        logger.error("searchListings upstream", {param, status: r.status, body: txt.slice(0, 300)});
+        lastDetail = `${path}?${param} → HTTP ${r.status}: ${txt.slice(0, 120)}`;
+        logger.error("searchListings upstream", {path, param, status: r.status, body: txt.slice(0, 300)});
         continue;
       }
       const j = await r.json().catch(() => null);
-      if (pickArray(j) != null) { json = j; break; }
-      lastDetail = `${param}: 200 but unexpected shape, keys=${j ? Object.keys(j).slice(0, 8).join(",") : "null"}`;
-      logger.warn("searchListings unrecognized body", {param, keys: j ? Object.keys(j).slice(0, 8) : null});
+      if (pickArray(j) != null) { json = j; winner = {path, param}; break; }
+      lastDetail = `${path}?${param} → 200 unexpected keys=${j ? Object.keys(j).slice(0, 6).join(",") : "null"}`;
+      logger.warn("searchListings unrecognized body", {path, param, keys: j ? Object.keys(j).slice(0, 8) : null});
     }
     if (json == null) {
       // `detail` carries the real upstream reason (e.g. "not subscribed", 404)
@@ -1130,8 +1144,12 @@ exports.searchListings = onRequest({
       res.status(502).json({error: "upstream",
         message: "The listing service is temporarily unavailable. Try again in a moment.",
         detail: `HTTP ${lastStatus || "no-response"} — ${lastDetail || "no detail"}`.slice(0, 220),
-        host: LISTING_PROVIDER.host, path: LISTING_PROVIDER.searchPath});
+        host: LISTING_PROVIDER.host, path: order[0].path});
       return;
+    }
+    // Lock in the winning combo so the next search leads with it.
+    if (winner && (!resolved || resolved.path !== winner.path || resolved.param !== winner.param)) {
+      await resolvedRef.set(winner);
     }
 
     const items = (pickArray(json) || [])
