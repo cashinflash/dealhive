@@ -67,6 +67,7 @@ const LOOKUP_CAP    = 250;            // Pro: fresh billable lookups per month
 // rental-comp lookups. Manual analyzing (no API) is always unlimited.
 const FREE_LIMITS   = {pulls: 3, sales: 5, rent: 5};
 const CACHE_TTL_MS  = 30 * 86400000;  // cached results stay fresh for 30 days
+const EMPTY_TTL_MS  = 6 * 3600000;    // "nothing found" results retry after 6 hours
 const CACHE_MAX     = 50;             // most recent entries kept; older ones pruned
 const monthKey      = () => new Date().toISOString().slice(0, 7);   // "2026-05"
 const lookupKey     = (...parts) =>
@@ -7252,17 +7253,22 @@ function SheetShell({title, sub, onClose, mobile, hive=false, children}) {
     : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:620,
        display:"flex", alignItems:"center", justifyContent:"center", padding:20,
        backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  // The header (title + close) lives OUTSIDE the scroll area so the way out
+  // is always on screen — content scrolls underneath it, never over it.
   const inner = mobile
-    ? {background: hive ? C.bg : C.card, width:"100%", height:"100%", overflowY:"auto", overscrollBehavior:"contain",
-       padding:"calc(16px + env(safe-area-inset-top, 0px)) 16px 40px", WebkitOverflowScrolling:"touch"}
+    ? {background: hive ? C.bg : C.card, width:"100%", height:"100%",
+       display:"flex", flexDirection:"column", overflow:"hidden"}
     : {background: hive ? C.bg : C.card, borderRadius:C.r5, width:"100%", maxWidth:500, maxHeight:"86dvh",
-       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border, padding:"22px 22px 24px"};
+       display:"flex", flexDirection:"column", overflow:"hidden",
+       boxShadow:C.sh4, border:"1px solid "+C.border};
   return (
     <div style={outer} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{...inner, position:"relative"}}>
         {hive && <SheetHexDecor/>}
-        <div style={{position:"relative", zIndex:1}}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:14}}>
+        <div style={{position:"relative", zIndex:2, flexShrink:0,
+          display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12,
+          padding: mobile ? "calc(14px + env(safe-area-inset-top, 0px)) 16px 12px" : "18px 22px 12px",
+          background: hive ? C.bg : C.card, borderBottom:"1px solid "+C.border}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:18, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{title}</div>
             {sub && (
@@ -7271,12 +7277,16 @@ function SheetShell({title, sub, onClose, mobile, hive=false, children}) {
             )}
           </div>
           <button onClick={onClose} aria-label="Close"
-            style={{width:32, height:32, borderRadius:"50%", background:C.bgSubtle, border:"none",
-              cursor:"pointer", color:C.textSub, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
-            <I.x size={15}/>
+            style={{width:34, height:34, borderRadius:"50%", background:C.bgSubtle,
+              border:"1px solid "+C.border, cursor:"pointer", color:C.textSub,
+              display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+            <I.x size={16}/>
           </button>
         </div>
-        {children}
+        <div style={{position:"relative", zIndex:1, flex:1, minHeight:0, overflowY:"auto",
+          overscrollBehavior:"contain", WebkitOverflowScrolling:"touch",
+          padding: mobile ? "14px 16px 40px" : "16px 22px 24px"}}>
+          {children}
         </div>
       </div>
     </div>
@@ -7287,26 +7297,36 @@ function SheetShell({title, sub, onClose, mobile, hive=false, children}) {
 // same cache key as the analyzer's property pull, so any address that's been
 // analyzed opens instantly with no extra lookup spent.
 function usePropertyRecord(deal, apiLookup, rcAuth, enabled = true) {
-  const [st, setSt] = useState({loading: !!enabled, err: null, rec: null});
+  const [st, setSt] = useState({loading: !!enabled, err: null, code: null, rec: null});
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     (async () => {
+      if (attempt > 0) setSt(x => ({...x, loading: true, err: null, code: null}));
       try {
         if (!rcOk(rcAuth) || !apiLookup) throw new Error("unavailable");
         const key  = lookupKey("rc-detail", deal.address, deal.city, deal.state, deal.zip);
-        const data = await apiLookup(key, () => rentcastFetch(deal.address, deal.city, deal.state, deal.zip, rcAuth));
+        // Empty answers cache briefly (EMPTY_TTL_MS) instead of a month, and
+        // Try Again forces a fresh fetch straight past the cache.
+        const data = await apiLookup(key,
+          () => rentcastFetch(deal.address, deal.city, deal.state, deal.zip, rcAuth),
+          {force: attempt > 0, shortCacheIf: d => !rcHasData(d)});
         if (!alive) return;
         const rec = (data && data.property) || null;
-        setSt({loading:false, err: rec ? null : "County records aren't available for this address.", rec});
+        setSt({loading:false, rec, code: rec ? null : "empty",
+          err: rec ? null : "County records aren't available for this address."});
       } catch (e) {
         if (!alive) return;
-        setSt({loading:false, err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Lookup failed. Try again in a moment.", rec:null});
+        setSt({loading:false, rec:null,
+          code: e && e.code === "CAP" ? "cap" : "fail",
+          err: e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG)
+            : "The lookup hit a snag. Give it another try in a moment."});
       }
     })();
     return () => { alive = false; };
-  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
-  return st;
+  }, [enabled, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  return {...st, retry: () => setAttempt(a => a + 1)};
 }
 
 const sheetSpinner = (text) => (
@@ -7319,6 +7339,33 @@ const sheetError = (text) => (
     <I.alert size={15} style={{flexShrink:0, marginTop:1}}/> {text}
   </div>
 );
+
+// A dead end that never traps: branded notice with an always-there way back
+// and, when it makes sense, a real Try Again that refetches past the cache.
+function SheetNotice({icon, title, body, onClose, onRetry, closeLabel = "Back"}) {
+  return (
+    <div style={{textAlign:"center", padding:"30px 8px 12px"}}>
+      <div style={{width:58, height:58, borderRadius:16, margin:"0 auto 15px",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+        {icon}
+      </div>
+      <div style={{fontSize:17, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>
+        {title}
+      </div>
+      <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
+        margin:"8px auto 0", maxWidth:330}}>
+        {body}
+      </div>
+      <div style={{display:"flex", gap:10, justifyContent:"center", marginTop:20}}>
+        {onRetry && (
+          <button onClick={onRetry} {...btnStyle("secondary","md")}>Try Again</button>
+        )}
+        <button onClick={onClose} {...btnStyle("primary","md")}>{closeLabel}</button>
+      </div>
+    </div>
+  );
+}
 
 // -- Appreciation Projector (dedicated Deal View page) --------------------------
 // Moved out of the calculator: value growth is a hold-phase question, so it
@@ -7876,8 +7923,18 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
       {!entitled ? (
         <RevealBlock deal={deal} rcAuth={rcAuth} mode="free" onUpgrade={onUpgrade}/>
       ) : st.loading ? sheetSpinner("Pulling county records…")
-        : st.err ? sheetError(st.err)
-        : (
+        : st.err ? (
+          <SheetNotice
+            icon={st.code === "empty" ? <I.search size={25} stroke={2}/> : <I.alert size={25} stroke={2}/>}
+            title={st.code === "empty" ? "No county record yet"
+              : st.code === "cap" ? "Monthly lookup limit reached" : "That lookup hit a snag"}
+            body={st.code === "empty"
+              ? "The county data provider doesn't have a record for this address. That happens with some condos, new builds, and recently changed parcels. It's the data source, not you."
+              : st.err}
+            onClose={onClose}
+            onRetry={st.code === "cap" ? undefined : st.retry}
+            closeLabel="Back to deal"/>
+        ) : (
         <>
           <OwnerHeroCard name={names.length ? names.join(" & ") : ""} occupied={occupied} absentee={absentee}/>
           <OwnerInfoCard mailingStr={mailStr} county={rec.county}/>
@@ -7904,8 +7961,18 @@ function RecordsSheet({deal, apiLookup, rcAuth, onClose, mobile}) {
     <SheetShell title="Property Records" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
       {st.loading ? sheetSpinner("Pulling county records…")
-        : st.err ? sheetError(st.err)
-        : (
+        : st.err ? (
+          <SheetNotice
+            icon={st.code === "empty" ? <I.search size={25} stroke={2}/> : <I.alert size={25} stroke={2}/>}
+            title={st.code === "empty" ? "No county record yet"
+              : st.code === "cap" ? "Monthly lookup limit reached" : "That lookup hit a snag"}
+            body={st.code === "empty"
+              ? "The county data provider doesn't have a record for this address. That happens with some condos, new builds, and recently changed parcels. It's the data source, not you."
+              : st.err}
+            onClose={onClose}
+            onRetry={st.code === "cap" ? undefined : st.retry}
+            closeLabel="Back to deal"/>
+        ) : (
         <>
           {(rec.lastSalePrice || saleDate) &&
             <DataRow label={`Last Sale${saleDate ? ` (${saleDate})` : ""}`}
@@ -9371,7 +9438,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     setD(prev => ({...prev, beds:0, baths:0, sqft:0, yearBuilt:0, lotSize:0}));
     (async () => {
       try {
-        const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth));
+        const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth),
+          {shortCacheIf: d => !rcHasData(d)});
         if (rcHasData(data)) setD(prev => applyRentcast(prev, data, renoRates));
       } catch (e) {
         if (e && e.code === "CAP") setCapMsg(e.capMsg || LOOKUP_CAP_MSG);
@@ -10542,7 +10610,8 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
     setL(true); setErr("");
     try {
       const key = lookupKey("rc-detail", addr, city, state, zip);
-      const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rcAuth));
+      const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rcAuth),
+        {shortCacheIf: d => !rcHasData(d)});
       if (!rcHasData(data)) setErr("No public records found for that address yet — you can fill the details in manually.");
       else setP(prev => applyRentcast(prev, data, renoRates));
     } catch (e) { setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Auto-fill failed."); }
@@ -11425,13 +11494,37 @@ export default function App() {
     saveCloud(next);
   }, [saveCloud]);
 
+  // One-time heal: while the RentCast subscription was lapsed, lookups cached
+  // EMPTY results which the 30-day cache then served as "no records" long
+  // after service recovered. Purge every cached rc entry with no usable data
+  // once per account; fresh fetches (short-TTL when empty) replace them.
+  useEffect(() => {
+    if (!data || data.cacheHealV === 1) return;
+    const cache = data.apiCache || {};
+    const cleaned = Object.fromEntries(Object.entries(cache).filter(([k, v]) => {
+      if (!String(k).startsWith("rc-")) return true;
+      const p = v && v.payload;
+      if (p == null) return false;
+      if (Array.isArray(p)) return p.length > 0;
+      if (typeof p === "object") {
+        if (Object.keys(p).length === 0) return false;
+        if (String(k).startsWith("rc-detail")) return rcHasData(p);
+      }
+      return true;
+    }));
+    persistQuiet({ ...data, apiCache: cleaned, cacheHealV: 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!data]);
+
   // Central cached + capped lookup. `fetcher` runs only on a cache miss, and a
   // miss counts against the monthly cap (unless count:false). Throws a CAP error
   // when the cap is hit so the caller can show a friendly message.
-  const apiLookup = useCallback(async (key, fetcher, { count = true } = {}) => {
+  const apiLookup = useCallback(async (key, fetcher, { count = true, force = false, shortCacheIf = null } = {}) => {
     const cache = (data && data.apiCache) || {};
     const hit = cache[key];
-    if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.payload;
+    // Entries carry their own ttl when the result was empty, so a "nothing
+    // found" answer retries after hours instead of poisoning a month.
+    if (!force && hit && (Date.now() - hit.ts) < (hit.ttl || CACHE_TTL_MS)) return hit.payload;
 
     const month = monthKey();
     const u0 = (data && data.usage && data.usage.month === month)
@@ -11456,7 +11549,10 @@ export default function App() {
 
     const payload = await fetcher();
 
-    let entries = Object.entries({ ...cache, [key]: { ts: Date.now(), payload } });
+    let short = false;
+    if (shortCacheIf) { try { short = !!shortCacheIf(payload); } catch { short = false; } }
+    let entries = Object.entries({ ...cache,
+      [key]: { ts: Date.now(), payload, ...(short ? { ttl: EMPTY_TTL_MS } : {}) } });
     if (entries.length > CACHE_MAX) {
       entries.sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
       entries = entries.slice(0, CACHE_MAX);
