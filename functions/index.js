@@ -1143,6 +1143,130 @@ exports.searchListings = onRequest({
   }
 });
 
+// == RealEstateAPI (property data + owner) ======================================
+// One licensed vendor for the two per-property jobs we used to split across
+// RentCast (specs + value + rent) and Endato (owner name). Property Detail
+// returns the whole county/public profile for an address in a single ~$0.10
+// record: physical specs, an estimated value, an area rent estimate, tax, and
+// the owner of record with their mailing address. The key stays server-side;
+// the endpoint reports "staged" until REALESTATEAPI_KEY is connected.
+const REALESTATEAPI_KEY = defineSecret("REALESTATEAPI_KEY");
+const REAPI_BASE = "https://api.realestateapi.com";
+const REAPI_TYPE = {SFR: "Single Family", MFR: "Multi-Family", CONDO: "Condo",
+  TOWNHOUSE: "Townhouse", MOBILE: "Single Family", LAND: "Other", OTHER: "Other"};
+
+// Normalize a PropertyDetail `data` object into the fields the analyzer and the
+// owner reveal consume. suggestedRent is the area rent estimate; when it's
+// missing we fall back to the HUD Fair Market Rent that matches the bed count.
+function mapReapiDetail(data) {
+  if (!data || typeof data !== "object") return null;
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const pi = data.propertyInfo || {};
+  const addr = pi.address || {};
+  const tax = data.taxInfo || {};
+  const demo = data.demographics || {};
+  const owner = data.ownerInfo || {};
+  const mail = owner.mailAddress || {};
+  const beds = num(pi.bedrooms);
+  const fmr = [demo.fmrEfficiency, demo.fmrOneBedroom, demo.fmrTwoBedroom,
+    demo.fmrThreeBedroom, demo.fmrFourBedroom];
+  const rent = num(demo.suggestedRent) || num(fmr[Math.max(0, Math.min(4, beds))]) || 0;
+  return {
+    // Physical specs (replaces the RentCast property pull)
+    beds,
+    baths: num(pi.bathrooms),
+    sqft: num(pi.livingSquareFeet) || num(pi.buildingSquareFeet),
+    lotSize: num(pi.lotSquareFeet) || num((data.lotInfo || {}).lotSquareFeet),
+    yearBuilt: num(pi.yearBuilt),
+    type: REAPI_TYPE[String(data.propertyType || "").toUpperCase()] || "Single Family",
+    lat: num(pi.latitude) || null,
+    lng: num(pi.longitude) || null,
+    city: addr.city || "", state: addr.state || "", zip: addr.zip || "",
+    // Valuations
+    value: num(data.estimatedValue) || num(tax.estimatedValue) || num(tax.marketValue),
+    rent,
+    taxAnnual: num(tax.taxAmount),
+    assessedValue: num(tax.assessedValue),
+    // Owner of record (replaces the Endato owner-name lookup; the phones still
+    // come from a skip trace when the member pays to reveal them)
+    owner: {
+      name: owner.owner1FullName ||
+        [owner.owner1FirstName, owner.owner1LastName].filter(Boolean).join(" ") || null,
+      firstName: owner.owner1FirstName || null,
+      lastName: owner.owner1LastName || null,
+      second: owner.owner2FullName ||
+        [owner.owner2FirstName, owner.owner2LastName].filter(Boolean).join(" ") || null,
+      company: owner.companyName || null,
+      corporate: !!(data.corporateOwned || owner.corporateOwned),
+      ownerOccupied: !!(data.ownerOccupied != null ? data.ownerOccupied : owner.ownerOccupied),
+      mailing: mail.address || null,
+      mailingCity: mail.city || null,
+      mailingState: mail.state || null,
+      mailingZip: mail.zip || null,
+      county: mail.county || addr.county || null,
+    },
+    county: addr.county || mail.county || null,
+    reapiId: data.id != null ? String(data.id) : null,
+    // Signals REAPI hands us for free — surfaced for later (equity/motivation)
+    estimatedEquity: num(data.estimatedEquity),
+    openMortgageBalance: num(data.openMortgageBalance),
+    absenteeOwner: !!data.absenteeOwner,
+    mlsActive: !!data.mlsActive,
+    mlsListingPrice: num(data.mlsListingPrice),
+  };
+}
+
+// Fetch + normalize one PropertyDetail record. Returns null on any miss so
+// callers can fall back to their existing source during the migration.
+async function reapiPropertyDetail(key, body, uid) {
+  const r = await fetch(REAPI_BASE + "/v2/PropertyDetail", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "x-api-key": key, "x-user-id": uid || "dealhive"},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    logger.error("reapi PropertyDetail", {status: r.status, body: txt.slice(0, 300)});
+    return {ok: false, status: r.status};
+  }
+  const j = await r.json().catch(() => null);
+  return {ok: true, property: mapReapiDetail(j && j.data)};
+}
+
+exports.reapiProperty = onRequest({
+  secrets: [REALESTATEAPI_KEY],
+  cors: true, region: "us-central1", timeoutSeconds: 30,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const key = REALESTATEAPI_KEY.value();
+    if (!key || key === "unset") {
+      res.status(503).json({error: "staged", message: "RealEstateAPI is not connected yet."});
+      return;
+    }
+    const body = req.body || {};
+    // Accept a fully formatted address, or the parts — PropertyDetail takes
+    // either. A formatted address is the simplest and most reliable.
+    const address = String(body.address || "").trim();
+    const payload = address.length >= 5
+      ? {address}
+      : {house: body.house, street: body.street, city: body.city, state: body.state, zip: body.zip};
+    if (!payload.address && !(payload.street && (payload.zip || payload.state))) {
+      res.status(400).json({error: "address", message: "Provide a full address."});
+      return;
+    }
+    const out = await reapiPropertyDetail(key, payload, user.uid);
+    if (!out.ok) { res.status(502).json({error: "upstream", status: out.status}); return; }
+    if (!out.property) { res.json({found: false}); return; }
+    res.json({found: true, property: out.property});
+  } catch (e) {
+    logger.error("reapiProperty", {error: e.message});
+    res.status(500).json({error: "lookup failed"});
+  }
+});
+
 // == Skip tracing (Endato / EnformionGO) ========================================
 // Provider-evaluation plumbing for the future "Reveal Owner Phone" add-on.
 // Endato's Contact Enrich takes a name + address and returns known phones and
