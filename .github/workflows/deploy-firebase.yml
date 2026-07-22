@@ -12,6 +12,7 @@
 #   ENDATO_AP_NAME            — optional: Endato skip-trace key name
 #   ENDATO_AP_PASSWORD        — optional: Endato skip-trace key password
 #   RAPIDAPI_KEY              — optional: RapidAPI key for the listing search
+#   REALESTATEAPI_KEY         — optional: RealEstateAPI key (property data + skip trace)
 #
 # See functions/README.md for the click-by-click on generating each secret.
 
@@ -78,6 +79,7 @@ jobs:
           ENDATO_NAME:   ${{ secrets.ENDATO_AP_NAME }}
           ENDATO_PASS:   ${{ secrets.ENDATO_AP_PASSWORD }}
           RAPID_KEY:     ${{ secrets.RAPIDAPI_KEY }}
+          REAPI_KEY:     ${{ secrets.REALESTATEAPI_KEY }}
         run: |
           for var in APIFY_KEY RENTCAST_KEY MANUAL_SECRET; do
             if [ -z "${!var}" ]; then
@@ -93,6 +95,7 @@ jobs:
           printf '%s' "${ENDATO_NAME:-unset}" | firebase functions:secrets:set ENDATO_AP_NAME     --data-file=- --project darallc --force
           printf '%s' "${ENDATO_PASS:-unset}" | firebase functions:secrets:set ENDATO_AP_PASSWORD --data-file=- --project darallc --force
           printf '%s' "${RAPID_KEY:-unset}"   | firebase functions:secrets:set RAPIDAPI_KEY       --data-file=- --project darallc --force
+          printf '%s' "${REAPI_KEY:-unset}"   | firebase functions:secrets:set REALESTATEAPI_KEY  --data-file=- --project darallc --force
 
       - name: Deploy DB rules + functions
         run: firebase deploy --only database,functions --project darallc --force --non-interactive
