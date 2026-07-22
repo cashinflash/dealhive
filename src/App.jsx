@@ -801,6 +801,24 @@ const rentcastFetch = async (addr, city, state, zip, auth) => {
   return out;
 };
 
+// RealEstateAPI property pull (server-side, key stays on the backend). Returns
+// {found, property:{beds,baths,sqft,lotSize,yearBuilt,type,lat,lng,value,rent,
+// taxAnnual,assessedValue,owner,...}} or null. Used to overlay specs + value +
+// ARV on top of the RentCast baseline — rent stays RentCast's (more accurate).
+const reapiFetch = async (addr, city, state, zip, token) => {
+  const full = [addr, [city, state].filter(Boolean).join(" "), zip].filter(Boolean).join(", ");
+  try {
+    const r = await fetch(`${FN_BASE}/reapiProperty`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
+      body: JSON.stringify({address: full}),
+    });
+    if (!r.ok) return null;               // staged / upstream miss → fall back to RentCast
+    return await r.json().catch(() => null);
+  } catch { return null; }
+};
+const reapiHasData = r => !!(r && r.found && r.property);
+
 // Did a RentCast pull return anything usable?
 const rcHasData = data => !!(data && (data.property || data.value || data.rent));
 
@@ -868,6 +886,44 @@ const applyRentcast = (prev, data, rates) => {
     rentEstHigh,
     // Auto-fill rent with estimate if rent is 0
     rentAmount: prev.rentAmount || rentEst,
+  };
+};
+
+// Overlay RealEstateAPI data on top of an already-RentCast-applied deal: specs,
+// county value, ARV, lot, tax come from RealEstateAPI (licensed county records);
+// RENT is deliberately left untouched so it keeps RentCast's market estimate.
+// A missing REAPI field never clobbers an existing value.
+const applyReapi = (prev, rp, rates) => {
+  const r    = rates || {light:7, medium:13, full:45};
+  const sqft = rp.sqft || prev.sqft || 0;
+  const med  = rp.value || prev.homeValueMedian || 0;
+  const taxVal  = rp.assessedValue || prev.taxValue || 0;
+  const annual  = rp.taxAnnual || 0;
+  return {
+    ...prev,
+    beds:      rp.beds      || prev.beds,
+    baths:     rp.baths     || prev.baths,
+    sqft,
+    lotSize:   rp.lotSize   || prev.lotSize || 0,
+    yearBuilt: rp.yearBuilt || prev.yearBuilt,
+    type:      rp.type      || prev.type,
+    lat:       rp.lat       || prev.lat,
+    lng:       rp.lng       || prev.lng,
+    taxValue:  taxVal       || prev.taxValue,
+    // Value + ARV from the RealEstateAPI county AVM.
+    homeValueMedian: med || prev.homeValueMedian,
+    homeValueLow:    med ? Math.round(med * 0.9) : prev.homeValueLow,
+    homeValueHigh:   med || prev.homeValueHigh,
+    flipSalePrice:   med || prev.flipSalePrice,
+    brrrCashOut:     med ? Math.round(med * 0.75) : prev.brrrCashOut,
+    repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
+    repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
+    repairFull:    sqft ? Math.round(sqft * r.full)   : prev.repairFull,
+    // Recorded tax bill from county records when it's plausible; else keep
+    // whatever RentCast/state-rate already set.
+    expPropTax: (annual && annual >= Math.max(taxVal, prev.purchasePrice || 0, 20000) * 0.002)
+      ? Math.round(annual / 12) : prev.expPropTax,
+    // rentEstimate / rentAmount intentionally NOT overwritten — RentCast owns rent.
   };
 };
 
@@ -9856,10 +9912,25 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     // look like a fresh pull we paid for.
     setD(prev => ({...prev, beds:0, baths:0, sqft:0, yearBuilt:0, lotSize:0}));
     (async () => {
+      // Two sources in parallel: RentCast (the counted lookup — keeps the rent
+      // estimate and covers as fallback) and RealEstateAPI (specs + county value
+      // + ARV, licensed records). RealEstateAPI doesn't count against the cap —
+      // it rides along on the same pull — and quietly returns null if it isn't
+      // connected or misses, so the pull always works on RentCast alone.
+      const reapiP = apiLookup(
+        lookupKey("reapi-detail", loc.address, loc.city, loc.state, loc.zip),
+        () => reapiFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth.token),
+        {count: false, shortCacheIf: r => !reapiHasData(r)}
+      ).catch(() => null);
       try {
         const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth),
           {shortCacheIf: d => !rcHasData(d)});
-        if (rcHasData(data)) setD(prev => applyRentcast(prev, data, renoRates));
+        const reapi = await reapiP;
+        setD(prev => {
+          let next = rcHasData(data) ? applyRentcast(prev, data, renoRates) : prev;
+          if (reapiHasData(reapi)) next = applyReapi(next, reapi.property, renoRates);
+          return next;
+        });
       } catch (e) {
         if (e && e.code === "CAP") setCapMsg(e.capMsg || LOOKUP_CAP_MSG);
         else setErr("");
