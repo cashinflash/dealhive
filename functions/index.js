@@ -909,6 +909,42 @@ exports.pullDealsNow = onRequest({
   }
 });
 
+// == Listing Search (Deal Finder) ===============================================
+// The search-first Deals experience: members search a city like they would on
+// Zillow and every result comes back underwritten. Listings are served through
+// this endpoint so the RapidAPI key stays server-side, results cache in RTDB
+// and are SHARED across members (a popular city costs one upstream call), and
+// searches meter per member. The provider config below is filled in once the
+// RapidAPI listing API is chosen; until then the endpoint reports staged.
+const RAPIDAPI_KEY = defineSecret("RAPIDAPI_KEY");
+const LISTING_PROVIDER = {
+  host: "",        // e.g. "zillow-com1.p.rapidapi.com" — set when the API is chosen
+  searchPath: "",  // e.g. "/propertyExtendedSearch"
+};
+
+exports.searchListings = onRequest({
+  secrets: [RAPIDAPI_KEY],
+  cors: true, region: "us-central1", timeoutSeconds: 30,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const key = RAPIDAPI_KEY.value();
+    if (!key || key === "unset" || !LISTING_PROVIDER.host) {
+      res.status(503).json({error: "staged",
+        message: "Listing search is staged and waiting for the RapidAPI provider."});
+      return;
+    }
+    // Provider call + normalization + shared cache + per-tier metering land
+    // here with the chosen API's schema.
+    res.status(503).json({error: "staged"});
+  } catch (e) {
+    logger.error("searchListings", {error: e.message});
+    res.status(500).json({error: "search failed"});
+  }
+});
+
 // == Skip tracing (Endato / EnformionGO) ========================================
 // Provider-evaluation plumbing for the future "Reveal Owner Phone" add-on.
 // Endato's Contact Enrich takes a name + address and returns known phones and
