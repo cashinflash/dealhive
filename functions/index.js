@@ -1102,27 +1102,35 @@ exports.searchListings = onRequest({
       : Array.isArray(j?.props) ? j.props
       : Array.isArray(j?.data?.searchResults) ? j.data.searchResults
       : Array.isArray(j) ? j : null;
-    let json = null;
+    let json = null, lastStatus = 0, lastDetail = "";
     for (const param of ["location", "address"]) {
       let r;
       try {
         r = await fetch(`${base}?${param}=${encodeURIComponent(query)}&page=${page}`, {headers});
       } catch (e) {
+        lastDetail = `fetch failed (${param}): ${e.message}`;
         logger.error("searchListings fetch", {param, error: e.message});
         continue;
       }
+      lastStatus = r.status;
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
+        lastDetail = `${param}: ${txt.slice(0, 160)}`;
         logger.error("searchListings upstream", {param, status: r.status, body: txt.slice(0, 300)});
         continue;
       }
       const j = await r.json().catch(() => null);
       if (pickArray(j) != null) { json = j; break; }
+      lastDetail = `${param}: 200 but unexpected shape, keys=${j ? Object.keys(j).slice(0, 8).join(",") : "null"}`;
       logger.warn("searchListings unrecognized body", {param, keys: j ? Object.keys(j).slice(0, 8) : null});
     }
     if (json == null) {
+      // `detail` carries the real upstream reason (e.g. "not subscribed", 404)
+      // so the admin sees exactly why instead of a generic outage message.
       res.status(502).json({error: "upstream",
-        message: "The listing service is temporarily unavailable. Try again in a moment."});
+        message: "The listing service is temporarily unavailable. Try again in a moment.",
+        detail: `HTTP ${lastStatus || "no-response"} — ${lastDetail || "no detail"}`.slice(0, 220),
+        host: LISTING_PROVIDER.host, path: LISTING_PROVIDER.searchPath});
       return;
     }
 
