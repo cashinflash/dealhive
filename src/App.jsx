@@ -181,9 +181,14 @@ const compressImage = (file, maxDim = 1600, quality = 0.82) => new Promise((reso
 });
 
 const saveData = async (uid, token, d) => {
+  // Stamp every write with its wall-clock time. loadData compares this stamp to
+  // decide whether an offline mirror is fresher than the cloud — which is what
+  // lets a delete on one device stick instead of being resurrected by a stale
+  // mirror on another device.
+  const payload = {...d, _syncedAt: Date.now()};
   try {
     const r = await fetch(`${dbPath(uid)}?auth=${token}`, {
-      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d)
+      method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
     });
     if (r.ok) {
       // Saved to the cloud — the local fallback copy (if any) is now stale;
@@ -194,30 +199,9 @@ const saveData = async (uid, token, d) => {
   } catch {}
   // Cloud save failed (offline, or expired token): keep a local backup so the
   // change isn't lost. The caller refreshes the token and retries.
-  try { localStorage.setItem(`dh_${uid}`, JSON.stringify(d)); } catch {}
+  try { localStorage.setItem(`dh_${uid}`, JSON.stringify(payload)); } catch {}
   return false;
 };
-
-// Merge two copies of a keyed list: union by id, the newer stamp wins a
-// conflict, first list wins ties (pass cloud first).
-const mergeLists = (a, b) => {
-  const stamp = x => (x && (x.updatedAt || x.savedAt)) || "";
-  const by = new Map();
-  [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach(x => {
-    if (!x || !x.id) return;
-    const prev = by.get(x.id);
-    if (!prev || stamp(x) > stamp(prev)) by.set(x.id, x);
-  });
-  return [...by.values()];
-};
-// Cloud wins scalars; the deal/property lists union so a device that saved
-// offline contributes its entries instead of being silently shadowed.
-const mergeData = (cloud, local) => ({
-  ...local, ...cloud,
-  savedDeals: mergeLists(cloud.savedDeals, local.savedDeals),
-  properties: mergeLists(cloud.properties, local.properties),
-  deals:      mergeLists(cloud.deals,      local.deals),
-});
 
 const loadData = async (uid, token) => {
   let cloud = null;
@@ -227,14 +211,28 @@ const loadData = async (uid, token) => {
   } catch {}
   let local = null;
   try { const raw = localStorage.getItem(`dh_${uid}`); if (raw) local = JSON.parse(raw); } catch {}
-  if (cloud && local) {
-    // A device that saved offline left changes in its mirror. Merge the two
-    // and heal the cloud copy so every device converges on one truth.
-    const merged = mergeData(cloud, local);
-    await saveData(uid, token, merged); // success also clears the mirror
-    return merged;
+
+  // Only one source is available — use it.
+  if (!cloud) return local;
+  if (!local)  return cloud;
+
+  // Both exist. `local` is a mirror of a change that FAILED to reach the cloud.
+  // Trust it ONLY if it is genuinely newer than what the cloud holds now;
+  // otherwise it is stale and must be discarded. (A stale mirror is exactly what
+  // used to resurrect deals a user deleted on another device — the old code
+  // union-merged the two lists, and a union can never represent a deletion.)
+  // Whole-account last-write-wins by save time makes deletions propagate.
+  const cloudAt = Number(cloud._syncedAt) || 0;
+  const localAt = Number(local._syncedAt) || 0;
+  if (localAt > cloudAt) {
+    // The unsynced local change is the freshest truth — push it so both devices
+    // converge on it (a successful save also clears the mirror).
+    await saveData(uid, token, local);
+    return local;
   }
-  return cloud || local;
+  // Cloud is the same age or newer: the mirror is stale. Drop it, trust cloud.
+  try { localStorage.removeItem(`dh_${uid}`); } catch {}
+  return cloud;
 };
 const saveMeta = async (uid, token, m) => {
   try {
@@ -11959,6 +11957,37 @@ function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
 }
 
 // -- Root App ------------------------------------------------------------------
+// -- In-app URL routing --------------------------------------------------------
+// Every signed-in page gets a real path, so a refresh keeps your place, links
+// are shareable, and back/forward behave. Deliberately lightweight: the browser
+// History API, no router dependency. Property detail is /properties/:id.
+const APP_PATHS = {
+  dashboard:  "/dashboard",
+  deals:      "/deals",
+  deal:       "/analyze",
+  properties: "/properties",
+  projects:   "/projects",
+  comps:      "/comps",
+  saved:      "/saved",
+  users:      "/users",
+  settings:   "/settings",
+};
+const PATH_TO_PAGE = Object.fromEntries(
+  Object.entries(APP_PATHS).map(([pg, pt]) => [pt, pg]));
+// The URL for the current app view. A visible property detail wins (its id
+// lives in the path); otherwise the plain page path.
+const appPathFor = (page, propId, showProp) =>
+  showProp && propId ? `/properties/${encodeURIComponent(propId)}`
+                     : (APP_PATHS[page] || "/dashboard");
+// Parse a pathname back into {page, propId}, or null if it isn't an app path
+// (e.g. marketing/auth/legal routes, which own the URL themselves).
+const parseAppPath = (pathname) => {
+  const m = /^\/properties\/(.+)$/.exec(pathname || "");
+  if (m) return {page: "properties", propId: decodeURIComponent(m[1])};
+  const pg = PATH_TO_PAGE[pathname];
+  return pg ? {page: pg, propId: null} : null;
+};
+
 export default function App() {
   const [user,   setUser]   = useState(null);
   const [data,   setData]   = useState(null);
@@ -11967,17 +11996,33 @@ export default function App() {
   const [path,   setPath]   = useState(() =>
     typeof window !== "undefined" ? window.location.pathname : "/");
   useEffect(() => {
-    const onNav = () => setPath(window.location.pathname);
+    const onNav = () => {
+      const pathname = window.location.pathname;
+      setPath(pathname);
+      // Reflect back/forward into the in-app page too (no-op on marketing paths).
+      const parsed = parseAppPath(pathname);
+      if (parsed) { setPage(parsed.page); setPropId(parsed.propId); }
+    };
     window.addEventListener("popstate", onNav);
     return () => window.removeEventListener("popstate", onNav);
   }, []);
-  const [page,   setPage]   = useState("dashboard");
+  // Seed page/propId from the URL so a hard refresh at /deals (or a shared link)
+  // opens that page instead of snapping back to the dashboard.
+  const [page,   setPage]   = useState(() => {
+    if (typeof window === "undefined") return "dashboard";
+    const p = parseAppPath(window.location.pathname);
+    return p ? p.page : "dashboard";
+  });
   // Deals-feed strategy filter lives here so the dashboard's browse-by-
   // strategy cards can set it before switching pages.
   const [dealsStrategy, setDealsStrategy] = useState("all");
   // Deal pending the save picker (choose scenario + cash/finance).
   const [savePicker, setSavePicker] = useState(null);
-  const [propId, setPropId] = useState(null);
+  const [propId, setPropId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    const p = parseAppPath(window.location.pathname);
+    return p ? p.propId : null;
+  });
   const [showAdd,setShowAdd]= useState(false);
   const [toast,  setToast]  = useState("");
   const [daysLeft,setDL]    = useState(null);
@@ -11993,6 +12038,24 @@ export default function App() {
   // Always-current user for async cloud calls (avoids stale-closure tokens).
   const userRef = useRef(null);
   useEffect(() => { userRef.current = user; }, [user]);
+
+  // Keep the URL in step with the in-app page (signed-in surface only), so
+  // refresh, bookmarks, and back/forward all work. Marketing/auth/legal routing
+  // owns the URL when signed out or on those paths, so we leave them alone.
+  useEffect(() => {
+    if (!user || !data) return;
+    const pathname = window.location.pathname;
+    if (pathname === "/login" || pathname === "/signup" ||
+        pathname === "/privacy" || pathname === "/terms") return;
+    const admin = (data.role === "admin") || user.email === "harut@ymail.com";
+    const activeProp = (data.properties || []).find(p => p.id === propId);
+    const showProp = !!propId && !!activeProp && admin;
+    const want = appPathFor(page, propId, showProp);
+    if (pathname !== want) {
+      window.history.pushState({}, "", want);
+      setPath(want);
+    }
+  }, [user, data, page, propId]);
 
   // Refresh the Firebase ID token so cloud sync keeps working (tokens expire
   // ~hourly). Returns the updated user (with fresh token) or null on failure.
@@ -12245,8 +12308,8 @@ export default function App() {
     if (isNew && !silent && typeof window !== "undefined" && window.fbq) {
       try { window.fbq("track", "CompleteRegistration"); } catch {}
     }
-    // Land authenticated users on a clean URL — they came from /login or
-    // /signup, but the app itself doesn't care about path-based routing.
+    // Coming from /login or /signup, drop that auth path; the page→URL effect
+    // then sets the real app path (e.g. /dashboard) for the page they land on.
     if (typeof window !== "undefined" && (window.location.pathname === "/login" || window.location.pathname === "/signup")) {
       window.history.replaceState({}, "", "/");
       setPath("/");
