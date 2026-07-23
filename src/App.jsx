@@ -819,6 +819,18 @@ const reapiFetch = async (addr, city, state, zip, token) => {
 };
 const reapiHasData = r => !!(r && r.found && r.property);
 
+// RentCast, rent estimate ONLY. Once RealEstateAPI supplies specs + value, the
+// only thing we still want from RentCast is its (more accurate) market rent, so
+// we make the single rent call instead of the full property+value+rent fetch.
+const rentcastRentOnly = async (addr, city, state, zip, auth) => {
+  const full = [addr, [city, state].filter(Boolean).join(" "), zip].filter(Boolean).join(", ");
+  const q = encodeURIComponent(full);
+  const out = {};
+  try { const d = await rcGet(`/avm/rent/long-term?address=${q}`, auth); if (d && d.rent) out.rent = d; } catch {}
+  return out;
+};
+const rentHasData = d => !!(d && d.rent);
+
 // Did a RentCast pull return anything usable?
 const rcHasData = data => !!(data && (data.property || data.value || data.rent));
 
@@ -929,6 +941,20 @@ const applyReapi = (prev, rp, rates) => {
     expPropTax: (annual && annual >= Math.max(taxVal, prev.purchasePrice || 0, 20000) * 0.002)
       ? Math.round(annual / 12) : prev.expPropTax,
     // rentEstimate / rentAmount intentionally NOT overwritten — RentCast owns rent.
+  };
+};
+
+// Apply ONLY RentCast's rent estimate onto a deal (specs + value already came
+// from RealEstateAPI). Keeps the analyzer's rent math on RentCast's number.
+const applyRent = (prev, rentObj) => {
+  const rent = rentObj || {};
+  const rentEst = rent.rent || prev.rentEstimate || 0;
+  return {
+    ...prev,
+    rentEstimate: rentEst,
+    rentEstLow:  rent.rentRangeLow  || (rentEst ? Math.round(rentEst * 0.9) : prev.rentEstLow),
+    rentEstHigh: rent.rentRangeHigh || (rentEst ? Math.round(rentEst * 1.1) : prev.rentEstHigh),
+    rentAmount:  prev.rentAmount || rentEst,
   };
 };
 
@@ -9987,23 +10013,35 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     // look like a fresh pull we paid for.
     setD(prev => ({...prev, beds:0, baths:0, sqft:0, yearBuilt:0, lotSize:0}));
     (async () => {
-      // Two sources in parallel: RentCast (the counted lookup — keeps the rent
-      // estimate and covers as fallback) and RealEstateAPI (specs + county value
-      // + ARV, licensed records). RealEstateAPI doesn't count against the cap —
-      // it rides along on the same pull — and quietly returns null if it isn't
-      // connected or misses, so the pull always works on RentCast alone.
+      // RealEstateAPI supplies specs + county value + ARV (licensed records);
+      // it rides along on the pull without counting against the cap. RentCast is
+      // now used ONLY for its rent estimate — a single rent call, which is the
+      // one counted lookup. Only if RealEstateAPI has no record for the address
+      // do we spend RentCast's full fetch (specs + value) as a safety net, so
+      // the analyzer is never left blank.
       const reapiP = apiLookup(
         lookupKey("reapi-detail", loc.address, loc.city, loc.state, loc.zip),
         () => reapiFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth.token),
         {count: false, shortCacheIf: r => !reapiHasData(r)}
       ).catch(() => null);
       try {
-        const data = await apiLookup(key, () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth),
-          {shortCacheIf: d => !rcHasData(d)});
+        // The counted lookup: RentCast rent estimate only (kept as "rc-detail"
+        // so it still counts as one property pull, same as before).
+        const rentData = await apiLookup(key,
+          () => rentcastRentOnly(loc.address, loc.city, loc.state, loc.zip, rcAuth),
+          {shortCacheIf: d => !rentHasData(d)});
         const reapi = await reapiP;
+        let full = null;
+        if (!reapiHasData(reapi)) {
+          full = await apiLookup(lookupKey("rc-full", loc.address, loc.city, loc.state, loc.zip),
+            () => rentcastFetch(loc.address, loc.city, loc.state, loc.zip, rcAuth),
+            {count: false, shortCacheIf: d => !rcHasData(d)}).catch(() => null);
+        }
         setD(prev => {
-          let next = rcHasData(data) ? applyRentcast(prev, data, renoRates) : prev;
+          let next = prev;
           if (reapiHasData(reapi)) next = applyReapi(next, reapi.property, renoRates);
+          else if (rcHasData(full)) next = applyRentcast(next, full, renoRates);
+          if (rentHasData(rentData)) next = applyRent(next, rentData.rent);
           return next;
         });
       } catch (e) {
