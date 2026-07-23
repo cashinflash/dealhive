@@ -928,7 +928,13 @@ const LISTING_PROVIDER = {
 // Monthly search quota per tier. Only FRESH upstream calls burn quota — a city
 // someone already searched today is served from the shared cache for free — so
 // these numbers cap what a member can cost us, not what they can browse.
-const SEARCH_LIMITS = {free: 5, pro: 150};
+// Free's 5 is a real, shown limit; Pro's 500 is a silent anti-abuse ceiling no
+// legitimate user reaches — the meter is hidden for Pro, so it feels unlimited.
+const SEARCH_LIMITS = {free: 5, pro: 500};
+// Hard backstop so the app can never overrun the RapidAPI plan regardless of
+// how many members search. Set just under the plan's monthly request quota
+// (10,000 on the $20 tier). Fresh upstream calls count against it globally.
+const GLOBAL_SEARCH_CAP = 9500;
 // A searched city stays warm for 12h. Fresh enough for a for-sale board, and it
 // means the tenth member to search Cleveland today pays no upstream call.
 const LISTING_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -1048,13 +1054,19 @@ exports.searchListings = onRequest({
     const mo = new Date().toISOString().slice(0, 7);
     const usageRef = admin.database().ref(`searchUsage/${user.uid}/${mo}`);
     const used = numOr0((await usageRef.get()).val());
-    const meter = (u) => ({
-      tier,
-      limit: limit === Infinity ? null : limit,
-      used: u,
-      remaining: limit === Infinity ? null : Math.max(0, limit - u),
-      resets: nextMonthResetISO(),
-    });
+    // The meter is only shown to free accounts. Pro (and admin) get a hidden
+    // limit (null) so the pill never appears — the 500 ceiling still enforces
+    // server-side below, it's just invisible.
+    const meter = (u) => {
+      const shown = tier === "free" && limit !== Infinity;
+      return {
+        tier,
+        limit: shown ? limit : null,
+        used: u,
+        remaining: shown ? Math.max(0, limit - u) : null,
+        resets: nextMonthResetISO(),
+      };
+    };
 
     // Meter-only ping: the Deal Finder asks for the quota on mount without
     // spending a search.
@@ -1084,11 +1096,22 @@ exports.searchListings = onRequest({
     }
 
     // A fresh upstream call is the part that costs us, so it's what the monthly
-    // quota gates.
+    // quota gates. Pro's ceiling is silent (no number surfaced).
     if (limit !== Infinity && used >= limit) {
       res.status(429).json({error: "limit", meter: meter(used), message: tier === "pro"
-        ? "You've used all 150 searches this month. They reset on the 1st."
-        : "You've used your 5 free searches this month. Upgrade to Pro for 150 a month."});
+        ? "You've hit this month's search limit. It resets on the 1st."
+        : "You've used your 5 free searches this month. Upgrade to Pro for unlimited search."});
+      return;
+    }
+
+    // Global backstop: never let total fresh calls exceed the RapidAPI plan.
+    // This burns no member quota — it's an app-wide "too busy" guard.
+    const globalRef = admin.database().ref(`globalSearchUsage/${mo}`);
+    const globalUsed = numOr0((await globalRef.get()).val());
+    if (globalUsed >= GLOBAL_SEARCH_CAP) {
+      logger.warn("searchListings global cap reached", {mo, globalUsed});
+      res.status(503).json({error: "busy",
+        message: "Deal Finder is handling heavy demand right now. Please try again shortly."});
       return;
     }
 
@@ -1158,8 +1181,10 @@ exports.searchListings = onRequest({
     const totalPages = (json.pagesInfo && json.pagesInfo.totalPages) || 1;
     const count = (json.resultsCount && json.resultsCount.totalMatchingCount) || items.length;
 
-    // Cache the mapped set (shared across members) and bill one search.
+    // Cache the mapped set (shared across members) and bill one search — to the
+    // member's meter (unless admin) and always to the global plan counter.
     await cacheRef.set({ts: Date.now(), items, count, totalPages, query, page});
+    await globalRef.transaction((v) => numOr0(v) + 1);
     let newUsed = used;
     if (!isAdmin) { await usageRef.transaction((v) => numOr0(v) + 1); newUsed = used + 1; }
     res.json({items, count, totalPages, page, cached: false, meter: meter(newUsed)});

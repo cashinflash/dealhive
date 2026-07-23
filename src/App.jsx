@@ -9313,6 +9313,10 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         setResults(null);
         setError({kind:"staged", title:"Deal Finder is warming up",
           body:"Live search switches on the moment our listing connection is live. Check back shortly."});
+      } else if (j.error === "busy") {
+        setResults(null);
+        setError({kind:"error", title:"Deal Finder is busy right now",
+          body: j.message || "We're handling heavy demand. Give it a minute and try again."});
       } else {
         setResults(null);
         setError({kind:"error", title:"Search hit a snag",
@@ -9530,7 +9534,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 <I.dollar size={13} stroke={2.2}/>
               </span>
               <select value={maxPrice} onChange={e => setMaxPrice(parseInt(e.target.value, 10) || 0)}
-                style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:34, paddingRight:34,
+                style={{...iS(mobile), height:40, borderRadius:9999, padding:"0 34px",
                   fontWeight:600, color: maxPrice ? C.text : C.textSub,
                   background:C.card, boxShadow:C.sh1, marginBottom:0}}>
                 <option value={0}>Any price</option>
