@@ -6455,6 +6455,95 @@ function PhotoCarousel({photos = [], fallbackLat, fallbackLng, height = 280, mob
   );
 }
 
+// Universal "expand / fullscreen" glyph (corner brackets) — signals a photo can
+// be opened larger.
+const ExpandIcon = ({size = 14, color = "#fff", stroke = 2.4}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+    strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={{display:"block"}}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
+  </svg>
+);
+
+// Full-screen photo gallery. Opens over whatever's beneath it; swipe on mobile,
+// arrows/keys on desktop, a thumbnail rail to jump, and an X (or Esc, or a tap
+// on the backdrop) to close. Index is lifted so it stays in sync with the strip
+// that launched it.
+function PhotoLightbox({photos = [], index = 0, setIndex, onClose, mobile}) {
+  const total = photos.length;
+  const touchX = useRef(null);
+  const go = dir => setIndex(i => (i + dir + total) % total);
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      else if (e.key === "ArrowLeft")  go(-1);
+      else if (e.key === "ArrowRight") go(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total]);
+  const onTouchStart = e => { touchX.current = e.touches[0].clientX; };
+  const onTouchEnd = e => {
+    if (touchX.current == null) return;
+    const dx = e.changedTouches[0].clientX - touchX.current;
+    if (Math.abs(dx) > 40) go(dx > 0 ? -1 : 1);
+    touchX.current = null;
+  };
+  const ctrl = {border:"1px solid rgba(255,255,255,.22)", background:"rgba(255,255,255,.12)",
+    color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+    padding:0, WebkitBackdropFilter:"blur(6px)", backdropFilter:"blur(6px)"};
+  return (
+    <div onClick={onClose} style={{position:"fixed", inset:0, zIndex:1200, background:"rgba(6,6,9,.96)",
+      display:"flex", flexDirection:"column", animation:"dhFade .18s ease",
+      paddingTop:"env(safe-area-inset-top,0px)"}}>
+      {/* top bar: counter + close */}
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"14px 16px", flexShrink:0, zIndex:2}}>
+        <div style={{color:"rgba(255,255,255,.9)", fontSize:14, fontWeight:700, fontFamily:F,
+          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{total ? index + 1 : 0} / {total}</div>
+        <button onClick={e => { e.stopPropagation(); onClose(); }} aria-label="Close gallery"
+          style={{...ctrl, width:40, height:40, borderRadius:"50%"}}><I.x size={20} stroke={2.4}/></button>
+      </div>
+      {/* main image */}
+      <div onClick={e => e.stopPropagation()} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+        style={{flex:1, minHeight:0, position:"relative", display:"flex", alignItems:"center",
+          justifyContent:"center", padding: mobile ? "0 6px" : "0 16px"}}>
+        <SafeImg src={photos[index]} fallback={imgPlaceholder(48)}
+          style={{maxWidth:"100%", maxHeight:"100%", objectFit:"contain", display:"block",
+            borderRadius:10, boxShadow:"0 24px 70px -24px rgba(0,0,0,.9)"}}/>
+        {total > 1 && !mobile && (
+          <>
+            <button onClick={e => { e.stopPropagation(); go(-1); }} aria-label="Previous photo"
+              style={{...ctrl, position:"absolute", left:18, top:"50%", transform:"translateY(-50%)",
+                width:48, height:48, borderRadius:"50%"}}><I.chevronLeft size={24}/></button>
+            <button onClick={e => { e.stopPropagation(); go(1); }} aria-label="Next photo"
+              style={{...ctrl, position:"absolute", right:18, top:"50%", transform:"translateY(-50%)",
+                width:48, height:48, borderRadius:"50%"}}><I.chevronRight size={24}/></button>
+          </>
+        )}
+      </div>
+      {/* thumbnail rail */}
+      {total > 1 && (
+        <div onClick={e => e.stopPropagation()} className="dh-chip-row"
+          style={{display:"flex", gap:8, overflowX:"auto", flexShrink:0,
+            padding:"12px 16px calc(14px + env(safe-area-inset-bottom,0px))",
+            justifyContent: total <= (mobile ? 5 : 10) ? "center" : "flex-start"}}>
+          {photos.map((src, i) => (
+            <button key={i} onClick={() => setIndex(i)} aria-label={`Photo ${i + 1}`}
+              style={{flexShrink:0, width: mobile ? 54 : 66, height: mobile ? 40 : 48, borderRadius:8,
+                overflow:"hidden", padding:0, cursor:"pointer", background:"rgba(255,255,255,.06)",
+                border: i === index ? "2px solid #fff" : "2px solid transparent",
+                opacity: i === index ? 1 : .5, transition:"opacity .15s, border-color .15s"}}>
+              <SafeImg src={src} fallback={imgPlaceholder(14)}
+                style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mobile, apiLookup, rcAuth}) {
   const c        = classifyDeal(deal);
   const coreTags = c.tags.filter(t => t !== "brrrr");
@@ -8649,6 +8738,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   const {strat, heroNumber, secondaryMetrics} =
     dealHeroMetrics(deal, deal.scenario || null, deal.financing || null);
   const [idx, setIdx]     = useState(0);
+  const [lightbox, setLightbox] = useState(false); // full-screen photo gallery
+  const lightboxRef = useRef(false);
+  useEffect(() => { lightboxRef.current = lightbox; }, [lightbox]);
   const [sheet, setSheet] = useState(null); // null | "comps" | "owner" | "records"
   const [shared, setShared] = useState(false);
   const fileRef = useRef(null);
@@ -8706,7 +8798,8 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
 
   useEffect(() => {
     lockBodyScroll();
-    const handler = e => { if (e.key === "Escape") onClose(); };
+    // Esc closes the gallery first (if open), otherwise the deal view.
+    const handler = e => { if (e.key === "Escape" && !lightboxRef.current) onClose(); };
     window.addEventListener("keydown", handler);
     return () => {
       unlockBodyScroll();
@@ -8824,9 +8917,11 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
-        {/* Gallery */}
+        {/* Gallery — tap the photo to open the full-screen swipeable gallery */}
         <div style={{position:"relative", background:C.bgSubtle}}>
-          <div style={{height: mobile ? 235 : 300, overflow:"hidden"}}>
+          <div onClick={() => visible.length && setLightbox(true)}
+            style={{height: mobile ? 235 : 300, overflow:"hidden",
+              cursor: visible.length ? "zoom-in" : "default"}}>
             <SafeImg src={visible[idx] || visible[0]} fallback={imgPlaceholder(36)}
               style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
           </div>
@@ -8836,6 +8931,15 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
               display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh3}}>
             <I.x size={17}/>
           </button>
+          {visible.length > 0 && (
+            <button onClick={() => setLightbox(true)} aria-label="View photos larger"
+              style={{position:"absolute", bottom:12, left:12, display:"flex", alignItems:"center", gap:6,
+                background:"rgba(9,9,11,.6)", color:"#fff", border:"none", cursor:"pointer",
+                padding:"5px 11px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+                WebkitBackdropFilter:"blur(4px)", backdropFilter:"blur(4px)"}}>
+              <ExpandIcon size={13}/> {visible.length > 1 ? "View photos" : "View"}
+            </button>
+          )}
           {visible.length > 1 && (
             <div style={{position:"absolute", bottom:12, right:12, background:"rgba(9,9,11,.65)",
               color:"#fff", padding:"3px 10px", borderRadius:9999, fontSize:11.5, fontWeight:700,
@@ -9084,6 +9188,11 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
       {sheet === "proj" && (
         <ProjectionsSheet deal={deal} onPatchDeal={onPatchDeal}
           onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+
+      {lightbox && (
+        <PhotoLightbox photos={visible} index={idx} setIndex={setIdx}
+          onClose={()=>setLightbox(false)} mobile={mobile} />
       )}
     </div>
   );
@@ -12353,6 +12462,7 @@ export default function App() {
       .pac-item-query{font-size:14px;color:${C.text};font-weight:600}
       .pac-matched{font-weight:700}
       @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+      @keyframes dhFade{from{opacity:0}to{opacity:1}}
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
       @media (prefers-reduced-motion: reduce){.dh-exit-pulse{animation:none}}
