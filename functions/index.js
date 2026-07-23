@@ -1254,6 +1254,8 @@ function mapReapiDetail(data) {
     sqft: num(pi.livingSquareFeet) || num(pi.buildingSquareFeet),
     lotSize: num(pi.lotSquareFeet) || num((data.lotInfo || {}).lotSquareFeet),
     yearBuilt: num(pi.yearBuilt),
+    // Unit count powers the analyzer's multifamily auto-detect.
+    units: num(pi.unitsCount) || num(pi.unitCount) || num(data.unitsCount) || 0,
     type: REAPI_TYPE[String(data.propertyType || "").toUpperCase()] || "Single Family",
     lat: num(pi.latitude) || null,
     lng: num(pi.longitude) || null,
