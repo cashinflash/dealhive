@@ -6185,11 +6185,13 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               fontVariantNumeric:"tabular-nums", lineHeight:1.1}}>{$(deal.price)}</div>
             <div style={{fontSize:12, color:"rgba(255,255,255,.85)", marginTop:2,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-              {/* Caption under the price: a saved deal's number is what the
-                  user is paying, so it reads "Purchase Price"; a live market
-                  listing reads "Asking Price". Locked preview cards hide the
-                  address, so there we keep the city/state as the location cue. */}
-              {deal.savedAt ? "Purchase Price"
+              {/* Caption under the price. Only a deal that went through the
+                  analyzer carries an `analysis` snapshot and a user-entered
+                  purchase price — that reads "Purchase Price". A listing saved
+                  straight from the Deals page (no analysis) keeps its ask, so
+                  it reads "Asking Price", as do live market cards. Locked
+                  preview cards hide the address, so keep the city/state there. */}
+              {deal.analysis ? "Purchase Price"
                 : (isPro || showAddress) ? "Asking Price"
                 : `${deal.city}, ${deal.state}`}
             </div>
