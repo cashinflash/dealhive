@@ -887,13 +887,13 @@ const applyRentcast = (prev, data, rates) => {
     expInsurance: (prev.expInsurance||0) > 0 ? prev.expInsurance
       : Math.round(((med || taxVal || prev.purchasePrice || 0)
           * (INSURANCE_RATES[(prev.state||"").toUpperCase()] || DEFAULT_INS_RATE)) / 12),
-    // A listing's own ARV wins over the AVM median — the user asked to go by
-    // the value the source API provides, not a recomputed midpoint.
-    homeValueMedian: prev.listingArv || med,
-    homeValueLow:    prev.listingArv ? Math.round(prev.listingArv * 0.9) : lo,
-    homeValueHigh:   prev.listingArv || med || hi,
-    flipSalePrice:   prev.listingArv || med || hi || prev.flipSalePrice,
-    brrrCashOut:     (prev.listingArv || med) ? Math.round((prev.listingArv || med) * 0.75) : prev.brrrCashOut,
+    // The AVM value wins; a listing's Zillow ARV is only a last resort if the
+    // provider returns no value (RealEstateAPI is the authoritative source now).
+    homeValueMedian: med || prev.listingArv,
+    homeValueLow:    lo,
+    homeValueHigh:   med || hi || prev.listingArv,
+    flipSalePrice:   med || hi || prev.listingArv || prev.flipSalePrice,
+    brrrCashOut:     (med || prev.listingArv) ? Math.round((med || prev.listingArv) * 0.75) : prev.brrrCashOut,
     repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
     repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
     repairFull:    sqft ? Math.round(sqft * r.full)   : prev.repairFull,
@@ -912,8 +912,9 @@ const applyRentcast = (prev, data, rates) => {
 const applyReapi = (prev, rp, rates) => {
   const r    = rates || {light:7, medium:13, full:45};
   const sqft = rp.sqft || prev.sqft || 0;
-  // Listing ARV (from the source API) stays authoritative; else RealEstateAPI value.
-  const med  = prev.listingArv || rp.value || prev.homeValueMedian || 0;
+  // RealEstateAPI value is authoritative; a Zillow listing ARV is only the
+  // fallback when RealEstateAPI has no value for the address.
+  const med  = rp.value || prev.listingArv || prev.homeValueMedian || 0;
   const taxVal  = rp.assessedValue || prev.taxValue || 0;
   const annual  = rp.taxAnnual || 0;
   return {
