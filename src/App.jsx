@@ -1400,7 +1400,9 @@ function AuthPage({onAuth}) {
         // reveals whether an email is registered.
         await fetch(`${FN_BASE}/requestPasswordReset`, {method:"POST",
           headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})}).catch(()=>{});
-        setMsg("Reset email sent! Check your inbox."); setMode("signin");
+        // Generic on purpose: works whether we sent a reset link or the
+        // "you sign in with Google" email, and never confirms the account exists.
+        setMsg("Check your inbox — we just sent a link to get you back in."); setMode("signin");
       } else {
         const u = mode==="signup" ? await fbSignUp(email,password) : await fbSignIn(email,password);
         onAuth(u, mode==="signup");
@@ -1562,6 +1564,17 @@ function AuthPage({onAuth}) {
             </div>
           )}
 
+          {/* Google users have no password. Tell them here on the reset screen
+              (the Google button itself is hidden in this mode). */}
+          {mode === "reset" && (
+            <div style={{background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r2,
+              padding:"11px 13px", marginBottom:16, fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55}}>
+              Signed up with Google? You don't have a password to reset &mdash;{" "}
+              <button type="button" onClick={()=>{setMode("signin");setErr("");setMsg("");}}
+                style={{...linkBtn, fontSize:12.5}}>go back</button>{" "}and tap <b style={{color:C.text, fontWeight:600}}>Continue with Google</b>.
+            </div>
+          )}
+
           {mode !== "reset" && (
             <>
               {/* Apple & Facebook are hidden until they're wired up — re-add the
@@ -1599,6 +1612,11 @@ function AuthPage({onAuth}) {
                 <input type="password" value={password} onChange={e=>setPass(e.target.value)} required
                   placeholder="At least 6 characters" style={iS()} />
               </div>
+            )}
+            {mode === "signin" && (
+              <p style={{margin:"-4px 0 14px", fontSize:12, color:C.textMuted, fontFamily:F, lineHeight:1.5}}>
+                Signed up with Google? Tap <b style={{color:C.text, fontWeight:600}}>Continue with Google</b> above &mdash; there's no password to enter.
+              </p>
             )}
             {mode === "signup" && (
               <div style={{marginBottom:14}}>
@@ -11665,7 +11683,7 @@ function MobileHeader({page, onBack, toast, onAddProperty, isAdmin=false, onMenu
   useEffect(() => { setMenuOpen(false); }, [page]);
   const titles = {
     dashboard:"Dashboard", saved:"Saved Deals", properties:"Properties", projects:"Projects",
-    deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
+    deals:"Deals", deal:"Deal Analyzer", comps:"Comps", users:"Users",
     settings:"Settings", property:"Property"
   };
   return (
@@ -11720,7 +11738,7 @@ function MobileHeader({page, onBack, toast, onAddProperty, isAdmin=false, onMenu
             background:C.card, border:"1px solid "+C.border, borderRadius:C.r3,
             boxShadow:C.sh4, overflow:"hidden", minWidth:180}}>
             {[["deals", "Deals", I.star], ["comps", "Comps", I.chart],
-              ["saved", "Saved Deals", I.bee]].map(([id, label, Ic], i, arr) => (
+              ["saved", "Saved Deals", I.bee], ["users", "Users", I.user]].map(([id, label, Ic], i, arr) => (
               <button key={id} onClick={()=>{ setMenuOpen(false); onMenuNav(id); }}
                 style={{display:"flex", alignItems:"center", gap:10, width:"100%",
                   padding:"12px 16px", background: page===id ? C.bgSubtle : C.card,
