@@ -1413,38 +1413,41 @@ exports.searchCommercial = onRequest({
 // trusting field names. Cached hard (a listing's copy rarely changes).
 const LOOPNET_DETAIL_TTL_MS = 7 * 24 * 3600 * 1000;
 function extractLoopnetDetail(j) {
-  let description = "";
   const photos = [];
   const seen = new Set();
+  let keyMatched = "";   // longest string under a description-ish key
+  let longestProse = ""; // longest prose string anywhere
+  let joinedArray = "";  // paragraph arrays joined (descriptions often split)
+  const isProse = (s) => typeof s === "string" && s.length > 60 && /\s/.test(s) &&
+    !/^https?:/.test(s) && !/\{|\}|<\/?[a-z]+>/i.test(s.slice(0, 40));
   const walk = (v, key) => {
     if (v == null) return;
     if (typeof v === "string") {
       if (/^https?:\/\//.test(v) && /loopnet\.com/i.test(v) && /\/i2\/|image|photo/i.test(v)) {
         if (!seen.has(v) && photos.length < 40) { seen.add(v); photos.push(v); }
-      } else if (/descript|overview|summary/i.test(key || "") && v.length > description.length) {
-        description = v;
+        return;
       }
+      if (/descript|overview|summary|about/i.test(key || "") && v.length > keyMatched.length) keyMatched = v;
+      if (isProse(v) && v.length > longestProse.length) longestProse = v;
       return;
     }
-    if (Array.isArray(v)) { v.forEach((x) => walk(x, key)); return; }
+    if (Array.isArray(v)) {
+      // A description split into paragraphs: an array where most items read as
+      // prose. Join it and let it compete with the single-string candidates.
+      const prose = v.filter(isProse);
+      if (prose.length >= 2 && prose.length >= v.length / 2) {
+        const joined = prose.join("\n\n");
+        if (joined.length > joinedArray.length) joinedArray = joined;
+      }
+      v.forEach((x) => walk(x, key));
+      return;
+    }
     if (typeof v === "object") { for (const [k, val] of Object.entries(v)) walk(val, k); }
   };
   walk(j, "");
-  if (!description) {
-    // Fallback: the longest prose-looking string anywhere in the payload.
-    let best = "";
-    const walk2 = (v) => {
-      if (v == null) return;
-      if (typeof v === "string") {
-        if (v.length > best.length && v.length > 120 && /\s/.test(v) && !/^https?:/.test(v)) best = v;
-        return;
-      }
-      if (Array.isArray(v)) { v.forEach(walk2); return; }
-      if (typeof v === "object") Object.values(v).forEach(walk2);
-    };
-    walk2(j);
-    description = best;
-  }
+  // The fullest text wins, whatever shape it arrived in.
+  const description = [keyMatched, longestProse, joinedArray]
+    .reduce((a, b) => (b.length > a.length ? b : a), "");
   return {description: description || null, photos};
 }
 exports.commercialDetail = onRequest({
@@ -1462,7 +1465,10 @@ exports.commercialDetail = onRequest({
 
     const cacheRef = admin.database().ref(`commercialDetailCache/${id || listingCacheKey(url, 1)}`);
     const cached = (await cacheRef.get()).val();
-    if (cached && cached.ts && (Date.now() - cached.ts) < LOOPNET_DETAIL_TTL_MS) {
+    // v2 invalidates entries from the first extractor. Hits cache a week;
+    // misses only an hour, so a hiccup can't blank a listing for days.
+    const ttl = cached && cached.found ? LOOPNET_DETAIL_TTL_MS : 3600 * 1000;
+    if (cached && cached.v === 2 && cached.ts && (Date.now() - cached.ts) < ttl) {
       res.json({found: cached.found, description: cached.description || null,
         photos: cached.photos || [], cached: true});
       return;
@@ -1485,7 +1491,7 @@ exports.commercialDetail = onRequest({
       if (byUrl) out = byUrl;
     }
     const got = out ? extractLoopnetDetail(out) : {description: null, photos: []};
-    const record = {ts: Date.now(), found: !!(got.description || got.photos.length),
+    const record = {v: 2, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
     await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
