@@ -7723,8 +7723,9 @@ function RevealCardShell({free, children}) {
     </div>
   );
 }
-function RevealCardHeader({subtitle, admin, balance}) {
-  const has = admin || balance >= 1;
+function RevealCardHeader({subtitle, admin, balance, monthlyLeft}) {
+  const hasMonthly = monthlyLeft != null && monthlyLeft > 0;
+  const has = admin || hasMonthly || balance >= 1;
   return (
     <div style={{display:"flex", alignItems:"center", gap:12, marginBottom:12}}>
       <div style={{width:42, height:42, borderRadius:12, flex:"0 0 auto", display:"flex",
@@ -7738,12 +7739,14 @@ function RevealCardHeader({subtitle, admin, balance}) {
           letterSpacing:"-0.01em"}}>Owner Contact</div>
         <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:1}}>{subtitle}</div>
       </div>
-      {(admin || balance != null) && (
+      {(admin || balance != null || monthlyLeft != null) && (
         <span style={{marginLeft:"auto", flex:"0 0 auto", fontSize:11, fontWeight:800,
           color: has ? C.greenDark : C.textMuted, background: has ? C.greenSubtle : C.bgSubtle,
           border:"1px solid "+(has ? C.greenBorder : C.border), borderRadius:9999,
           padding:"5px 11px", whiteSpace:"nowrap", fontFamily:F}}>
-          {admin ? "Unmetered" : `${balance} credit${balance === 1 ? "" : "s"}`}
+          {admin ? "Unmetered"
+            : hasMonthly ? `${monthlyLeft} left this month`
+            : `${balance} credit${balance === 1 ? "" : "s"}`}
         </span>
       )}
     </div>
@@ -7773,18 +7776,20 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
   };
   useEffect(() => {
     let alive = true;
-    call({}).then(d => alive && setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin}))
-      .catch(() => alive && setSt({loading:false, balance:null, revealed:null, admin:false}));
+    call({}).then(d => alive && setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin,
+        monthlyLeft: d.monthlyLeft ?? null, monthlyLimit: d.monthlyLimit ?? null}))
+      .catch(() => alive && setSt({loading:false, balance:null, revealed:null, admin:false,
+        monthlyLeft:null, monthlyLimit:null}));
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const buy = async () => {
+  const buy = async (plan) => {
     if (busy) return;
     setBusy(true); setErr("");
     try {
       const r = await fetch(`${FN_BASE}/createCheckoutSession`, {method: "POST",
         headers: {Authorization: `Bearer ${rcAuth.token}`, "Content-Type": "application/json"},
-        body: JSON.stringify({plan: free ? "reveal1" : "credits10"})});
+        body: JSON.stringify({plan: plan || (free ? "reveal1" : "credits10")})});
       const d = await r.json().catch(() => ({}));
       if (d.url) { window.location.assign(d.url); return; }
       throw new Error();
@@ -7795,7 +7800,8 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
     setBusy(true); setErr("");
     try {
       const d = await call({confirm: true});
-      setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin});
+      setSt({loading:false, balance:d.balance, revealed:d.revealed, admin:!!d.admin,
+        monthlyLeft: d.monthlyLeft ?? null, monthlyLimit: d.monthlyLimit ?? null});
     } catch (e) {
       if (e.code === "cap") setErr("Daily reveal limit reached. It resets tomorrow, and no credit was used.");
       else if (e.code === "credits") {
@@ -7810,7 +7816,8 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
 
   const rv = st.revealed;
   const bal = st.balance;
-  const canReveal = st.admin || (bal != null && bal >= 1);
+  const monthlyLeft = st.monthlyLeft;   // Pro's included reveals left this month (null for free/admin)
+  const canReveal = st.admin || (monthlyLeft != null && monthlyLeft > 0) || (bal != null && bal >= 1);
 
   if (st.loading) {
     return <div style={{marginTop: free ? 0 : 14, fontSize:12.5, color:C.textMuted, fontFamily:F}}>Checking…</div>;
@@ -7825,7 +7832,7 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
         {free && <OwnerInfoCard mailingStr={rv.mailingStr} county={rv.county}/>}
         {free && <div style={{height:14}}/>}
         <RevealCardShell free={free}>
-          <RevealCardHeader subtitle="Most likely numbers first" admin={st.admin} balance={bal}/>
+          <RevealCardHeader subtitle="Most likely numbers first" admin={st.admin} balance={bal} monthlyLeft={monthlyLeft}/>
           <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:11}}>
             Numbers linked to <strong style={{color:C.text}}>{rv.ownerName || "this owner"}</strong> in
             public records. Skip traced data can include past, household and family
@@ -7871,7 +7878,9 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
           <div style={{fontSize:11, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:11}}>
             From public and proprietary records. Please check the National Do Not Call
             Registry before calling. See our Terms for outreach rules.
-            {!st.admin && bal != null && ` You have ${bal} reveal credit${bal === 1 ? "" : "s"} left.`}
+            {!st.admin && (monthlyLeft != null
+              ? ` You have ${monthlyLeft} included reveal${monthlyLeft === 1 ? "" : "s"} left this month.`
+              : bal != null ? ` You have ${bal} reveal credit${bal === 1 ? "" : "s"} left.` : "")}
           </div>
           {rv.stale && (
             <button onClick={reveal} disabled={busy}
@@ -7895,7 +7904,7 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
       : "County records do not show a traceable owner for this address.";
     return (
       <RevealCardShell free={free}>
-        <RevealCardHeader subtitle="No number found" admin={st.admin} balance={bal}/>
+        <RevealCardHeader subtitle="No number found" admin={st.admin} balance={bal} monthlyLeft={monthlyLeft}/>
         <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
           background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r3, padding:"13px 15px"}}>
           {msg} Your credit was not used.
@@ -7920,7 +7929,9 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
         <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:7,
           maxWidth:300, marginLeft:"auto", marginRight:"auto"}}>
           {st.admin ? "This runs a skip trace on the owner of record."
-            : "This uses 1 credit, and only when a number is found. Misses cost you nothing."}
+            : (monthlyLeft != null && monthlyLeft > 0)
+              ? "This is one of your included monthly reveals, and only counts when a number is found."
+              : "This uses 1 credit, and only when a number is found. Misses cost you nothing."}
         </div>
         <div style={{display:"flex", gap:10, marginTop:18}}>
           <button onClick={reveal} disabled={busy}
@@ -7941,14 +7952,16 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
   if (canReveal) {
     return (
       <RevealCardShell free={free}>
-        <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal}/>
+        <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal} monthlyLeft={monthlyLeft}/>
         <button onClick={() => { setErr(""); setConfirming(true); }} disabled={busy}
           {...btnStyle("primary","md", {width:"100%", justifyContent:"center", marginTop:4})}>
           <I.phone size={17} stroke={2.2}/> Reveal Phone &amp; Email
         </button>
         <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:10, lineHeight:1.5}}>
           {st.admin ? "Owner account, unmetered."
-            : "Costs 1 credit, and only when a number is found. Misses cost nothing."}
+            : (monthlyLeft != null && monthlyLeft > 0)
+              ? "Included in your monthly reveals, and only counts when a number is found."
+              : "Costs 1 credit, and only when a number is found. Misses cost nothing."}
         </div>
         {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
       </RevealCardShell>
@@ -7986,16 +7999,21 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
             </div>
           ))}
         </div>
-        <button onClick={buy} disabled={busy}
+        <button onClick={() => buy("reveal1")} disabled={busy}
           {...btnStyle("primary","lg", {marginTop:18, width:"100%", justifyContent:"center"})}>
           {busy ? "Opening…" : "Unlock for $4.99"}
         </button>
+        <button onClick={() => buy("reveal5")} disabled={busy}
+          {...btnStyle("secondary","md", {marginTop:9, width:"100%", justifyContent:"center"})}>
+          Or get a 5-pack for $19.99
+          <span style={{color:C.textMuted, fontWeight:600, marginLeft:6}}>just $4 each</span>
+        </button>
         <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:8}}>
-          One property. You only pay when a number is found.
+          You only pay when a number is found.
         </div>
         {onUpgrade && (
           <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:12}}>
-            Reveal often? <span onClick={onUpgrade} style={{color:C.greenDark, fontWeight:700, cursor:"pointer"}}>DealHive Pro</span> includes it from $1 each.
+            Reveal often? <span onClick={onUpgrade} style={{color:C.greenDark, fontWeight:700, cursor:"pointer"}}>DealHive Pro</span> includes 10 a month.
           </div>
         )}
         {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
@@ -8003,16 +8021,19 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
     );
   }
 
-  // Pro account, out of credits: buy the 10 pack.
+  // Pro account, monthly 10 used up and no credits: buy a top-up pack.
   return (
     <RevealCardShell free={free}>
-      <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal}/>
-      <button onClick={buy} disabled={busy}
+      <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal} monthlyLeft={monthlyLeft}/>
+      <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:11}}>
+        You've used your <strong style={{color:C.text}}>10 included reveals</strong> this month. Grab a credit pack for the rest — each reveal is just $0.99.
+      </div>
+      <button onClick={() => buy("credits10")} disabled={busy}
         {...btnStyle("primary","md", {width:"100%", justifyContent:"center", marginTop:4})}>
-        {busy ? "Opening…" : "Get 10 Reveal Credits for $10"}
+        {busy ? "Opening…" : "Get 10 more reveals for $9.90"}
       </button>
       <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, textAlign:"center", marginTop:10, lineHeight:1.5}}>
-        A dollar per reveal, and a credit is only used when a number is found.
+        $0.99 per reveal, and a credit is only used when a number is found.
       </div>
       {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
     </RevealCardShell>
