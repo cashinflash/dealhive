@@ -65,7 +65,7 @@ const isOhio = obj => String((obj && obj.state) || "").trim().toUpperCase() === 
 const LOOKUP_CAP    = 250;            // Pro: fresh billable lookups per month
 // Free tier meters by feature: address/property pulls, sales-comp lookups,
 // rental-comp lookups. Manual analyzing (no API) is always unlimited.
-const FREE_LIMITS   = {pulls: 3, sales: 5, rent: 5};
+const FREE_LIMITS   = {pulls: 5, sales: 5, rent: 5};
 const CACHE_TTL_MS  = 30 * 86400000;  // cached results stay fresh for 30 days
 const EMPTY_TTL_MS  = 6 * 3600000;    // "nothing found" results retry after 6 hours
 const CACHE_MAX     = 50;             // most recent entries kept; older ones pruned
