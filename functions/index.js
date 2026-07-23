@@ -1228,13 +1228,27 @@ exports.searchListings = onRequest({
 const LOOPNET_HOST = "loopnet-api3.p.rapidapi.com";
 function mapLoopnetListing(r) {
   if (!r || typeof r !== "object") return null;
-  // A single absolute dollar figure is a real asking price; ranges, per-SF
-  // rates, and "Negotiable" parse to 0 so the client never invents a number.
+  // A single absolute dollar figure is a real asking price ("$1,020,000",
+  // "$3M", "$3.3M"); ranges, per-SF rates, and "Negotiable" parse to 0 so the
+  // client never invents a number. LoopNet sometimes abbreviates the card
+  // price and tucks the exact figure into buildingInfo, so that's the backup.
+  // Order of trust: an exact dollar figure in the price, then the exact figure
+  // LoopNet tucks into buildingInfo, and only then an abbreviated "$3M".
   const priceStr = String(r.price || "");
   let priceNum = 0;
-  if (!/\/|\bto\b|-/.test(priceStr.replace(/[\d,]/g, (m) => m))) {
-    const m = /^\s*\$\s*([\d,]+)\s*$/.exec(priceStr);
-    if (m) priceNum = parseInt(m[1].replace(/,/g, ""), 10) || 0;
+  const exact = /^\s*\$\s*([\d,]+)\s*$/.exec(priceStr);
+  if (exact) priceNum = parseInt(exact[1].replace(/,/g, ""), 10) || 0;
+  if (!priceNum) {
+    const b = /\$\s*([\d,]{7,})/.exec(String(r.buildingInfo || ""));
+    if (b) priceNum = parseInt(b[1].replace(/,/g, ""), 10) || 0;
+  }
+  if (!priceNum) {
+    const mm = /^\s*\$\s*([\d.,]+)\s*([MK])\s*$/i.exec(priceStr);
+    if (mm) {
+      let v = parseFloat(mm[1].replace(/,/g, "")) || 0;
+      v *= /m/i.test(mm[2]) ? 1e6 : 1e3;
+      priceNum = Math.round(v);
+    }
   }
   return {
     id: String(r.id || r.propertyId || ""),
@@ -1425,6 +1439,9 @@ function mapReapiDetail(data) {
     beds,
     baths: num(pi.bathrooms),
     sqft: num(pi.livingSquareFeet) || num(pi.buildingSquareFeet),
+    // Whole-building square footage — what a multifamily analysis should show
+    // (livingSquareFeet can be a single unit's interior on multi-unit parcels).
+    sqftBuilding: num(pi.buildingSquareFeet),
     lotSize: num(pi.lotSquareFeet) || num((data.lotInfo || {}).lotSquareFeet),
     yearBuilt: num(pi.yearBuilt),
     // Unit count powers the analyzer's multifamily auto-detect.

@@ -1003,7 +1003,12 @@ const applyRentcast = (prev, data, rates) => {
 // A missing REAPI field never clobbers an existing value.
 const applyReapi = (prev, rp, rates) => {
   const r    = rates || {light:7, medium:13, full:45};
-  const sqft = rp.sqft || prev.sqft || 0;
+  // Multi-unit parcels: livingSquareFeet is often one unit's interior, so the
+  // building total is the honest number for the whole property.
+  const multiUnit = (rp.units || 0) >= 2 || /apartment/i.test(rp.type || "");
+  const sqft = (multiUnit && rp.sqftBuilding
+    ? Math.max(rp.sqftBuilding, rp.sqft || 0)
+    : rp.sqft) || prev.sqft || 0;
   // RealEstateAPI value is authoritative; a Zillow listing ARV is only the
   // fallback when RealEstateAPI has no value for the address.
   const med  = rp.value || prev.listingArv || prev.homeValueMedian || 0;
@@ -2289,6 +2294,13 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
               )}
             </div>
             )}
+
+            {(() => {
+              const pinned = (isPro ? st.comps : st.comps.slice(0, 5))
+                .map(l => ({lat: l.latitude, lng: l.longitude}));
+              return (p.lat != null || pinned.some(pt => pt.lat != null))
+                ? <SheetCompsMap lat={p.lat} lng={p.lng} points={pinned}/> : null;
+            })()}
 
             {st.comps.length > 0 && (() => {
               const visible = isPro ? st.comps : st.comps.slice(0, 5);
@@ -6825,11 +6837,20 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
   if (deal.source === "DealHive 2" && coreTags.length === 0) strat = STRATEGY_LABELS.byowner;
   // "Find the Owner" — county-records owner lookup, one tap from the feed.
   const [showOwner, setShowOwner] = useState(false);
+  // Research sheets (comps) and the full-screen photo gallery.
+  const [sheet, setSheet] = useState(null); // null | "sales" | "rent"
+  const [lightbox, setLightbox] = useState(false);
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const lightboxRef = useRef(false);
+  useEffect(() => { lightboxRef.current = lightbox; }, [lightbox]);
+  const photos = Array.isArray(deal.photos) && deal.photos.length > 0
+    ? deal.photos : (deal.photo ? [deal.photo] : []);
+  const rcDeal = {...deal, address: deal.streetAddress || deal.address};
 
-  // Escape closes; body scroll lock while open.
+  // Escape closes; the gallery (when open) wins the keystroke.
   useEffect(() => {
     lockBodyScroll();
-    const handler = e => { if (e.key === "Escape") onClose(); };
+    const handler = e => { if (e.key === "Escape" && !lightboxRef.current) onClose(); };
     window.addEventListener("keydown", handler);
     return () => {
       unlockBodyScroll();
@@ -6859,15 +6880,16 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
-        {/* Hero — photo carousel with overlays */}
+        {/* Hero — photo carousel with overlays; tap the photo for the gallery */}
         <div style={{position:"relative"}}>
-          <PhotoCarousel
-            photos={Array.isArray(deal.photos) && deal.photos.length > 0
-              ? deal.photos
-              : (deal.photo ? [deal.photo] : [])}
-            fallbackLat={deal.lat} fallbackLng={deal.lng}
-            height={mobile ? 220 : 280}
-            mobile={mobile} />
+          <div onClick={() => photos.length && setLightbox(true)}
+            style={{cursor: photos.length ? "zoom-in" : "default"}}>
+            <PhotoCarousel
+              photos={photos}
+              fallbackLat={deal.lat} fallbackLng={deal.lng}
+              height={mobile ? 220 : 280}
+              mobile={mobile} />
+          </div>
           {/* Dark gradient at the bottom so the price overlay stays legible */}
           <div style={{position:"absolute", inset:0, pointerEvents:"none",
             background:"linear-gradient(to bottom, transparent 50%, rgba(9,9,11,.55))"}}/>
@@ -6878,6 +6900,16 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
               zIndex:3}}>
             <I.x size={16} stroke={2.5}/>
           </button>
+          {photos.length > 0 && (
+            <button onClick={() => setLightbox(true)} aria-label="View photos larger"
+              style={{position:"absolute", top:14, right:58, height:36, borderRadius:9999,
+                background:"rgba(9,9,11,.6)", border:"none", cursor:"pointer", color:"#fff",
+                display:"flex", alignItems:"center", gap:6, padding:"0 13px", zIndex:3,
+                fontSize:11.5, fontWeight:700, fontFamily:F,
+                WebkitBackdropFilter:"blur(4px)", backdropFilter:"blur(4px)"}}>
+              <ExpandIcon size={13}/> {photos.length > 1 ? "View photos" : "View"}
+            </button>
+          )}
           <div style={{position:"absolute", top:14, left:14, display:"flex", gap:6, flexWrap:"wrap", zIndex:3}}>
             <span style={{
               display:"inline-flex", alignItems:"center", gap:5,
@@ -6949,47 +6981,62 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
           </div>
         </div>
 
-        {/* Quick stats */}
-        <div style={{padding: mobile?"12px 18px":"14px 24px", borderBottom:"1px solid "+C.border,
-          display:"grid", gridTemplateColumns: mobile?"repeat(2, 1fr)":"repeat(4, 1fr)", gap:14}}>
-          {[
-            ["Beds",   deal.beds || "—"],
-            ["Baths",  deal.baths || "—"],
-            ["Sqft",   deal.sqft ? deal.sqft.toLocaleString() : "—"],
-            ["Year",   deal.yearBuilt || "—"],
-            ["Type",   deal.type || "—"],
-            ...(deal.condition ? [["Condition", deal.condition]] : []),
-          ].map(([l, v]) => (
-            <div key={l}>
-              <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:600,
-                letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
-              <div style={{fontSize:14, fontWeight:600, color:C.text, fontFamily:F,
-                fontVariantNumeric:"tabular-nums", marginTop:2,
-                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
-            </div>
-          ))}
+        {/* Quick facts — the same icon tiles the saved deal view wears */}
+        <div style={{padding: mobile?"14px 18px":"16px 24px", borderBottom:"1px solid "+C.border}}>
+          <div style={{display:"grid", gridTemplateColumns: mobile ? "repeat(3, 1fr)" : "repeat(6, 1fr)",
+            gap:1, background:C.border, border:"1px solid "+C.border,
+            borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+            {[
+              ["Beds",  deal.beds || "—",  I.bed],
+              ["Baths", deal.baths || "—", I.bath],
+              ["Sqft",  deal.sqft ? deal.sqft.toLocaleString() : "—", I.ruler],
+              ["Lot",   deal.lotSize ? deal.lotSize.toLocaleString() : "—", I.parcel],
+              ["Year",  deal.yearBuilt || "—", I.calendar],
+              ["Type",  deal.type || "—", I.home],
+            ].map(([l, v, Ic]) => (
+              <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+                padding:"11px 6px", textAlign:"center"}}>
+                <div style={{width:28, height:28, borderRadius:8, margin:"0 auto 5px",
+                  background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                  display:"flex", alignItems:"center", justifyContent:"center"}}>
+                  <Ic size={13} stroke={2}/>
+                </div>
+                <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums",
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+                <div style={{fontSize:9.5, color:C.textSub, fontFamily:F, fontWeight:700,
+                  letterSpacing:".06em", textTransform:"uppercase", marginTop:1}}>{l}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Spread / financials card */}
+        {/* The numbers — hero metric grid, same language as the rest of the app */}
         <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
           <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
             letterSpacing:".06em", textTransform:"uppercase", marginBottom:10}}>
             The numbers
           </div>
-          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:0,
+          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1,
             border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
-            background:C.border}}>
+            background:C.border, boxShadow:C.sh1}}>
             {[
-              ["Asking price",  $(deal.price),   C.text],
-              ["ARV estimate",  $(arv),          C.text],
-              ["Potential spread", $(spread),    spread > 0 ? cfC(spread) : C.textMuted],
-              ["Spread %",      pct(spreadPct),  spread > 0 ? cfC(spread) : C.textMuted],
-            ].map(([l, v, color]) => (
-              <div key={l} style={{padding:"12px 14px", background:C.card}}>
-                <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, fontWeight:600,
-                  letterSpacing:".04em", textTransform:"uppercase"}}>{l}</div>
-                <div style={{fontSize:16, fontWeight:700, color, fontFamily:F, marginTop:2,
-                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>{v}</div>
+              ["Asking Price",  $(deal.price),   C.text,                              false],
+              ["ARV Estimate",  $(arv),          C.text,                              false],
+              ["Potential Spread", $(spread),    spread > 0 ? cfC(spread) : C.textMuted, true],
+              ["Spread %",      pct(spreadPct),  spread > 0 ? cfC(spread) : C.textMuted, true],
+            ].map(([l, v, color, hero]) => (
+              <div key={l} style={{padding:"13px 10px 15px", textAlign:"center",
+                background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)"}}>
+                <div style={{display:"inline-flex", alignItems:"center", gap:5,
+                  fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F,
+                  letterSpacing:".07em", textTransform:"uppercase"}}>
+                  <span style={{width:5, height:5, borderRadius:"50%", flexShrink:0,
+                    background: hero ? color : C.borderHover}}/>
+                  {l}
+                </div>
+                <div style={{fontSize: hero ? 20 : 18, fontWeight:500, color, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4}}>{v}</div>
               </div>
             ))}
           </div>
@@ -7113,44 +7160,61 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
           </div>
         )}
 
-        {/* Bottom actions */}
-        <div style={{padding:sectionPad, display:"flex", gap:8, flexWrap:"wrap"}}>
-          {isPro ? (
-            <>
-              <button onClick={() => { onAnalyze(deal); onClose(); }}
-                {...btnStyle("primary","md", {flex:1})}>
-                <I.search size={13}/> Analyze deal
+        {/* Bottom actions — analyze up top, then the research shortcuts */}
+        <div style={{padding:sectionPad}}>
+          {isPro && (
+            <button onClick={() => { onAnalyze(deal); onClose(); }}
+              {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginBottom:12})}>
+              <I.search size={14}/> Analyze deal
+            </button>
+          )}
+          <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".07em",
+            textTransform:"uppercase", margin:"0 2px 7px"}}>Research</div>
+          <div style={{border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden",
+            boxShadow:C.sh1, background:"#fff"}}>
+            {[
+              [I.tag,    "Sales Comps & ARV",        () => setSheet("sales"), true],
+              [I.dollar, "Rental Comps & Estimate",  () => setSheet("rent"),  true],
+              [I.user,   "Find the Owner",           () => setShowOwner(true), !!deal.streetAddress],
+            ].filter(r => r[3]).map(([Ic, label, onClick], i, arr) => (
+              <button key={label} onClick={onClick} style={{display:"flex", alignItems:"center", gap:12,
+                width:"100%", padding:"14px", background:"#fff", border:"none", cursor:"pointer",
+                textAlign:"left", fontFamily:F,
+                borderBottom: i === arr.length - 1 ? "none" : "1px solid "+C.border}}>
+                <span style={{width:32, height:32, borderRadius:9, flexShrink:0, background:C.greenSubtle,
+                  border:"1px solid "+C.greenBorder, color:C.greenDark, display:"inline-flex",
+                  alignItems:"center", justifyContent:"center"}}>
+                  <Ic size={15} stroke={2}/>
+                </span>
+                <span style={{flex:1, fontSize:14, fontWeight:600, color:C.text}}>{label}</span>
+                <I.chevronRight size={15} style={{color:C.textMuted}}/>
               </button>
-              <button onClick={() => { onSave(deal); onClose(); }}
-                {...btnStyle("secondary","md", {flex:1})}>
-                <I.plus size={13}/> Save to portfolio
-              </button>
-              {deal.streetAddress && (
-                <button onClick={() => setShowOwner(true)}
-                  {...btnStyle("secondary","md", {width:"100%"})}>
-                  <I.user size={13}/> Find the Owner
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              {deal.streetAddress && (
-                <button onClick={() => setShowOwner(true)}
-                  {...btnStyle("secondary","md", {width:"100%"})}>
-                  <I.user size={13}/> Find the Owner
-                </button>
-              )}
-              <button onClick={onUpgrade} {...btnStyle("primary","md", {width:"100%"})}>
-                <I.lock size={13} stroke={2.4}/> Unlock the full deal with Pro
-              </button>
-            </>
+            ))}
+          </div>
+          {!isPro && (
+            <button onClick={onUpgrade} {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginTop:12})}>
+              <I.lock size={13} stroke={2.4}/> Unlock the full deal with Pro
+            </button>
           )}
         </div>
         {showOwner && (
           <OwnerLookupSheet
-            deal={{...deal, address: deal.streetAddress || deal.address}}
+            deal={rcDeal}
             isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
             onUpgrade={onUpgrade} onClose={() => setShowOwner(false)} mobile={mobile} />
+        )}
+        {sheet === "sales" && (
+          <SalesCompsSheet deal={rcDeal} isPro={isPro} apiLookup={apiLookup} rcAuth={rcAuth}
+            onUpgrade={onUpgrade} onClose={() => setSheet(null)} mobile={mobile} />
+        )}
+        {sheet === "rent" && (
+          <RentCompsSheet p={rcDeal} apiLookup={apiLookup} rcAuth={rcAuth}
+            tier={isPro ? "pro" : "free"} onUpgrade={onUpgrade}
+            onClose={() => setSheet(null)} mobile={mobile} />
+        )}
+        {lightbox && (
+          <PhotoLightbox photos={photos} index={photoIdx} setIndex={setPhotoIdx}
+            onClose={() => setLightbox(false)} mobile={mobile} />
         )}
       </div>
     </div>
@@ -7432,6 +7496,76 @@ function MiniMap({lat, lng}) {
     return () => { if (map) map.remove(); };
   }, [lat, lng]);
   return <div ref={ref} style={{height:180, borderRadius:C.r3, overflow:"hidden", border:"1px solid "+C.border}}/>;
+}
+
+// Comps map: the subject property as a bold orange pin, each comparable as a
+// numbered blue pin matching its row in the list below. Fits itself around
+// every point.
+function SheetCompsMap({lat, lng, points = [], height = 210}) {
+  const ref = useRef(null);
+  const key = points.map(p => `${p.lat},${p.lng}`).join("|");
+  useEffect(() => {
+    const pts = points.filter(p => p.lat != null && p.lng != null);
+    if (((!lat || !lng) && !pts.length) || !ref.current) return;
+    let map;
+    const init = () => {
+      if (!ref.current || map) return;
+      map = window.L.map(ref.current, {zoomControl:false, attributionControl:false,
+        scrollWheelZoom:false, dragging:false, tap:false});
+      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+      const bounds = [];
+      pts.forEach((p, i) => {
+        const icon = window.L.divIcon({className:"", iconSize:[24,24], iconAnchor:[12,12],
+          html:`<div style="width:24px;height:24px;border-radius:50%;background:#2563EB;color:#fff;` +
+            `font:700 11px Inter,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;` +
+            `border:2px solid #fff;box-shadow:0 2px 6px rgba(9,9,11,.35)">${i + 1}</div>`});
+        window.L.marker([p.lat, p.lng], {icon}).addTo(map);
+        bounds.push([p.lat, p.lng]);
+      });
+      if (lat && lng) {
+        const sIcon = window.L.divIcon({className:"", iconSize:[30,30], iconAnchor:[15,15],
+          html:`<div style="width:30px;height:30px;border-radius:50%;background:#E8731C;border:3px solid #fff;` +
+            `box-shadow:0 3px 9px rgba(9,9,11,.45);display:flex;align-items:center;justify-content:center">` +
+            `<div style="width:8px;height:8px;border-radius:50%;background:#fff"></div></div>`});
+        window.L.marker([lat, lng], {icon: sIcon, zIndexOffset:1000}).addTo(map);
+        bounds.push([lat, lng]);
+      }
+      if (bounds.length > 1) map.fitBounds(bounds, {padding:[30, 30]});
+      else map.setView(bounds[0], 14);
+    };
+    if (window.L) init();
+    else {
+      const sc = document.createElement("script");
+      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+      sc.onload = init;
+      document.head.appendChild(sc);
+      if (!document.querySelector('link[href*="leaflet.min.css"]')) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+        document.head.appendChild(l);
+      }
+    }
+    return () => { if (map) map.remove(); };
+  }, [lat, lng, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const legend = (label, color, ring) => (
+    <span style={{display:"inline-flex", alignItems:"center", gap:6, fontSize:11, fontWeight:700,
+      color:C.textSub, fontFamily:F}}>
+      <span style={{width:11, height:11, borderRadius:"50%", background:color,
+        border:"2px solid "+(ring || "#fff"), boxShadow:"0 1px 3px rgba(9,9,11,.3)"}}/>
+      {label}
+    </span>
+  );
+  return (
+    <div style={{marginTop:12}}>
+      <div ref={ref} style={{height, borderRadius:C.r3, overflow:"hidden",
+        border:"1px solid "+C.border, boxShadow:C.sh1, position:"relative", zIndex:0, isolation:"isolate"}}/>
+      <div style={{display:"flex", gap:14, justifyContent:"center", marginTop:8}}>
+        {legend("This property", "#E8731C")}
+        {points.length > 0 && legend("Comparables", "#2563EB")}
+      </div>
+    </div>
+  );
 }
 
 function PropertyModal({deal, isPro, onClose, onAnalyze, mobile}) {
@@ -8705,6 +8839,11 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
             )}
           </div>
 
+          {(deal.lat != null || visible.some(l => l.latitude != null)) && (
+            <SheetCompsMap lat={deal.lat} lng={deal.lng}
+              points={visible.map(l => ({lat: l.latitude, lng: l.longitude}))}/>
+          )}
+
           {st.compNote && (
             <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle,
               border:"1px solid "+C.amberBorder, borderRadius:C.r2, padding:"10px 13px",
@@ -9823,18 +9962,47 @@ function FinderSkeleton() {
   );
 }
 
+// The full asking price for a LoopNet listing. Cached rows from before the
+// server learned "$3M"-style prices resolve here too, so nothing ever shows an
+// abbreviated number.
+const commercialAsk = (l) => {
+  // Order of trust: an exact dollar figure in the price, then the exact figure
+  // LoopNet tucks into buildingInfo, and only then an abbreviated "$3M".
+  const exact = /^\s*\$\s*([\d,]+)\s*$/.exec(String(l.priceText || ""));
+  if (exact) { const v = parseInt(exact[1].replace(/,/g, ""), 10) || 0; if (v > 0) return v; }
+  const b = /\$\s*([\d,]{7,})/.exec(String(l.buildingInfo || ""));
+  if (b) { const v = parseInt(b[1].replace(/,/g, ""), 10) || 0; if (v > 0) return v; }
+  if (l.priceNum > 0) return l.priceNum;
+  const mm = /^\s*\$\s*([\d.,]+)\s*([MK])\s*$/i.exec(String(l.priceText || ""));
+  if (mm) {
+    let v = parseFloat(mm[1].replace(/,/g, "")) || 0;
+    v *= /m/i.test(mm[2]) ? 1e6 : 1e3;
+    if (v > 0) return Math.round(v);
+  }
+  return 0;
+};
+// buildingInfo sometimes carries the price LoopNet abbreviated on the card;
+// once the price is shown properly, repeating it in the info line is noise.
+const commercialInfo = (l) => {
+  const s = String(l.buildingInfo || "");
+  return /\$\s*[\d,]/.test(s) ? "" : s;
+};
+
 // One LoopNet commercial listing — price, type, size, and a straight path into
-// the multifamily underwriter. Lease listings underwrite too (price starts
-// blank); the LoopNet link keeps the full listing one tap away.
-function CommercialCard({l, mobile, onUnderwrite}) {
+// the multifamily underwriter. Tap anywhere on the card for the full listing
+// view; lease listings underwrite too (price starts blank).
+function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
+  const ask  = commercialAsk(l);
+  const info = commercialInfo(l);
   const chips = [
     l.propertyType || "Commercial",
     l.buildingClass ? `Class ${l.buildingClass}` : null,
-    l.searchType ? (/sale/i.test(l.searchType) ? "For Sale" : "For Lease") : null,
+    l.sizeLabel || null,
   ].filter(Boolean);
   const broker = (Array.isArray(l.brokers) && l.brokers[0]) || null;
   return (
-    <Card padding={0} style={{display:"flex", flexDirection:"column", overflow:"hidden"}}>
+    <Card padding={0} hover onClick={()=>onOpen && onOpen(l)}
+      style={{display:"flex", flexDirection:"column", overflow:"hidden", cursor:"pointer"}}>
       <div style={{height:150, background:C.bgSubtle, position:"relative"}}>
         {l.photo ? (
           <SafeImg src={l.photo} fallback={imgPlaceholder(30)}
@@ -9852,27 +10020,26 @@ function CommercialCard({l, mobile, onUnderwrite}) {
         )}
       </div>
       <div style={{padding:"13px 14px 14px", display:"flex", flexDirection:"column", flex:1}}>
-        <div style={{fontSize:17, fontWeight:800, color:C.text, fontFamily:F,
-          letterSpacing:"-0.02em", fontVariantNumeric:"tabular-nums"}}>
-          {l.priceNum > 0 ? $(l.priceNum) : l.priceText}
+        <div style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
+          letterSpacing:".07em", textTransform:"uppercase"}}>
+          {ask > 0 ? "Asking Price" : "Price"}
         </div>
-        <div style={{display:"flex", flexWrap:"wrap", gap:6, marginTop:7}}>
-          {chips.slice(0, 2).map(chip => (
+        <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, marginTop:2,
+          letterSpacing:"-0.02em", fontVariantNumeric:"tabular-nums"}}>
+          {ask > 0 ? $(ask) : l.priceText}
+        </div>
+        <div style={{display:"flex", flexWrap:"wrap", gap:6, marginTop:8}}>
+          {chips.slice(0, 3).map(chip => (
             <span key={chip} style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
               background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
               padding:"3px 9px"}}>{chip}</span>
           ))}
-          {l.sizeLabel && (
-            <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
-              background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
-              padding:"3px 9px"}}>{l.sizeLabel}</span>
-          )}
         </div>
         <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, marginTop:10,
           overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{l.address}</div>
         <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
           {[l.city, l.state].filter(Boolean).join(", ")}{l.zip ? ` ${l.zip}` : ""}
-          {l.buildingInfo ? ` · ${l.buildingInfo}` : ""}
+          {info ? ` · ${info}` : ""}
         </div>
         {broker && (broker.name || broker.company) && (
           <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6,
@@ -9881,20 +10048,187 @@ function CommercialCard({l, mobile, onUnderwrite}) {
           </div>
         )}
         <div style={{display:"flex", gap:8, marginTop:12}}>
-          <button onClick={()=>onUnderwrite(l)}
+          <button onClick={e=>{ e.stopPropagation(); onUnderwrite(l); }}
             {...btnStyle("primary","md", {flex:1, justifyContent:"center"})}>
             <I.chart size={14}/> Underwrite
           </button>
+          <button onClick={e=>{ e.stopPropagation(); onOpen && onOpen(l); }}
+            {...btnStyle("secondary","md", {justifyContent:"center"})}>
+            View Deal
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// Full-screen listing view for a commercial property — the same premium
+// treatment the home deals get: photo up top (tap for the gallery), the
+// asking price, the facts, the story, and the actions.
+function CommercialDetailModal({l, onClose, onUnderwrite, mobile}) {
+  const ask  = commercialAsk(l);
+  const info = commercialInfo(l);
+  const [lightbox, setLightbox] = useState(false);
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const lightboxRef = useRef(false);
+  useEffect(() => { lightboxRef.current = lightbox; }, [lightbox]);
+  const photos = l.photo ? [l.photo] : [];
+  useEffect(() => {
+    lockBodyScroll();
+    const h = e => { if (e.key === "Escape" && !lightboxRef.current) onClose(); };
+    window.addEventListener("keydown", h);
+    return () => { unlockBodyScroll(); window.removeEventListener("keydown", h); };
+  }, [onClose]);
+  const outerStyle = mobile
+    ? {position:"fixed", inset:0, background:"rgba(9,9,11,.6)", zIndex:500,
+       display:"flex", alignItems:"flex-end", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"}
+    : {position:"fixed", inset:0, background:"rgba(9,9,11,.55)", zIndex:500,
+       display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+       backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)"};
+  const innerStyle = mobile
+    ? {background:C.card, borderRadius:"18px 18px 0 0", width:"100%", maxHeight:"92dvh",
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
+    : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:640, maxHeight:"92dvh",
+       overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
+  const facts = [
+    ["Type",  l.propertyType || "—", I.building],
+    ["Class", l.buildingClass ? `Class ${l.buildingClass}` : "—", I.tag],
+    ["Size",  l.sizeLabel || "—", I.ruler],
+    ["Spaces", l.spaces || "—", I.home],
+  ];
+  return (
+    <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={innerStyle}>
+        <div style={{position:"relative"}}>
+          <div onClick={() => photos.length && setLightbox(true)}
+            style={{height: mobile ? 220 : 280, background:C.bgSubtle,
+              cursor: photos.length ? "zoom-in" : "default"}}>
+            {photos.length ? (
+              <SafeImg src={photos[0]} fallback={imgPlaceholder(36)}
+                style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+            ) : (
+              <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+                color:C.textMuted}}><I.building size={40}/></div>
+            )}
+          </div>
+          <div style={{position:"absolute", inset:0, pointerEvents:"none",
+            background:"linear-gradient(to bottom, transparent 50%, rgba(9,9,11,.55))"}}/>
+          <button onClick={onClose} aria-label="Close"
+            style={{position:"absolute", top:14, right:14, width:36, height:36, borderRadius:"50%",
+              background:"rgba(255,255,255,.92)", border:"none", cursor:"pointer", color:C.text,
+              display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2, zIndex:3}}>
+            <I.x size={16} stroke={2.5}/>
+          </button>
+          {photos.length > 0 && (
+            <button onClick={() => setLightbox(true)} aria-label="View photo larger"
+              style={{position:"absolute", top:14, right:58, height:36, borderRadius:9999,
+                background:"rgba(9,9,11,.6)", border:"none", cursor:"pointer", color:"#fff",
+                display:"flex", alignItems:"center", gap:6, padding:"0 13px", zIndex:3,
+                fontSize:11.5, fontWeight:700, fontFamily:F,
+                WebkitBackdropFilter:"blur(4px)", backdropFilter:"blur(4px)"}}>
+              <ExpandIcon size={13}/> View
+            </button>
+          )}
+          {l.searchType && (
+            <span style={{position:"absolute", top:14, left:14, background:"rgba(9,9,11,.72)",
+              color:"#fff", padding:"4px 11px", borderRadius:9999, fontSize:10.5, fontWeight:800,
+              fontFamily:F, letterSpacing:".04em", textTransform:"uppercase", zIndex:3}}>
+              {/sale/i.test(l.searchType) ? "For Sale" : "For Lease"}
+            </span>
+          )}
+          <div style={{position:"absolute", bottom:16, left:18, zIndex:3, color:"#fff",
+            fontFamily:F, pointerEvents:"none"}}>
+            <div style={{fontSize:11, color:"rgba(255,255,255,.85)", fontWeight:600,
+              letterSpacing:".04em", textTransform:"uppercase"}}>
+              {ask > 0 ? "Asking Price" : "Price"}
+            </div>
+            <div style={{fontSize:28, fontWeight:700, letterSpacing:"-0.025em",
+              fontVariantNumeric:"tabular-nums", lineHeight:1}}>
+              {ask > 0 ? $(ask) : l.priceText}
+            </div>
+          </div>
+        </div>
+
+        <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
+          <h2 style={{margin:0, fontSize: mobile ? 17 : 19, fontWeight:700, color:C.text, fontFamily:F,
+            letterSpacing:"-0.01em", lineHeight:1.3}}>{l.address}</h2>
+          <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:5}}>
+            {[l.city, l.state].filter(Boolean).join(", ")}{l.zip ? ` ${l.zip}` : ""}
+            {info ? ` · ${info}` : ""} · LoopNet
+          </div>
+        </div>
+
+        <div style={{padding: mobile ? "14px 18px" : "16px 24px", borderBottom:"1px solid "+C.border}}>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1,
+            background:C.border, border:"1px solid "+C.border, borderRadius:C.r4,
+            overflow:"hidden", boxShadow:C.sh1}}>
+            {facts.map(([lab, v, Ic]) => (
+              <div key={lab} style={{background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
+                padding:"12px 8px", textAlign:"center"}}>
+                <div style={{width:28, height:28, borderRadius:8, margin:"0 auto 5px",
+                  background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
+                  display:"flex", alignItems:"center", justifyContent:"center"}}>
+                  <Ic size={13} stroke={2}/>
+                </div>
+                <div style={{fontSize:13, fontWeight:700, color:C.text, fontFamily:F,
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{v}</div>
+                <div style={{fontSize:9.5, color:C.textSub, fontFamily:F, fontWeight:700,
+                  letterSpacing:".06em", textTransform:"uppercase", marginTop:1}}>{lab}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {l.description && (
+          <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
+            <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
+              {l.description}
+            </div>
+          </div>
+        )}
+
+        {Array.isArray(l.brokers) && l.brokers.length > 0 && (l.brokers[0].name || l.brokers[0].company) && (
+          <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>Listing broker</div>
+            <div style={{display:"flex", alignItems:"center", gap:12, background:C.greenSubtle,
+              border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"13px 15px"}}>
+              <div style={{width:40, height:40, borderRadius:"50%", background:C.card,
+                border:"1px solid "+C.greenBorder, color:C.greenDark, display:"flex",
+                alignItems:"center", justifyContent:"center", flexShrink:0,
+                fontSize:15, fontWeight:800, fontFamily:F}}>
+                {(l.brokers[0].name || l.brokers[0].company || "?").charAt(0).toUpperCase()}
+              </div>
+              <div style={{minWidth:0}}>
+                {l.brokers[0].name && <div style={{fontSize:14.5, fontWeight:700, color:C.text, fontFamily:F}}>{l.brokers[0].name}</div>}
+                {l.brokers[0].company && <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:1}}>{l.brokers[0].company}</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{padding: mobile ? "16px 18px 20px" : "20px 24px"}}>
+          <button onClick={() => { onUnderwrite(l); onClose(); }}
+            {...btnStyle("primary","lg", {width:"100%", justifyContent:"center"})}>
+            <I.chart size={14}/> Underwrite this deal
+          </button>
           {l.url && (
-            <a href={l.url} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}>
-              <span {...btnStyle("secondary","md", {justifyContent:"center"})}>
-                <I.externalLink size={13}/> LoopNet
+            <a href={l.url} target="_blank" rel="noreferrer" style={{textDecoration:"none", display:"block", marginTop:8}}>
+              <span {...btnStyle("secondary","lg", {width:"100%", justifyContent:"center"})}>
+                <I.externalLink size={14}/> View on LoopNet
               </span>
             </a>
           )}
         </div>
+
+        {lightbox && (
+          <PhotoLightbox photos={photos} index={photoIdx} setIndex={setPhotoIdx}
+            onClose={() => setLightbox(false)} mobile={mobile} />
+        )}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -9918,8 +10252,9 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   // current results belong to so the two renderers never mix.
   const [market, setMarket]       = useState("homes");   // homes | multifamily | commercial
   const [subtype, setSubtype]     = useState("all");     // commercial only: all | office | industrial | retail
-  const [cmode, setCmode]         = useState("sale");    // commercial: sale | lease
+  const cmode = "sale";                                  // investors buy; lease inventory stays out of the way
   const [resMarket, setResMarket] = useState("homes");
+  const [cSel, setCSel]           = useState(null);      // open commercial listing
   const inputRef = useRef(null);
   const acRef = useRef(null);         // Google Places Autocomplete instance
   const runSearchRef = useRef(null);  // always points at the latest runSearch
@@ -9997,11 +10332,6 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     if (mk === market) return;
     setMarket(mk);
     if (submitted) runSearch(submitted, mk);
-  };
-  const switchCmode = md => {
-    if (md === cmode) return;
-    setCmode(md);
-    if (submitted && market !== "homes") runSearch(submitted, market, md);
   };
   // A LoopNet listing walks into the analyzer as an income deal: address and
   // photo carried over, price prefilled when the listing names one.
@@ -10228,34 +10558,20 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
               {commercialShown.length.toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{commercialShown.length===1?"":"s"} in {prettyLoc(submitted)}
             </div>
-            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
-              {resMarket === "commercial" && (
-                <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
-                  {[["all","All types"],["office","Office"],["industrial","Industrial"],["retail","Retail"]].map(([id,label]) => {
-                    const active = subtype === id;
-                    return (
-                      <button key={id} onClick={()=>setSubtype(id)}
-                        style={{flexShrink:0, padding:"6px 12px", borderRadius:9999, cursor:"pointer",
-                          fontFamily:F, fontSize:12, fontWeight:700,
-                          background: active ? C.green : C.card, color: active ? "#fff" : C.textSub,
-                          border:"1px solid "+(active ? C.green : C.border)}}>{label}</button>
-                    );
-                  })}
-                </div>
-              )}
-              <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
-                border:"1px solid "+C.border}}>
-                {[["sale","For Sale"],["lease","For Lease"]].map(([id,label]) => {
-                  const active = cmode === id;
+            {resMarket === "commercial" && (
+              <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
+                {[["all","All types"],["office","Office"],["industrial","Industrial"],["retail","Retail"]].map(([id,label]) => {
+                  const active = subtype === id;
                   return (
-                    <button key={id} onClick={()=>switchCmode(id)}
-                      style={{padding:"6px 13px", borderRadius:9999, border:"none", cursor:"pointer",
-                        background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
-                        fontSize:12, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+                    <button key={id} onClick={()=>setSubtype(id)}
+                      style={{flexShrink:0, padding:"6px 12px", borderRadius:9999, cursor:"pointer",
+                        fontFamily:F, fontSize:12, fontWeight:700,
+                        background: active ? C.green : C.card, color: active ? "#fff" : C.textSub,
+                        border:"1px solid "+(active ? C.green : C.border)}}>{label}</button>
                   );
                 })}
               </div>
-            </div>
+            )}
           </div>
           {commercialShown.length === 0 ? (
             <EmptyState
@@ -10268,7 +10584,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
               <div style={{display:"grid",
                 gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
                 {commercialShown.slice(0, visN).map(l => (
-                  <CommercialCard key={l.id || l.url} l={l} mobile={mobile} onUnderwrite={underwriteCommercial}/>
+                  <CommercialCard key={l.id || l.url} l={l} mobile={mobile}
+                    onUnderwrite={underwriteCommercial} onOpen={setCSel}/>
                 ))}
               </div>
               {commercialShown.length > visN && (
@@ -10279,6 +10596,10 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 </div>
               )}
             </>
+          )}
+          {cSel && (
+            <CommercialDetailModal l={cSel} onClose={()=>setCSel(null)}
+              onUnderwrite={underwriteCommercial} mobile={mobile}/>
           )}
         </>
       )
@@ -10831,96 +11152,125 @@ function MultifamilyCalculator({p, set, mobile}) {
       <SectionBlock title="Rent Roll" color={C.green} icon={I.building}
         right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
           fontVariantNumeric:"tabular-nums"}}>{m.totalUnits} unit{m.totalUnits===1?"":"s"} · {$mo(m.rentMo)}</span>}>
-        <div style={{display:"grid", gridTemplateColumns:"1fr 62px 104px 30px", gap:8, alignItems:"center",
-          marginBottom:6}}>
-          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>Unit type</span>
-          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase", textAlign:"center"}}>Qty</span>
-          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase", textAlign:"right"}}>Rent / mo</span>
-          <span/>
-        </div>
-        {units.map(un => (
-          <div key={un.id} style={{display:"grid", gridTemplateColumns:"1fr 62px 104px 30px", gap:8,
-            alignItems:"center", marginBottom:8}}>
-            <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
-              placeholder="2BR / 1BA" style={cell}/>
-            <input type="number" inputMode="numeric" value={un.count || ""} onChange={e=>patchUnit(un.id, {count:+e.target.value})}
-              style={{...cell, textAlign:"center"}}/>
-            <div style={{position:"relative"}}>
-              <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
-                color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
-              <input type="number" inputMode="numeric" value={un.rent || ""} onChange={e=>patchUnit(un.id, {rent:+e.target.value})}
-                style={{...cell, paddingLeft:22, textAlign:"right"}}/>
+        {/* Units — a contained table with a proper header band */}
+        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1}}>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 58px 100px 30px", gap:8, alignItems:"center",
+            padding:"9px 12px", background:C.bgSubtle, borderBottom:"1px solid "+C.border}}>
+            <span style={{fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase"}}>Unit type</span>
+            <span style={{fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase", textAlign:"center"}}>Qty</span>
+            <span style={{fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F, letterSpacing:".06em", textTransform:"uppercase", textAlign:"right"}}>Rent / mo</span>
+            <span/>
+          </div>
+          {units.map((un, i) => (
+            <div key={un.id} style={{display:"grid", gridTemplateColumns:"1fr 58px 100px 30px", gap:8,
+              alignItems:"center", padding:"9px 12px", background:"#fff",
+              borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
+              <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
+                placeholder="2BR / 1BA" style={cell}/>
+              <input type="number" inputMode="numeric" value={un.count || ""} onChange={e=>patchUnit(un.id, {count:+e.target.value})}
+                style={{...cell, textAlign:"center"}}/>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                  color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                <input type="number" inputMode="numeric" value={un.rent || ""} onChange={e=>patchUnit(un.id, {rent:+e.target.value})}
+                  style={{...cell, paddingLeft:22, textAlign:"right"}}/>
+              </div>
+              <button onClick={()=>removeUnit(un.id)} aria-label="Remove unit type"
+                style={{width:28, height:28, borderRadius:"50%", border:"none", background:C.bgSubtle,
+                  color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
+                <I.x size={12} stroke={2.4}/>
+              </button>
             </div>
-            <button onClick={()=>removeUnit(un.id)} aria-label="Remove unit type"
-              style={{width:30, height:30, borderRadius:8, border:"1px solid "+C.border, background:"#fff",
-                color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
-              <I.x size={13}/>
+          ))}
+          <div style={{display:"flex", gap:14, padding:"10px 12px", background:C.bgSubtle,
+            borderTop:"1px solid "+C.border}}>
+            <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
+              background:"none", border:"none", padding:0, color:C.greenDark,
+              fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+              <I.plus size={13} stroke={2.6}/> Add unit type
+            </button>
+            <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
+              background:"none", border:"none", padding:0, color:C.textSub,
+              fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+              <I.plus size={13} stroke={2.6}/> Add commercial space
             </button>
           </div>
-        ))}
-        <div style={{display:"flex", flexWrap:"wrap", gap:8, marginTop:2}}>
-          <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
-            padding:"8px 13px", borderRadius:9999, background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-            color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-            <I.plus size={13} stroke={2.4}/> Add unit type
-          </button>
-          <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
-            padding:"8px 13px", borderRadius:9999, background:"#fff", border:"1px dashed "+C.borderHover,
-            color:C.textSub, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-            <I.plus size={13} stroke={2.4}/> Add commercial space
-          </button>
         </div>
 
         {cspaces.length > 0 && (
-          <div style={{marginTop:16}}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8}}>
-              <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F,
-                letterSpacing:".04em", textTransform:"uppercase"}}>Commercial spaces</span>
+          <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+            boxShadow:C.sh1, marginTop:12}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"9px 12px", background:C.bgSubtle, borderBottom:"1px solid "+C.border}}>
+              <span style={{fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase"}}>Commercial spaces</span>
               <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
                 fontVariantNumeric:"tabular-nums"}}>{$mo(m.cRentYr/12)}</span>
             </div>
-            {cspaces.map(cs => (
-              <div key={cs.id} style={{border:"1px solid "+C.border, borderRadius:C.r3,
-                padding:"11px 12px", marginBottom:8, background:"linear-gradient(180deg,#fff,#fcfcfd)"}}>
-                <div style={{display:"flex", gap:8, alignItems:"center", marginBottom:8}}>
-                  <input value={cs.label} onChange={e=>patchCs(cs.id, {label:e.target.value})}
-                    placeholder="Storefront, office suite" style={{...cell, flex:1}}/>
-                  <button onClick={()=>removeCs(cs.id)} aria-label="Remove space"
-                    style={{width:30, height:30, borderRadius:8, border:"1px solid "+C.border, background:"#fff",
-                      color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0, flexShrink:0}}>
-                    <I.x size={13}/>
-                  </button>
+            {cspaces.map((cs, i) => {
+              const microLabel = {fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F,
+                letterSpacing:".06em", textTransform:"uppercase", display:"block", marginBottom:5};
+              return (
+                <div key={cs.id} style={{padding:"12px", background:"#fff",
+                  borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
+                  <div style={{display:"flex", gap:8, alignItems:"flex-end", marginBottom:10}}>
+                    <div style={{flex:1, minWidth:0}}>
+                      <span style={microLabel}>Space</span>
+                      <input value={cs.label} onChange={e=>patchCs(cs.id, {label:e.target.value})}
+                        placeholder="Corner storefront" style={{...cell, width:"100%"}}/>
+                    </div>
+                    <button onClick={()=>removeCs(cs.id)} aria-label="Remove space"
+                      style={{width:28, height:28, borderRadius:"50%", border:"none", background:C.bgSubtle,
+                        color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center",
+                        justifyContent:"center", padding:0, flexShrink:0, marginBottom:5}}>
+                      <I.x size={12} stroke={2.4}/>
+                    </button>
+                  </div>
+                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                    <div>
+                      <span style={microLabel}>Size</span>
+                      <div style={{position:"relative"}}>
+                        <input type="number" inputMode="numeric" value={cs.sqft || ""} onChange={e=>patchCs(cs.id, {sqft:+e.target.value})}
+                          placeholder="0" style={{...cell, width:"100%", paddingRight:40}}/>
+                        <span style={{position:"absolute", right:11, top:"50%", transform:"translateY(-50%)",
+                          color:C.textMuted, fontSize:11, fontFamily:F, pointerEvents:"none"}}>sqft</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span style={microLabel}>Rent rate</span>
+                      <div style={{position:"relative"}}>
+                        <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                          color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                        <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchCs(cs.id, {rate:+e.target.value})}
+                          placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:48}}/>
+                        <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+                          color:C.textMuted, fontSize:10, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+                    gap:10, marginTop:10}}>
+                    <div style={{display:"flex", flex:1, padding:3, background:C.bgSubtle,
+                      borderRadius:9999, border:"1px solid "+C.border, maxWidth:200}}>
+                      {[["gross","Gross"],["nnn","NNN"]].map(([id,label]) => {
+                        const active = (cs.lease||"gross")===id;
+                        return (
+                          <button key={id} onClick={()=>patchCs(cs.id, {lease:id})}
+                            style={{flex:1, padding:"6px 0", borderRadius:9999, border:"none", cursor:"pointer",
+                              background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                              fontSize:11.5, fontWeight:700, fontFamily:F, transition:"background .15s",
+                              boxShadow: active ? "0 2px 5px -1px rgba(9,9,11,.25)" : "none"}}>{label}</button>
+                        );
+                      })}
+                    </div>
+                    <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F,
+                      fontVariantNumeric:"tabular-nums"}}>
+                      {$mo((+cs.sqft || 0) * (+cs.rate || 0) / 12)}
+                    </span>
+                  </div>
                 </div>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:8, alignItems:"center"}}>
-                  <div style={{position:"relative"}}>
-                    <input type="number" inputMode="numeric" value={cs.sqft || ""} onChange={e=>patchCs(cs.id, {sqft:+e.target.value})}
-                      placeholder="Sqft" style={{...cell, paddingRight:38}}/>
-                    <span style={{position:"absolute", right:11, top:"50%", transform:"translateY(-50%)",
-                      color:C.textMuted, fontSize:11, fontFamily:F, pointerEvents:"none"}}>sqft</span>
-                  </div>
-                  <div style={{position:"relative"}}>
-                    <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
-                      color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
-                    <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchCs(cs.id, {rate:+e.target.value})}
-                      placeholder="0" style={{...cell, paddingLeft:22, paddingRight:44}}/>
-                    <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
-                      color:C.textMuted, fontSize:10.5, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
-                  </div>
-                  <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
-                    border:"1px solid "+C.border}}>
-                    {[["gross","Gross"],["nnn","NNN"]].map(([id,label]) => {
-                      const active = (cs.lease||"gross")===id;
-                      return (
-                        <button key={id} onClick={()=>patchCs(cs.id, {lease:id})}
-                          style={{padding:"5px 11px", borderRadius:9999, border:"none", cursor:"pointer",
-                            background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
-                            fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -11461,12 +11811,17 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
   const methodLabel = d.alreadyOwned ? "Already owned"
     : (d.chosenStrategy||"finance") === "cash" ? "Cash purchase" : "Financed";
-  const propSummary = [
+  const mfUnitTotal = (Array.isArray(d.units) ? d.units : []).reduce((s, u) => s + (+u.count || 0), 0);
+  const propSummary = (d.assetClass === "multifamily" ? [
+    mfUnitTotal ? `${mfUnitTotal} units` : null,
+    d.sqft ? `${d.sqft.toLocaleString()} sqft` : null,
+    d.yearBuilt ? `Built ${d.yearBuilt}` : null,
+  ] : [
     d.beds ? `${d.beds} bd` : null,
     d.baths ? `${d.baths} ba` : null,
     d.sqft ? `${d.sqft.toLocaleString()} sqft` : null,
     d.yearBuilt ? `Built ${d.yearBuilt}` : null,
-  ].filter(Boolean).join("  ·  ") || "Details pending";
+  ]).filter(Boolean).join("  ·  ") || "Details pending";
   // Which beat the rail highlights (method vs. analyze depends on whether a
   // purchase method has been picked yet).
   const curStep = open === 1 ? 1 : open === 2 ? 2 : (d.chosenStrategy ? 4 : 3);
