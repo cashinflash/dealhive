@@ -12318,7 +12318,12 @@ export default function App() {
         ...(body ? {"Content-Type": "application/json"} : {})},
       ...(body ? {body: JSON.stringify(body)} : {})});
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.url) throw new Error(d.error || "Billing is unavailable right now — try again in a minute.");
+    if (!r.ok || !d.url) {
+      // Include the server's `detail` (the real Stripe reason) when present, so a
+      // billing failure is diagnosable from the toast instead of a generic line.
+      const base = d.error || "Billing is unavailable right now — try again in a minute.";
+      throw new Error(d.detail ? `${base} (${d.detail})` : base);
+    }
     return d.url;
   };
   // The true tier straight from Stripe, via the server. Token-gated; the
