@@ -2343,20 +2343,30 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
     return () => { io.disconnect(); clearTimeout(t1); clearTimeout(t2); };
   }, [methodChosen, p.purchasePrice, p.address]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // "Check Home Value" — RentCast value AVM for the entered address. Fills the
-  // ARV field (high end of the range) and keeps the median for reference.
+  // "Check Home Value" — the estimated value for the address, from RealEstateAPI
+  // (the same source as the auto property-pull, so the calculator is internally
+  // consistent). RentCast's AVM is only a fallback if RealEstateAPI has no
+  // record. Fills the ARV field and keeps a ±10% range for reference.
   const checkHomeValue = async () => {
     if (!p.address || !p.city || !p.state) { setAvmMsg({kind:"err", text:"Enter the property address first."}); return; }
-    if (!rcOk(rcAuth) || !apiLookup) { setAvmMsg({kind:"err", text:"Live home values are currently unavailable."}); return; }
+    if (!apiLookup) { setAvmMsg({kind:"err", text:"Live home values are currently unavailable."}); return; }
     setAvmBusy(true); setAvmMsg(null);
     try {
-      const q   = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
-      const key = lookupKey("rc-value", p.address, p.city, p.state, p.zip);
-      const val = await apiLookup(key, () => rcGet(`/avm/value?address=${q}`, rcAuth));
-      const med = val?.price || 0;
-      const hi  = val?.priceRangeHigh || (med ? Math.round(med * 1.1) : 0);
-      const lo  = val?.priceRangeLow  || (med ? Math.round(med * 0.9) : 0);
-      if (!med && !hi) { setAvmMsg({kind:"err", text:"No value estimate found for that address."}); }
+      let med = 0;
+      const reapi = await apiLookup(lookupKey("reapi-value", p.address, p.city, p.state, p.zip),
+        () => reapiFetch(p.address, p.city, p.state, p.zip, rcAuth.token),
+        {shortCacheIf: r => !reapiHasData(r)}).catch(() => null);
+      if (reapiHasData(reapi)) med = reapi.property.value || 0;
+      // Fallback: RentCast AVM only when RealEstateAPI returns nothing.
+      if (!med && rcOk(rcAuth)) {
+        const q = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
+        const val = await apiLookup(lookupKey("rc-value", p.address, p.city, p.state, p.zip),
+          () => rcGet(`/avm/value?address=${q}`, rcAuth), {count: false}).catch(() => null);
+        med = val?.price || 0;
+      }
+      const hi = med ? Math.round(med * 1.1) : 0;
+      const lo = med ? Math.round(med * 0.9) : 0;
+      if (!med) { setAvmMsg({kind:"err", text:"No value estimate found for that address."}); }
       else {
         set({...p, homeValueMedian: med, homeValueLow: lo, homeValueHigh: med,
           flipSalePrice: med, brrrCashOut: Math.round(med * 0.75)});
