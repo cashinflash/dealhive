@@ -1564,18 +1564,12 @@ function AuthPage({onAuth}) {
 
           {mode !== "reset" && (
             <>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:16}}>
-                <button type="button" onClick={googleSignIn} style={socialBtn} aria-label="Continue with Google">
+              {/* Apple & Facebook are hidden until they're wired up — re-add the
+                  two buttons here when ready. Google stays, full width. */}
+              <div style={{marginBottom:16}}>
+                <button type="button" onClick={googleSignIn} style={{...socialBtn, width:"100%", gap:9}} aria-label="Continue with Google">
                   <svg width="17" height="17" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.5 6.1 29.5 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.5 6.1 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.4 0 10.3-2.1 14-5.4l-6.5-5.5c-2.1 1.6-4.7 2.5-7.5 2.5-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.5 5.5C41.4 35.6 44 30.3 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
-                  <span className="dh-social-label">Google</span>
-                </button>
-                <button type="button" onClick={()=>comingSoon("Apple")} style={socialBtn} aria-label="Continue with Apple">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.9c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.7.9-.8 0-2-.9-3.3-.9-1.7 0-3.2 1-4.1 2.5-1.7 3-0.4 7.5 1.3 9.9.8 1.2 1.8 2.5 3.1 2.5 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.3.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.4-2.8-.1-.1-2.7-1.1-2.7-3.9zM13.9 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.6-2.8 1.5-.6.7-1.2 1.9-1 3 1 .1 2.1-.6 2.8-1.5z"/></svg>
-                  <span className="dh-social-label">Apple</span>
-                </button>
-                <button type="button" onClick={()=>comingSoon("Facebook")} style={socialBtn} aria-label="Continue with Facebook">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="#1877F2"><path d="M24 12a12 12 0 10-13.9 11.9v-8.4h-3V12h3V9.4c0-3 1.8-4.7 4.6-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-1.9.9-1.9 1.9V12h3.3l-.5 3.5h-2.8v8.4A12 12 0 0024 12z"/></svg>
-                  <span className="dh-social-label">Facebook</span>
+                  <span style={{fontWeight:600, fontFamily:F, fontSize:14, color:C.text}}>Continue with Google</span>
                 </button>
               </div>
               <div style={{display:"flex", alignItems:"center", gap:12, margin:"0 0 16px"}}>
@@ -11356,6 +11350,150 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
 // data.role === "admin". The portfolio/property-management surface (Properties,
 // Projects) is admin-only; everyone else gets a deal-finder app focused on
 // Deals, Analyzer, Comps, and a Saved Deals dashboard.
+// -- Users (admin) -------------------------------------------------------------
+// The admin's member roster: plan, join date, activity, and usage this month,
+// from the usageReport endpoint. A real page, not a popup report.
+function UserStat({ label, value, tone }) {
+  return (
+    <div style={{textAlign:"center", minWidth:52}}>
+      <div style={{fontSize:16, fontWeight:800, color: tone || C.text, fontFamily:F,
+        letterSpacing:"-0.02em", lineHeight:1, fontVariantNumeric:"tabular-nums"}}>{value}</div>
+      <div style={{fontSize:10, fontWeight:700, color:C.textMuted, fontFamily:F,
+        letterSpacing:".06em", textTransform:"uppercase", marginTop:4}}>{label}</div>
+    </div>
+  );
+}
+function UsersPage({ token, mobile }) {
+  const [data, setData] = useState(null);
+  const [err, setErr]   = useState(false);
+  const [q, setQ]       = useState("");
+  const [filter, setFilter] = useState("all");
+  const pad = mobile ? "20px 16px 100px" : "32px 32px";
+
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${FN_BASE}/usageReport`, {method:"POST",
+          headers:{Authorization:`Bearer ${token}`, "Content-Type":"application/json"}});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error();
+        if (alive) setData(j);
+      } catch { if (alive) setErr(true); }
+    })();
+    return () => { alive = false; };
+  }, [token]);
+
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"}) : "—";
+  const ago = (iso) => {
+    if (!iso) return "never";
+    const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (d <= 0) return "today"; if (d === 1) return "yesterday";
+    if (d < 30) return `${d}d ago`; if (d < 365) return `${Math.floor(d/30)}mo ago`;
+    return `${Math.floor(d/365)}y ago`;
+  };
+
+  if (err) return <div style={{padding:pad}}><EmptyState icon={<I.user size={20}/>} title="Could not load users" body="Give it a moment and refresh the page."/></div>;
+  if (!data) return <div style={{padding:pad}}>
+    <div className="dh-pulse" style={{height:88, background:C.bgSubtle, borderRadius:C.r4, marginBottom:16}}/>
+    <div className="dh-pulse" style={{height:320, background:C.bgSubtle, borderRadius:C.r4}}/></div>;
+
+  const s = data.summary || {total:0, pro:0, free:0, mrr:0};
+  const users = (data.users || [])
+    .filter(u => filter === "all" || u.tier === filter)
+    .filter(u => !q || (u.email||"").toLowerCase().includes(q.toLowerCase()));
+  const badge = (tier) => tier === "pro"
+    ? {label:"Pro", bg:C.greenSubtle, color:C.greenDark, border:C.greenBorder}
+    : {label:"Free", bg:C.bgSubtle, color:C.textSub, border:C.border};
+
+  return (
+    <div style={{padding:pad}}>
+      <div style={{marginBottom:18}}>
+        <h1 style={{margin:0, fontSize:24, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>Users</h1>
+        <div style={{fontSize:14, color:C.textSub, fontFamily:F, marginTop:3}}>Everyone on DealHive, their plan, and their activity this month.</div>
+      </div>
+
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4, 1fr)", gap:12, marginBottom:20}}>
+        {[["Members", (s.total||0).toLocaleString(), C.text, I.user],
+          ["Pro", (s.pro||0).toLocaleString(), C.greenDark, I.star],
+          ["Free", (s.free||0).toLocaleString(), C.textSub, I.user],
+          ["MRR", "$"+(s.mrr||0).toLocaleString(), C.greenDark, I.dollar]].map(([label, value, tone, Icon]) => (
+          <Card key={label} style={{padding:"16px 18px"}}>
+            <div style={{display:"flex", alignItems:"center", gap:11}}>
+              <div style={{width:34, height:34, borderRadius:10, flexShrink:0, display:"flex", alignItems:"center",
+                justifyContent:"center", background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+                <Icon size={16} stroke={2.2}/>
+              </div>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:22, fontWeight:800, color:tone, fontFamily:F, letterSpacing:"-0.02em",
+                  lineHeight:1, fontVariantNumeric:"tabular-nums"}}>{value}</div>
+                <div style={{fontSize:10.5, fontWeight:700, color:C.textMuted, fontFamily:F,
+                  letterSpacing:".05em", textTransform:"uppercase", marginTop:3}}>{label}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{display:"flex", gap:10, marginBottom:14, flexWrap:"wrap", alignItems:"center"}}>
+        <div style={{position:"relative", flex:1, minWidth:180, maxWidth: mobile ? "100%" : 320}}>
+          <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
+            color:C.textMuted, display:"inline-flex", pointerEvents:"none"}}><I.search size={14} stroke={2.2}/></span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search by email"
+            style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:36, marginBottom:0, background:C.card, boxShadow:C.sh1}}/>
+        </div>
+        <div style={{display:"inline-flex", padding:3, background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999}}>
+          {[["all","All"],["pro","Pro"],["free","Free"]].map(([id, label]) => {
+            const active = filter === id;
+            return <button key={id} onClick={()=>setFilter(id)} style={{padding:"7px 15px", borderRadius:9999,
+              border:"none", cursor:"pointer", background: active?C.card:"transparent", color: active?C.text:C.textSub,
+              fontWeight: active?700:600, fontSize:12.5, fontFamily:F, boxShadow: active?C.sh1:"none"}}>{label}</button>;
+          })}
+        </div>
+      </div>
+
+      {users.length === 0 ? (
+        <EmptyState icon={<I.user size={20}/>} title="No users match" body="Try a different search or filter."/>
+      ) : (
+        <div style={{display:"grid", gap:10}}>
+          {users.map((u, i) => {
+            const b = badge(u.tier);
+            const initial = ((u.email||"?").trim()[0] || "?").toUpperCase();
+            return (
+              <Card key={(u.email||"")+i} style={{padding: mobile ? "14px 16px" : "14px 18px"}}>
+                <div style={{display:"flex", alignItems:"center", gap:12, flexWrap:"wrap"}}>
+                  <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0, flex:1}}>
+                    <div style={{width:38, height:38, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center",
+                      justifyContent:"center", background:C.greenSubtle, color:C.greenDark, fontWeight:800, fontFamily:F, fontSize:15}}>{initial}</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F, overflow:"hidden",
+                        textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{u.email}</div>
+                      <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:2}}>Joined {fmtDate(u.created)} · active {ago(u.lastSignIn)}</div>
+                    </div>
+                  </div>
+                  <span style={{flexShrink:0, background:b.bg, color:b.color, border:"1px solid "+b.border, borderRadius:9999,
+                    padding:"4px 11px", fontSize:11.5, fontWeight:800, fontFamily:F, letterSpacing:"-0.005em"}}>{b.label}</span>
+                  <div style={{display:"flex", gap: mobile?12:22, flexShrink:0,
+                    ...(mobile ? {width:"100%", justifyContent:"space-between", borderTop:"1px solid "+C.border, paddingTop:12, marginTop:2} : {})}}>
+                    <UserStat label="Lookups" value={u.lookups||0}/>
+                    <UserStat label="Searches" value={u.searches||0}/>
+                    <UserStat label="Reveals" value={u.reveals||0}/>
+                    <UserStat label="Credits" value={u.credits||0} tone={u.credits>0?C.greenDark:C.textMuted}/>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:16, textAlign:"center"}}>
+        Usage is for {data.month}. MRR is Pro members × $29.99 run rate.
+      </div>
+    </div>
+  );
+}
+
 const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
@@ -11364,6 +11502,7 @@ const NAV_ITEMS = [
   {id:"comps",      Icon:I.chart,          label:"Comps",      adminOnly:true},
   {id:"deals",      Icon:I.star,           label:"Deals",
     children:[{id:"saved", Icon:I.bee, label:"Saved Deals", adminOnly:true}]},
+  {id:"users",      Icon:I.user,           label:"Users",      adminOnly:true},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
 
@@ -12524,6 +12663,8 @@ export default function App() {
           <DealAnalyzer {...dealAnalyzerProps} />
         ) : page==="comps" ? (
           <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
+        ) : page==="users" && isAdmin ? (
+          <UsersPage token={user.idToken} mobile={mobile} />
         ) : page==="settings" ? (
           <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
             tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
@@ -12614,6 +12755,8 @@ export default function App() {
               <DealAnalyzer {...dealAnalyzerProps} />
             ) : page==="comps" ? (
               <LeaseComps rentcastKey={data.rentcastKey||""} onSaveKey={saveRCKey} mobile={mobile} apiLookup={apiLookup} />
+            ) : page==="users" && isAdmin ? (
+              <UsersPage token={user.idToken} mobile={mobile} />
             ) : page==="settings" ? (
               <SettingsPage onSignOut={handleSignOut} mobile={mobile} userEmail={user.email}
                 tier={data.tier||"free"} onUpgrade={handleUpgrade} onDowngrade={handleDowngrade}
