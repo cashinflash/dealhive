@@ -867,6 +867,23 @@ exports.usageReport = onRequest(
         const got = await admin.auth().getUsers(ids.slice(i, i + 100)).catch(() => null);
         if (got) got.users.forEach(u => { emails[u.uid] = u.email || u.uid; });
       }
+      // Extra usage nodes for the roster — fetched whole once and joined by uid.
+      const [searchSnap, revealSnap, creditSnap] = await Promise.all([
+        admin.database().ref("searchUsage").get(),
+        admin.database().ref("revealMonthly").get(),
+        admin.database().ref("credits").get(),
+      ]);
+      const searchU = searchSnap.val() || {};
+      const revealU = revealSnap.val() || {};
+      const creditU = creditSnap.val() || {};
+      const lookupsFor = (uid) => {
+        const days = usage[uid];
+        if (!days) return 0;
+        const monthNode = days.months && days.months[mo];
+        const daySum = Object.entries(days).filter(([k]) => k.startsWith(mo + "-"))
+          .reduce((s, [, v]) => s + (typeof v === "number" ? v : 0), 0);
+        return Math.max(monthNode || 0, daySum);
+      };
       // Full member roster, newest first — signups visible without ever
       // opening the Firebase console.
       const listed = await admin.auth().listUsers(1000).catch(() => null);
@@ -875,11 +892,18 @@ exports.usageReport = onRequest(
         tier: (billing[u.uid] && billing[u.uid].tier) || "free",
         created: u.metadata.creationTime || null,
         lastSignIn: u.metadata.lastSignInTime || null,
+        lookups: lookupsFor(u.uid),
+        searches: (searchU[u.uid] && searchU[u.uid][mo]) || 0,
+        reveals: (revealU[u.uid] && revealU[u.uid][mo]) || 0,
+        credits: (creditU[u.uid] && creditU[u.uid].balance) || 0,
       })).sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0)) : [];
+      const proCount = users.filter(u => u.tier === "pro").length;
       res.json({
         month: mo,
         costPerLookup: 0.074,
         users,
+        summary: {total: users.length, pro: proCount, free: users.length - proCount,
+          mrr: Math.round(proCount * 29.99)},
         rows: rows.map(r => ({
           email: emails[r.uid] || r.uid, tier: r.tier, lookups: r.lookups,
           estCost: Math.round(r.lookups * 7.4) / 100,
