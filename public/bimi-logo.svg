@@ -1,0 +1,8 @@
+<svg version="1.2" baseProfile="tiny-ps" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>DealHive</title>
+  <rect width="512" height="512" fill="#1F2D3D"/>
+  <polygon fill="#E8731C" points="256,89 309.7,120 309.7,182 256,213 202.3,182 202.3,120"/>
+  <polygon fill="#E8731C" points="195,194 248.7,225 248.7,287 195,318 141.3,287 141.3,225"/>
+  <polygon fill="#F0872E" points="317,194 370.7,225 370.7,287 317,318 263.3,287 263.3,225"/>
+  <polygon fill="#E8731C" points="256,299 309.7,330 309.7,392 256,423 202.3,392 202.3,330"/>
+</svg>
