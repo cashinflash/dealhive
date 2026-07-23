@@ -2297,9 +2297,16 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
 
             {(() => {
               const pinned = (isPro ? st.comps : st.comps.slice(0, 5))
-                .map(l => ({lat: l.latitude, lng: l.longitude}));
+                .map(l => ({lat: l.latitude, lng: l.longitude,
+                  title: l.formattedAddress || l.addressLine1 || "Nearby rental",
+                  value: $(l.price || l.rent || 0) + "/mo",
+                  sub: [`${l.bedrooms || 0}bd · ${l.bathrooms || 0}ba`,
+                    l.squareFootage ? `${l.squareFootage.toLocaleString()} sqft` : null,
+                    l._mi != null ? `${l._mi.toFixed(2)} mi away` : null]
+                    .filter(Boolean).join(" · ")}));
               return (p.lat != null || pinned.some(pt => pt.lat != null))
-                ? <SheetCompsMap lat={p.lat} lng={p.lng} points={pinned}/> : null;
+                ? <SheetCompsMap lat={p.lat} lng={p.lng}
+                    subjectLabel={p.streetAddress || p.address} points={pinned}/> : null;
             })()}
 
             {st.comps.length > 0 && (() => {
@@ -6320,10 +6327,13 @@ const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
     return {
       c, isBrrrr: false, primary: "multifamily", strat, cashMode: mf.isCash, methods: {},
       heroNumber: {label: "Cash flow", value: $mo(mf.cfMo), color: cfC(mf.cfMo)},
+      // Out of Pocket = what it takes to own the keys: down payment (or the
+      // full price in cash) plus rehab plus closing. Price-per-unit stays in
+      // the Income & Returns report.
       secondaryMetrics: [
         ["Cap rate", pct(mf.capOnPrice)],
-        ["DSCR", mf.isCash ? "—" : (isFinite(mf.dscr) ? mf.dscr.toFixed(2) + "x" : "∞"), null, true],
-        ["Price / unit", mf.totalUnits ? $(mf.pricePerUnit) : "—"],
+        ["DSCR", mf.isCash ? "All cash" : (isFinite(mf.dscr) ? mf.dscr.toFixed(2) + "x" : "∞"), null, true],
+        ["Out of Pocket", $(mf.cashIn)],
       ],
     };
   }
@@ -7499,19 +7509,30 @@ function MiniMap({lat, lng}) {
 }
 
 // Comps map: the subject property as a bold orange pin, each comparable as a
-// numbered blue pin matching its row in the list below. Fits itself around
-// every point.
-function SheetCompsMap({lat, lng, points = [], height = 210}) {
+// numbered blue pin matching its row in the list below. Fully interactive:
+// pan, pinch/zoom, and tap any pin for a popup with the property's Street
+// View, address, and headline numbers.
+function SheetCompsMap({lat, lng, subjectLabel = "This property", points = [], height = 230}) {
   const ref = useRef(null);
   const key = points.map(p => `${p.lat},${p.lng}`).join("|");
   useEffect(() => {
     const pts = points.filter(p => p.lat != null && p.lng != null);
     if (((!lat || !lng) && !pts.length) || !ref.current) return;
     let map;
+    const esc = (s) => String(s || "").replace(/[<>&"]/g, "");
+    const popupHtml = (p) =>
+      `<div style="font-family:Inter,-apple-system,sans-serif;width:190px">` +
+      (p.lat != null && p.lng != null
+        ? `<img src="${svUrl(p.lat, p.lng, 380, 160)}" style="width:100%;height:82px;object-fit:cover;` +
+          `border-radius:8px;display:block" onerror="this.style.display='none'"/>` : "") +
+      `<div style="font-weight:700;font-size:12px;color:#18181b;margin-top:6px;line-height:1.35">${esc(p.title)}</div>` +
+      (p.value ? `<div style="font-size:13px;font-weight:800;color:#C2410C;margin-top:2px">${esc(p.value)}</div>` : "") +
+      (p.sub ? `<div style="font-size:10.5px;color:#71717a;margin-top:1px">${esc(p.sub)}</div>` : "") +
+      `</div>`;
     const init = () => {
       if (!ref.current || map) return;
-      map = window.L.map(ref.current, {zoomControl:false, attributionControl:false,
-        scrollWheelZoom:false, dragging:false, tap:false});
+      map = window.L.map(ref.current, {zoomControl:true, attributionControl:false,
+        scrollWheelZoom:false, dragging:true, touchZoom:true});
       window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
       const bounds = [];
       pts.forEach((p, i) => {
@@ -7519,7 +7540,9 @@ function SheetCompsMap({lat, lng, points = [], height = 210}) {
           html:`<div style="width:24px;height:24px;border-radius:50%;background:#2563EB;color:#fff;` +
             `font:700 11px Inter,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;` +
             `border:2px solid #fff;box-shadow:0 2px 6px rgba(9,9,11,.35)">${i + 1}</div>`});
-        window.L.marker([p.lat, p.lng], {icon}).addTo(map);
+        window.L.marker([p.lat, p.lng], {icon})
+          .bindPopup(popupHtml({...p, title: p.title || `Comp ${i + 1}`}), {maxWidth:220, closeButton:true})
+          .addTo(map);
         bounds.push([p.lat, p.lng]);
       });
       if (lat && lng) {
@@ -7527,7 +7550,10 @@ function SheetCompsMap({lat, lng, points = [], height = 210}) {
           html:`<div style="width:30px;height:30px;border-radius:50%;background:#E8731C;border:3px solid #fff;` +
             `box-shadow:0 3px 9px rgba(9,9,11,.45);display:flex;align-items:center;justify-content:center">` +
             `<div style="width:8px;height:8px;border-radius:50%;background:#fff"></div></div>`});
-        window.L.marker([lat, lng], {icon: sIcon, zIndexOffset:1000}).addTo(map);
+        window.L.marker([lat, lng], {icon: sIcon, zIndexOffset:1000})
+          .bindPopup(popupHtml({lat, lng, title: subjectLabel, value: "", sub: "The property you're analyzing"}),
+            {maxWidth:220, closeButton:true})
+          .addTo(map);
         bounds.push([lat, lng]);
       }
       if (bounds.length > 1) map.fitBounds(bounds, {padding:[30, 30]});
@@ -8841,7 +8867,14 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
 
           {(deal.lat != null || visible.some(l => l.latitude != null)) && (
             <SheetCompsMap lat={deal.lat} lng={deal.lng}
-              points={visible.map(l => ({lat: l.latitude, lng: l.longitude}))}/>
+              subjectLabel={deal.streetAddress || deal.address}
+              points={visible.map(l => ({lat: l.latitude, lng: l.longitude,
+                title: l.formattedAddress || l.addressLine1 || "Nearby sale",
+                value: $(l.price || 0),
+                sub: [`${l.bedrooms || 0}bd · ${l.bathrooms || 0}ba`,
+                  l.squareFootage ? `${l.squareFootage.toLocaleString()} sqft` : null,
+                  typeof l.distance === "number" ? `${l.distance.toFixed(2)} mi away` : null]
+                  .filter(Boolean).join(" · ")}))}/>
           )}
 
           {st.compNote && (
@@ -9618,10 +9651,17 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
           <Group title="Analysis">
             <Row Ic={I.chart} label="Deal Calculator"
               onClick={()=>{ onClose(); onAnalyze(deal); }}/>
-            <Row Ic={I.trendingUp} label="Buy & Hold Projections"
-              onClick={()=>setSheet("proj")}/>
-            <Row Ic={I.home} label="Appreciation Projector"
-              onClick={()=>setSheet("appr")} last/>
+            {deal.assetClass === "multifamily" ? (
+              <Row Ic={I.trendingUp} label="Income & Returns"
+                onClick={()=>setSheet("mfreport")} last/>
+            ) : (
+              <>
+                <Row Ic={I.trendingUp} label="Buy & Hold Projections"
+                  onClick={()=>setSheet("proj")}/>
+                <Row Ic={I.home} label="Appreciation Projector"
+                  onClick={()=>setSheet("appr")} last/>
+              </>
+            )}
           </Group>
           <Group title="Research">
             <Row Ic={I.tag} label="Sales Comps & ARV"
@@ -9690,6 +9730,9 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
       {sheet === "proj" && (
         <ProjectionsSheet deal={deal} onPatchDeal={onPatchDeal}
           onClose={()=>setSheet(null)} mobile={mobile} />
+      )}
+      {sheet === "mfreport" && (
+        <MFReportSheet deal={rcDeal} onClose={()=>setSheet(null)} mobile={mobile} />
       )}
 
       {lightbox && (
@@ -10065,14 +10108,36 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
 // Full-screen listing view for a commercial property — the same premium
 // treatment the home deals get: photo up top (tap for the gallery), the
 // asking price, the facts, the story, and the actions.
-function CommercialDetailModal({l, onClose, onUnderwrite, mobile}) {
+function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile}) {
   const ask  = commercialAsk(l);
   const info = commercialInfo(l);
   const [lightbox, setLightbox] = useState(false);
   const [photoIdx, setPhotoIdx] = useState(0);
   const lightboxRef = useRef(false);
   useEffect(() => { lightboxRef.current = lightbox; }, [lightbox]);
-  const photos = l.photo ? [l.photo] : [];
+  // The search feed truncates the description and carries one thumbnail — the
+  // details call brings the full story and the whole photo gallery.
+  const [detail, setDetail] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!token) return;
+        const r = await fetch(`${FN_BASE}/commercialDetail`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
+          body: JSON.stringify({id: l.id, url: l.url}),
+        });
+        const j = await r.json().catch(() => null);
+        if (alive && r.ok && j && j.found) setDetail(j);
+      } catch { /* the search snippet stands on its own */ }
+    })();
+    return () => { alive = false; };
+  }, [l.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const description = (detail && detail.description) || l.description || null;
+  const photos = (detail && Array.isArray(detail.photos) && detail.photos.length)
+    ? detail.photos : (l.photo ? [l.photo] : []);
+  const enriched = {...l, description, photos};
   useEffect(() => {
     lockBodyScroll();
     const h = e => { if (e.key === "Escape" && !lightboxRef.current) onClose(); };
@@ -10104,8 +10169,8 @@ function CommercialDetailModal({l, onClose, onUnderwrite, mobile}) {
             style={{height: mobile ? 220 : 280, background:C.bgSubtle,
               cursor: photos.length ? "zoom-in" : "default"}}>
             {photos.length ? (
-              <SafeImg src={photos[0]} fallback={imgPlaceholder(36)}
-                style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+              <PhotoCarousel photos={photos} fallbackLat={l.lat} fallbackLng={l.lng}
+                height={mobile ? 220 : 280} mobile={mobile}/>
             ) : (
               <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
                 color:C.textMuted}}><I.building size={40}/></div>
@@ -10179,12 +10244,12 @@ function CommercialDetailModal({l, onClose, onUnderwrite, mobile}) {
           </div>
         </div>
 
-        {l.description && (
+        {description && (
           <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
             <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-              {l.description}
+              {description}
             </div>
           </div>
         )}
@@ -10210,7 +10275,7 @@ function CommercialDetailModal({l, onClose, onUnderwrite, mobile}) {
         )}
 
         <div style={{padding: mobile ? "16px 18px 20px" : "20px 24px"}}>
-          <button onClick={() => { onUnderwrite(l); onClose(); }}
+          <button onClick={() => { onUnderwrite(enriched); onClose(); }}
             {...btnStyle("primary","lg", {width:"100%", justifyContent:"center"})}>
             <I.chart size={14}/> Underwrite this deal
           </button>
@@ -10333,13 +10398,15 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     setMarket(mk);
     if (submitted) runSearch(submitted, mk);
   };
-  // A LoopNet listing walks into the analyzer as an income deal: address and
-  // photo carried over, price prefilled when the listing names one.
+  // A LoopNet listing walks into the analyzer as an income deal: address,
+  // photos, and the listing description carried over, purchase price prefilled
+  // from the asking price whenever the listing names one.
   const underwriteCommercial = l => onAnalyzeDeal({
     id: "ln" + l.id, address: l.address, streetAddress: l.address,
     city: l.city, state: l.state, zip: l.zip, lat: l.lat, lng: l.lng,
-    type: l.propertyType || "Commercial", price: l.priceNum || 0,
-    photos: l.photo ? [l.photo] : [], photo: l.photo || null,
+    type: l.propertyType || "Commercial", price: commercialAsk(l) || 0,
+    photos: Array.isArray(l.photos) && l.photos.length ? l.photos : (l.photo ? [l.photo] : []),
+    photo: l.photo || null,
     description: l.description || null, source: "LoopNet",
     assetClass: "multifamily",
   });
@@ -10598,7 +10665,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             </>
           )}
           {cSel && (
-            <CommercialDetailModal l={cSel} onClose={()=>setCSel(null)}
+            <CommercialDetailModal l={cSel} token={token} onClose={()=>setCSel(null)}
               onUnderwrite={underwriteCommercial} mobile={mobile}/>
           )}
         </>
@@ -11331,40 +11398,131 @@ function MultifamilyCalculator({p, set, mobile}) {
         </div>
       </SectionBlock>
 
-      {/* Valuation + results */}
-      <SectionBlock title="Value & Returns" color={C.green} icon={I.chart}>
-        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "220px 1fr", gap:14, alignItems:"start"}}>
-          <div>
-            <InputField label="Market Cap Rate" val={p.mfMarketCapPct} set={v=>u("mfMarketCapPct",v)} suf="%"
-              note="What buyers pay in this market. Drives the value below." mobile={mobile}/>
-            <div style={{background:`linear-gradient(160deg,#fff, ${C.greenSubtle})`, border:"1px solid "+C.greenBorder,
-              borderRadius:C.r3, padding:"13px 15px"}}>
-              <div style={{fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
-                Value @ {pct(m.marketCapPct)} cap
-              </div>
-              <div style={{fontSize:22, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
-                fontVariantNumeric:"tabular-nums", marginTop:3}}>{$(m.valueAtCap)}</div>
+      {/* Live results — just the essentials while editing. The full income
+          statement and every return metric live on the saved deal, in the
+          Income & Returns report. */}
+      <SectionBlock title="Results" color={C.green} icon={I.chart}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "220px 1fr", gap:12, alignItems:"end"}}>
+          <InputField label="Market Cap Rate" val={p.mfMarketCapPct} set={v=>u("mfMarketCapPct",v)} suf="%" mobile={mobile}/>
+          <div style={{background:`linear-gradient(160deg,#fff, ${C.greenSubtle})`, border:"1px solid "+C.greenBorder,
+            borderRadius:C.r3, padding:"11px 14px", marginBottom:14}}>
+            <div style={{fontSize:10, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
+              Value @ {pct(m.marketCapPct)} cap
+            </div>
+            <div style={{display:"flex", alignItems:"baseline", gap:8, flexWrap:"wrap"}}>
+              <span style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
+                fontVariantNumeric:"tabular-nums"}}>{$(m.valueAtCap)}</span>
               {m.price > 0 && m.valueAtCap > 0 && (
-                <div style={{fontSize:12, fontWeight:600, color: valDiff >= 0 ? "#059669" : "#dc2626", fontFamily:F, marginTop:2}}>
+                <span style={{fontSize:11.5, fontWeight:700, color: valDiff >= 0 ? "#059669" : "#dc2626", fontFamily:F}}>
                   {valDiff >= 0 ? $(valDiff)+" above" : $(Math.abs(valDiff))+" below"} your price
-                </div>
+                </span>
               )}
             </div>
           </div>
-          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
-            border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
-            <Tile label="NOI / yr" value={$(m.noi)} color={cfC(m.noi)} hero/>
-            <Tile label="Cap Rate" value={pct(m.capOnPrice)} hero/>
-            <Tile label="Cash Flow / mo" value={$mo(m.cfMo)} color={cfC(m.cfMo)}/>
-            <Tile label="Cash-on-Cash" value={m.cashIn > 0 ? pct(m.coc) : "—"} color={cfC(m.coc)}/>
-            <Tile label="DSCR" value={dscrText} color={dscrColor} note={isCash ? "all cash" : m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want 1.25+" : "healthy"}/>
-            <Tile label="Debt Yield" value={m.loanAmt > 0 ? pct(m.debtYield) : "—"}/>
-            <Tile label="Price / Unit" value={m.totalUnits > 0 ? $(m.pricePerUnit) : "—"}/>
-            <Tile label="GRM" value={m.grm > 0 ? m.grm.toFixed(1) : "—"}/>
-          </div>
+        </div>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:1, background:C.border,
+          border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+          <Tile label="NOI / yr" value={$(m.noi)} color={cfC(m.noi)} hero/>
+          <Tile label="Cash Flow / mo" value={$mo(m.cfMo)} color={cfC(m.cfMo)} hero/>
+          <Tile label="DSCR" value={dscrText} color={dscrColor} hero
+            note={isCash ? "all cash" : m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want 1.25+" : "healthy"}/>
+        </div>
+        <div style={{fontSize:12, color:C.textMuted, fontFamily:F, lineHeight:1.55, marginTop:10}}>
+          Save the deal for the full Income & Returns report: cap rate, cash-on-cash, debt yield, price per unit, and the complete income statement.
         </div>
       </SectionBlock>
     </div>
+  );
+}
+
+// The full multifamily numbers, as a report on the saved deal: the income
+// statement from gross rents down to cash flow, the valuation at the market
+// cap, and every return metric a lender or partner would ask about.
+function MFReportSheet({deal, onClose, mobile}) {
+  const m = calcMF({...deal,
+    purchasePrice: deal.purchasePrice || deal.price || 0,
+    repairCosts:   deal.repairCosts   || deal.repair || 0,
+    chosenStrategy: deal.chosenStrategy || (deal.financing === "cash" ? "cash" : "finance")});
+  const isCash = m.isCash;
+  const dscrText = isCash ? "All cash" : !isFinite(m.dscr) ? "∞" : m.dscr.toFixed(2) + "x";
+  const row = (label, value, {bold, color, indent, top} = {}) => (
+    <div key={label} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+      gap:10, padding:"10px 14px", background: bold ? C.bgSubtle : "#fff",
+      borderTop: top === false ? "none" : "1px solid "+C.border}}>
+      <span style={{fontSize:12.5, fontWeight: bold ? 800 : 600, fontFamily:F,
+        color: bold ? C.text : C.textSub, paddingLeft: indent ? 12 : 0}}>{label}</span>
+      <span style={{fontSize:13.5, fontWeight:800, fontFamily:F, fontVariantNumeric:"tabular-nums",
+        color: color || C.text}}>{value}</span>
+    </div>
+  );
+  const tile = (label, value, color) => (
+    <div key={label} style={{background:"linear-gradient(180deg,#fff,#fcfcfd)", padding:"13px 10px",
+      textAlign:"center"}}>
+      <div style={{fontSize:10, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase"}}>{label}</div>
+      <div style={{fontSize:17, fontWeight:600, color: color || C.text, fontFamily:F,
+        fontVariantNumeric:"tabular-nums", letterSpacing:"-0.015em", marginTop:3}}>{value}</div>
+    </div>
+  );
+  return (
+    <SheetShell title="Income & Returns" hive sub={`${deal.streetAddress || deal.address}${deal.city ? `, ${deal.city}` : ""}`}
+      onClose={onClose} mobile={mobile}>
+      <div style={{background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
+        border:"1px solid "+C.greenBorder, borderRadius:C.r4, padding:"18px 16px",
+        textAlign:"center", boxShadow:C.sh2, marginBottom:14}}>
+        <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
+          letterSpacing:".07em", textTransform:"uppercase"}}>Value at {pct(m.marketCapPct)} Cap</div>
+        <div style={{fontSize:32, fontWeight:800, color:C.text, fontFamily:F,
+          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>{$(m.valueAtCap)}</div>
+        {m.price > 0 && (
+          <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
+            background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
+            padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+            Your price {$(m.price)}
+          </div>
+        )}
+      </div>
+
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase", margin:"0 2px 7px"}}>Income Statement</div>
+      <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+        boxShadow:C.sh1, marginBottom:16}}>
+        {row("Gross Potential Income", $(m.gprYr) + "/yr", {top: false})}
+        {row("Vacancy Loss", "-" + $(m.vacLoss) + "/yr", {indent: true})}
+        {row("Effective Gross Income", $(m.egi) + "/yr", {bold: true})}
+        {row("Operating Expenses", "-" + $(m.opex) + "/yr", {indent: true})}
+        {m.recovered > 0 && row("Recovered from NNN tenants", "+" + $(m.recovered) + "/yr", {indent: true, color:"#059669"})}
+        {row("Net Operating Income", $(m.noi) + "/yr", {bold: true, color: cfC(m.noi)})}
+        {!isCash && row("Debt Service", "-" + $(m.dsYr) + "/yr", {indent: true})}
+        {row("Cash Flow", $mo(m.cfMo), {bold: true, color: cfC(m.cfMo)})}
+      </div>
+
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase", margin:"0 2px 7px"}}>Returns</div>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
+        border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1, marginBottom:16}}>
+        {tile("Cap Rate", pct(m.capOnPrice))}
+        {tile("Cash-on-Cash", m.cashIn > 0 ? pct(m.coc) : "N/A", cfC(m.coc))}
+        {tile("DSCR", dscrText, isCash ? C.textSub : m.dscr >= 1.25 ? "#059669" : m.dscr >= 1 ? C.amberDark : "#dc2626")}
+        {tile("Debt Yield", m.loanAmt > 0 ? pct(m.debtYield) : "N/A")}
+        {tile("Price / Unit", m.totalUnits > 0 ? $(m.pricePerUnit) : "N/A")}
+        {tile("GRM", m.grm > 0 ? m.grm.toFixed(1) : "N/A")}
+      </div>
+
+      <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase", margin:"0 2px 7px"}}>Cash To Close</div>
+      <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1}}>
+        {isCash
+          ? row("Purchase Price", $(m.price), {top: false})
+          : row("Down Payment", $(m.downAmt), {top: false})}
+        {m.rehab > 0 && row("Rehab / CapEx", $(m.rehab), {indent: true})}
+        {row("Closing Costs", $(m.closing), {indent: true})}
+        {row("Total Out of Pocket", $(m.cashIn), {bold: true})}
+      </div>
+      <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.6, marginTop:12}}>
+        Computed live from this deal's saved rent roll, expenses, and financing. Edit the deal in the calculator and this report follows.
+      </div>
+    </SheetShell>
   );
 }
 
@@ -11401,6 +11559,36 @@ function AnalyzerSteps({current, mobile}) {
     </div>
   );
 }
+// The listing's own story, riding along at the calculator step so occupancy
+// and condition details stay in view while underwriting. Clamped to three
+// lines with a Read more toggle when it runs long.
+function ListingStory({text, mobile}) {
+  const [expanded, setExpanded] = useState(false);
+  const long = String(text).length > 220;
+  return (
+    <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r4, boxShadow:C.sh1,
+      padding: mobile ? "13px 14px" : "14px 16px", marginBottom:14}}>
+      <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:7}}>
+        <I.tag size={14} stroke={2.2} style={{color:C.amber}}/>
+        <span style={{fontSize:11, fontWeight:800, color:C.textSub, fontFamily:F,
+          letterSpacing:".07em", textTransform:"uppercase"}}>About This Listing</span>
+      </div>
+      <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap",
+        ...(expanded || !long ? {} : {display:"-webkit-box", WebkitLineClamp:3,
+          WebkitBoxOrient:"vertical", overflow:"hidden"})}}>
+        {text}
+      </div>
+      {long && (
+        <button onClick={()=>setExpanded(e=>!e)}
+          style={{background:"none", border:"none", padding:"6px 0 0", cursor:"pointer",
+            color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F}}>
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // A finished step, collapsed to one tappable line so it stays out of the way
 // but is a tap away from editing.
 function StepDone({n, title, value, onEdit, mobile}) {
@@ -11457,7 +11645,10 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const pulledKeyRef = useRef("");
   const pullProperty = loc => {
     if (!rcOk(rcAuth) || !apiLookup || !loc.address || !loc.city) return;
-    const key = lookupKey("rc-detail", loc.address, loc.city, loc.state, loc.zip);
+    // Own namespace for the rent-only pull. It used to share "rc-detail" with
+    // the full county record the Records/Owner sheets read, so those sheets
+    // found rent data in the cache and looked empty until a forced retry.
+    const key = lookupKey("rc-rent", loc.address, loc.city, loc.state, loc.zip);
     if (pulledKeyRef.current === key) return;
     pulledKeyRef.current = key;
     setBasicsLoading(true); setErr(""); setCapMsg("");
@@ -11478,8 +11669,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         {count: false, shortCacheIf: r => !reapiHasData(r)}
       ).catch(() => null);
       try {
-        // The counted lookup: RentCast rent estimate only (kept as "rc-detail"
-        // so it still counts as one property pull, same as before).
+        // The counted lookup: RentCast rent estimate only.
         const rentData = await apiLookup(key,
           () => rentcastRentOnly(loc.address, loc.city, loc.state, loc.zip, rcAuth),
           {shortCacheIf: d => !rentHasData(d)});
@@ -12051,6 +12241,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           full body; Notes ride along at the very end so they never show early. */}
       {open === 3 && (
         <>
+          {d.assetClass === "multifamily" && d.chosenStrategy && d.description && (
+            <ListingStory text={d.description} mobile={mobile}/>
+          )}
           {(d.assetClass === "multifamily" && d.chosenStrategy) ? (
             <MultifamilyCalculator p={d} set={setD} mobile={mobile} />
           ) : (
@@ -13869,7 +14062,9 @@ export default function App() {
   // after service recovered. Purge every cached rc entry with no usable data
   // once per account; fresh fetches (short-TTL when empty) replace them.
   useEffect(() => {
-    if (!data || data.cacheHealV === 1) return;
+    // v2 also purges rent-only payloads that the analyzer used to cache under
+    // "rc-detail" (the Records/Owner sheets read that key and looked empty).
+    if (!data || data.cacheHealV === 2) return;
     const cache = data.apiCache || {};
     const cleaned = Object.fromEntries(Object.entries(cache).filter(([k, v]) => {
       if (!String(k).startsWith("rc-")) return true;
@@ -13882,7 +14077,7 @@ export default function App() {
       }
       return true;
     }));
-    persistQuiet({ ...data, apiCache: cleaned, cacheHealV: 1 });
+    persistQuiet({ ...data, apiCache: cleaned, cacheHealV: 2 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!data]);
 

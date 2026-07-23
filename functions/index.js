@@ -1262,7 +1262,7 @@ function mapLoopnetListing(r) {
     spaces: r.spaces || null,
     sizeLabel: r.sizeLabel || r.availableSpace || null,
     buildingInfo: r.buildingInfo || null,
-    description: r.description ? String(r.description).slice(0, 400) : null,
+    description: r.description ? String(r.description) : null,
     searchType: r.searchType || null,
     photo: r.photo || null,
     brokers: Array.isArray(r.brokers)
@@ -1403,6 +1403,97 @@ exports.searchCommercial = onRequest({
   } catch (e) {
     logger.error("searchCommercial", {error: e.message});
     res.status(500).json({error: "search failed"});
+  }
+});
+
+// Full listing detail (description + photo gallery) for one LoopNet listing.
+// The search feed truncates descriptions and carries one thumbnail; the
+// details endpoint has the whole story. Its exact response shape isn't
+// documented, so the extractor walks the JSON for what we need instead of
+// trusting field names. Cached hard (a listing's copy rarely changes).
+const LOOPNET_DETAIL_TTL_MS = 7 * 24 * 3600 * 1000;
+function extractLoopnetDetail(j) {
+  let description = "";
+  const photos = [];
+  const seen = new Set();
+  const walk = (v, key) => {
+    if (v == null) return;
+    if (typeof v === "string") {
+      if (/^https?:\/\//.test(v) && /loopnet\.com/i.test(v) && /\/i2\/|image|photo/i.test(v)) {
+        if (!seen.has(v) && photos.length < 40) { seen.add(v); photos.push(v); }
+      } else if (/descript|overview|summary/i.test(key || "") && v.length > description.length) {
+        description = v;
+      }
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, key)); return; }
+    if (typeof v === "object") { for (const [k, val] of Object.entries(v)) walk(val, k); }
+  };
+  walk(j, "");
+  if (!description) {
+    // Fallback: the longest prose-looking string anywhere in the payload.
+    let best = "";
+    const walk2 = (v) => {
+      if (v == null) return;
+      if (typeof v === "string") {
+        if (v.length > best.length && v.length > 120 && /\s/.test(v) && !/^https?:/.test(v)) best = v;
+        return;
+      }
+      if (Array.isArray(v)) { v.forEach(walk2); return; }
+      if (typeof v === "object") Object.values(v).forEach(walk2);
+    };
+    walk2(j);
+    description = best;
+  }
+  return {description: description || null, photos};
+}
+exports.commercialDetail = onRequest({
+  secrets: [RAPIDAPI_KEY],
+  cors: true, region: "us-central1", timeoutSeconds: 30,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const body = req.body || {};
+    const id  = String(body.id || "").replace(/[^\w-]/g, "").slice(0, 40);
+    const url = String(body.url || "").slice(0, 300);
+    if (!id && !url) { res.status(400).json({error: "id"}); return; }
+
+    const cacheRef = admin.database().ref(`commercialDetailCache/${id || listingCacheKey(url, 1)}`);
+    const cached = (await cacheRef.get()).val();
+    if (cached && cached.ts && (Date.now() - cached.ts) < LOOPNET_DETAIL_TTL_MS) {
+      res.json({found: cached.found, description: cached.description || null,
+        photos: cached.photos || [], cached: true});
+      return;
+    }
+
+    const key = RAPIDAPI_KEY.value();
+    if (!key || key === "unset") { res.status(503).json({error: "staged"}); return; }
+    const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LOOPNET_HOST};
+    const tryGet = async (path) => {
+      try {
+        const r = await fetch(`https://${LOOPNET_HOST}${path}`, {headers});
+        if (!r.ok) return null;
+        return await r.json().catch(() => null);
+      } catch { return null; }
+    };
+    let out = null;
+    if (id)  out = await tryGet(`/details/byid?id=${encodeURIComponent(id)}`);
+    if ((!out || !extractLoopnetDetail(out).description) && url) {
+      const byUrl = await tryGet(`/details/byurl?url=${encodeURIComponent(url)}`);
+      if (byUrl) out = byUrl;
+    }
+    const got = out ? extractLoopnetDetail(out) : {description: null, photos: []};
+    const record = {ts: Date.now(), found: !!(got.description || got.photos.length),
+      description: got.description, photos: got.photos.slice(0, 30)};
+    await cacheRef.set(record);
+    await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
+      .transaction((v) => numOr0(v) + 1);
+    res.json({found: record.found, description: record.description, photos: record.photos, cached: false});
+  } catch (e) {
+    logger.error("commercialDetail", {error: e.message});
+    res.status(500).json({error: "detail failed"});
   }
 });
 
