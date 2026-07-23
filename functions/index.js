@@ -1590,9 +1590,10 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
 // v4 = switch the trace to RealEstateAPI (PropertyDetail owner + SkipTrace),
 // Endato kept as fallback — re-run cached Endato results through it.
 const REVEAL_V = 4;
-// Pro accounts get this many owner reveals included each month (use it or lose
-// it); beyond it they spend credits at $0.99 each, same as free accounts.
-const PRO_REVEAL_FREE = 10;
+// Pro reveals are effectively unlimited: included each month up to a HIDDEN
+// ceiling that exists only to stop abuse (no legitimate user reaches it). The
+// count is never surfaced to Pro, so it feels unlimited. Past it, credits.
+const PRO_REVEAL_FREE = 100;
 const addrKeyOf = (street, city, state, zip) =>
   (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
@@ -2069,15 +2070,15 @@ exports.createCheckoutSession = onRequest(
       if (plan === "credits10" || plan === "reveal1" || plan === "reveal5") {
         // One-time Reveal credit purchase. Amounts are pinned here — the client
         // only ever names the plan, never a price. The 10-pack ($0.99/credit) is
-        // a Pro perk (extra reveals past their monthly 10); free accounts buy a
-        // single report at $4.99 or a 5-pack at $19.99 ($4/report).
+        // a Pro perk (extra reveals past their monthly allotment); free accounts
+        // buy a single report at $2.99 or a 5-pack at $9.99 ($2/report).
         const isProBuyer = user.email === "harut@ymail.com" ||
           (await billingRef(user.uid).child("tier").get()).val() === "pro";
         const pack = (plan === "credits10" && isProBuyer)
           ? {name: "DealHive Reveal Credits (10 pack)", amount: "990", credits: "10"}
           : plan === "reveal5"
-            ? {name: "DealHive Owner Contact Reports (5 pack)", amount: "1999", credits: "5"}
-            : {name: "DealHive Owner Contact Report", amount: "499", credits: "1"};
+            ? {name: "DealHive Owner Contact Reports (5 pack)", amount: "999", credits: "5"}
+            : {name: "DealHive Owner Contact Report", amount: "299", credits: "1"};
         session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
           "mode": "payment",
           "customer": customerId,
