@@ -1395,7 +1395,11 @@ function AuthPage({onAuth}) {
     setL(true);
     try {
       if (mode==="reset") {
-        await fbResetPassword(email);
+        // Our own branded reset email (via the requestPasswordReset function)
+        // instead of Firebase's plain default. Always resolves ok so it never
+        // reveals whether an email is registered.
+        await fetch(`${FN_BASE}/requestPasswordReset`, {method:"POST",
+          headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})}).catch(()=>{});
         setMsg("Reset email sent! Check your inbox."); setMode("signin");
       } else {
         const u = mode==="signup" ? await fbSignUp(email,password) : await fbSignIn(email,password);
