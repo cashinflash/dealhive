@@ -2450,8 +2450,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                 }}>
                   {id === "cash" ? <I.dollar size={19} stroke={2.2}/> : <I.building size={19} stroke={2.2}/>}
                 </span>
-                <span style={{display:"block", fontSize:16, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.015em"}}>{label}</span>
-                <span style={{display:"block", fontSize:12, color:C.textSub, fontFamily:F, marginTop:3, lineHeight:1.45}}>{line}</span>
+                <span style={{display:"block", fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>{label}</span>
               </button>
             ))}
           </div>
@@ -7986,16 +7985,22 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
         <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6, margin:"8px auto 0", maxWidth:320}}>
           Unlock the owner's name, mailing address, phone and email for this property.
         </div>
-        <div style={{textAlign:"left", maxWidth:280, margin:"16px auto 0", display:"grid", gap:9}}>
-          {["Owner name of record", "Mailing address and county", "Phone numbers and email"].map(t => (
-            <div key={t} style={{display:"flex", alignItems:"center", gap:10, fontSize:13,
-              color:C.text, fontWeight:600, fontFamily:F}}>
-              <span style={{width:19, height:19, borderRadius:"50%", flex:"0 0 auto", display:"inline-flex",
+        <div style={{textAlign:"left", maxWidth:300, margin:"18px auto 0", display:"grid", gap:9}}>
+          {[["Owner name of record", I.user], ["Mailing address and county", I.pin],
+            ["Phone numbers and email", I.phone]].map(([t, Icon]) => (
+            <div key={t} style={{display:"flex", alignItems:"center", gap:11, background:C.card,
+              border:"1px solid "+C.border, borderRadius:C.r3, boxShadow:C.sh1, padding:"11px 13px"}}>
+              <span style={{width:31, height:31, borderRadius:9, flex:"0 0 auto", display:"inline-flex",
                 alignItems:"center", justifyContent:"center", background:C.greenSubtle,
                 border:"1px solid "+C.greenBorder, color:C.greenDark}}>
-                <I.check size={11} stroke={2.8}/>
+                <Icon size={15} stroke={2.2}/>
               </span>
-              {t}
+              <span style={{flex:1, minWidth:0}}>
+                <span style={{display:"block", fontSize:12.5, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.005em"}}>{t}</span>
+                <span style={{display:"block", marginTop:6, height:7, width:"72%", borderRadius:4,
+                  background:`repeating-linear-gradient(90deg, ${C.border} 0 11px, transparent 11px 17px)`}}/>
+              </span>
+              <I.lock size={13} stroke={2.4} color={C.textMuted}/>
             </div>
           ))}
         </div>
@@ -9225,11 +9230,11 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
 function DealsLockedPreview({mobile, isWide, onUpgrade}) {
   return (
     <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
-      <PageHeader title="Deals" subtitle="Fresh investment deals, sourced nightly across 31 metros"/>
+      <PageHeader title="Off Market" subtitle="For sale by owner and off market deals, refreshed nightly and already underwritten."/>
       <div style={{position:"relative", borderRadius:C.r4, overflow:"hidden",
-        height: mobile ? "calc(100dvh - 330px)" : 560}}>
+        height: mobile ? "calc(100dvh - 300px)" : 580}}>
         <div aria-hidden="true" style={{
-          display:"grid", gap:16, filter:"blur(6px)", opacity:.8,
+          display:"grid", gap:16, filter:"blur(7px)", opacity:.7,
           pointerEvents:"none", userSelect:"none",
           gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
         }}>
@@ -9238,26 +9243,42 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
               onAnalyze={()=>{}} onSave={()=>{}} onUpgrade={()=>{}} mobile={mobile} />
           ))}
         </div>
-        <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
-          alignItems:"center", justifyContent: mobile ? "flex-start" : "center", gap:12,
-          padding: mobile ? "96px 24px 0" : "0 24px", textAlign:"center",
-          background:"linear-gradient(180deg, rgba(250,250,250,.55) 0%, rgba(250,250,250,.95) 70%)"}}>
-          <div style={{width:52, height:52, borderRadius:"50%",
-            background:C.greenSubtle, border:"1px solid "+C.greenBorder, color:C.greenDark,
-            display:"flex", alignItems:"center", justifyContent:"center", boxShadow:C.sh2}}>
-            <I.lock size={22} stroke={2.2}/>
+        <div style={{position:"absolute", inset:0, display:"flex", alignItems: mobile ? "flex-start" : "center",
+          justifyContent:"center", padding: mobile ? "56px 16px 0" : "0 24px",
+          background:"radial-gradient(120% 80% at 50% 40%, rgba(250,250,250,.55) 0%, rgba(250,250,250,.93) 60%)"}}>
+          <div style={{background:C.card, border:"1px solid "+C.greenBorder, borderRadius: mobile ? 22 : 26,
+            boxShadow:"0 28px 64px -20px rgba(15,23,42,.32)", padding: mobile ? "30px 22px" : "38px 34px",
+            maxWidth:420, width:"100%", textAlign:"center"}}>
+            <div style={{width:60, height:60, borderRadius:18, margin:"0 auto 16px",
+              background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              boxShadow:`0 16px 32px -10px ${C.green}`}}>
+              <I.lock size={26} stroke={2.2}/>
+            </div>
+            <div style={{fontSize:22, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.025em", lineHeight:1.1}}>
+              Unlock the Off Market feed
+            </div>
+            <div style={{fontSize:14, color:C.textSub, fontFamily:F, lineHeight:1.55, margin:"9px auto 0", maxWidth:330}}>
+              For sale by owner and off market deals land here every night, already underwritten.
+            </div>
+            <div style={{textAlign:"left", maxWidth:290, margin:"20px auto 0", display:"grid", gap:11}}>
+              {["Exact addresses and photos", "Owner name, phone and email", "Rental, BRRRR and flip numbers already run"].map(t => (
+                <div key={t} style={{display:"flex", alignItems:"center", gap:11, fontSize:13.5,
+                  color:C.text, fontWeight:600, fontFamily:F}}>
+                  <span style={{width:21, height:21, borderRadius:"50%", flex:"0 0 auto", display:"inline-flex",
+                    alignItems:"center", justifyContent:"center", background:C.greenSubtle,
+                    border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+                    <I.check size={11} stroke={2.8}/>
+                  </span>
+                  {t}
+                </div>
+              ))}
+            </div>
+            <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:22, width:"100%", justifyContent:"center"})}>
+              <I.star size={15}/> Unlock with Pro
+            </button>
+            <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:10}}>From $20 a month. Cancel anytime.</div>
           </div>
-          <div style={{fontSize:20, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-            The Deal Feed is a Pro feature
-          </div>
-          <div style={{fontSize:13.5, color:C.textSub, fontFamily:F, lineHeight:1.6, maxWidth:400}}>
-            Off-market, for-sale-by-owner deals land here every night: exact
-            addresses, owner lookup, and the numbers already run.
-          </div>
-          <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:2})}>
-            <I.star size={14}/> Unlock the Deal Feed — from $20/mo
-          </button>
-          <div style={{fontSize:12, color:C.textMuted, fontFamily:F}}>Cancel anytime.</div>
         </div>
       </div>
     </div>
@@ -10447,29 +10468,27 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* Free lookup limit reached — the auto-pull is blocked, but manual entry
           below still works. Shown as a branded card, never an error line. */}
       {capMsg && (
-        <div style={{display:"flex", gap:14, alignItems:"flex-start",
-          background:`linear-gradient(160deg, #fff, ${C.greenSubtle})`,
-          border:"1px solid "+C.greenBorder, borderRadius:C.r4, boxShadow:C.sh2,
-          padding:"16px 18px", marginBottom:18}}>
-          <div style={{width:40, height:40, borderRadius:12, flex:"0 0 auto", display:"flex",
+        <div style={{background:`linear-gradient(160deg, #fff 0%, ${C.greenSubtle} 100%)`,
+          border:"1px solid "+C.greenBorder, borderRadius:C.r4, boxShadow:C.sh3,
+          padding: mobile ? "22px 18px" : "24px 22px", marginBottom:18, textAlign:"center"}}>
+          <div style={{width:54, height:54, borderRadius:16, margin:"0 auto 13px", display:"flex",
             alignItems:"center", justifyContent:"center",
             background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
-            boxShadow:"0 6px 14px -4px rgba(232,115,28,.5)"}}>
-            <I.lock size={18} stroke={2.2}/>
+            boxShadow:`0 13px 28px -9px ${C.green}`}}>
+            <I.lock size={24} stroke={2.2}/>
           </div>
-          <div style={{minWidth:0, flex:1}}>
-            <div style={{fontSize:14.5, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
-              Monthly lookup limit reached
-            </div>
-            <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:4}}>
-              {capMsg} You can still enter the details below by hand and analyze this deal for free.
-            </div>
-            {onUpgrade && (
-              <button onClick={onUpgrade} {...btnStyle("primary","sm", {marginTop:12})}>
-                <I.star size={13}/> Upgrade to Pro
-              </button>
-            )}
+          <div style={{fontSize:18, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+            You've used your free lookups this month
           </div>
+          <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:6,
+            maxWidth:390, marginLeft:"auto", marginRight:"auto"}}>
+            {capMsg} You can still enter the details below by hand and analyze this deal for free.
+          </div>
+          {onUpgrade && (
+            <button onClick={onUpgrade} {...btnStyle("primary","lg", {marginTop:16})}>
+              <I.star size={14}/> Upgrade to Pro
+            </button>
+          )}
         </div>
       )}
 
@@ -10570,7 +10589,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
 
       {/* Deal Notes */}
       <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
-        <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)}
+        <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)} className="dh-italic-ph"
           placeholder="Seller motivation, condition, neighborhood, rehab scope…"
           style={{...iS(mobile), minHeight:110, resize:"vertical", lineHeight:1.55}} />
       </SectionBlock>
@@ -11735,16 +11754,20 @@ function AdminUsagePanel({token}) {
 function Toast({msg}) {
   if (!msg) return null;
   return (
-    <div style={{position:"fixed", top:"calc(env(safe-area-inset-top, 0px) + 14px)", left:"50%",
-      transform:"translateX(-50%)", zIndex:900, maxWidth:"min(92vw, 480px)",
-      display:"flex", alignItems:"flex-start", gap:9,
-      background:C.sidebar, color:"#fff", borderRadius:14,
-      padding:"12px 18px", boxShadow:"0 12px 32px -8px rgba(9,9,11,.5)",
-      fontFamily:F, fontSize:13.5, fontWeight:600, lineHeight:1.45,
-      animation:"dhToastIn .28s cubic-bezier(.21,1.02,.73,1)"}}>
-      <span style={{width:20, height:20, borderRadius:"50%", background:C.green, color:"#fff",
-        display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1}}>
-        <I.check size={11} stroke={3}/>
+    <div style={{position:"fixed", top:"calc(env(safe-area-inset-top, 0px) + 16px)", left:"50%",
+      transform:"translateX(-50%)", zIndex:900, maxWidth:"min(92vw, 440px)",
+      display:"flex", alignItems:"center", gap:12,
+      background:C.card, color:C.text, borderRadius:16,
+      border:"1px solid "+C.border,
+      padding:"11px 20px 11px 12px",
+      boxShadow:"0 18px 44px -12px rgba(15,23,42,.30), 0 4px 12px -4px rgba(15,23,42,.14)",
+      fontFamily:F, fontSize:14, fontWeight:700, lineHeight:1.4, letterSpacing:"-0.01em",
+      animation:"dhToastIn .3s cubic-bezier(.21,1.02,.73,1)"}}>
+      <span style={{width:32, height:32, borderRadius:11, flexShrink:0,
+        background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+        display:"inline-flex", alignItems:"center", justifyContent:"center",
+        boxShadow:"0 5px 12px -3px rgba(232,115,28,.55)"}}>
+        <I.check size={16} stroke={3}/>
       </span>
       <span>{msg}</span>
     </div>
@@ -11907,20 +11930,20 @@ export default function App() {
             const d = await r.json().catch(() => ({}));
             if (r.ok && d.balance != null) {
               done = true;
-              setToast(`Reveal credits added — balance: ${d.balance} 🐝`);
+              setToast(`Reveal credits added. Balance: ${d.balance} 🐝`);
               setTimeout(() => setToast(""), 3500);
             }
           }
         } catch { /* webhook backstop below */ }
         if (!done) {
-          setToast("Payment received — credits appear within a minute.");
+          setToast("Payment received. Credits appear within a minute.");
           setTimeout(() => setToast(""), 4000);
         }
       })();
       return;
     }
     if (kind !== "success") {
-      setToast("Checkout cancelled — no charge was made.");
+      setToast("Checkout cancelled. No charge was made.");
       setTimeout(() => setToast(""), 3200);
       return;
     }
@@ -11938,7 +11961,7 @@ export default function App() {
       } else if (++tries < 10) {
         setTimeout(poll, 2000);
       } else {
-        setToast("Payment received — Pro activates within a minute or two.");
+        setToast("Payment received. Pro activates within a minute or two.");
         setTimeout(() => setToast(""), 4000);
       }
     };
@@ -11974,6 +11997,7 @@ export default function App() {
       /* Prevent iOS from auto-zooming when focusing inputs — needs font-size >= 16px on the input. iS() already sets 16 on mobile, this is a safety net. */
       @media (max-width:767px){input,select,textarea{font-size:16px!important;}}
       input::placeholder,textarea::placeholder{color:#c2c2c9;font-style:normal;opacity:1;}
+      .dh-italic-ph::placeholder{font-style:italic;}
       input,select,textarea{transition:border-color .15s,box-shadow .15s;}
       input:focus,select:focus,textarea:focus{border-color:${C.green}!important;box-shadow:${C.ring}!important;}
 
@@ -12131,7 +12155,7 @@ export default function App() {
   const persist = useCallback((next) => {
     setData(next);
     saveCloud(next);
-    setToast("Saved OK"); setTimeout(()=>setToast(""), 1600);
+    setToast("Saved!"); setTimeout(()=>setToast(""), 1600);
   }, [saveCloud]);
 
   // Quiet persist — used for cache/usage bookkeeping so it doesn't flash a
@@ -12277,7 +12301,7 @@ export default function App() {
     });
     persist({...data, properties:[...data.properties,p], deals:(data.deals||[]).filter(d=>d.id!==deal.id)});
     setPropId(p.id); setPage("property");
-    setToast("Deal added to My Properties! OK"); setTimeout(()=>setToast(""),2000);
+    setToast("Deal added to My Properties!"); setTimeout(()=>setToast(""),2000);
   };
 
   // Deals page / Deal View → Analyzer: prefill and remember where the user
@@ -12312,7 +12336,7 @@ export default function App() {
     const match = existing.find(x => x.id === deal.id ||
       (deal.address && x.address === deal.address && x.city === deal.city));
     if (!match && (data.tier||"free") !== "pro" && existing.length >= 3) {
-      setToast("Free plan holds 3 saved deals — upgrade to Pro for unlimited");
+      setToast("Free plan holds 3 saved deals. Upgrade to Pro for unlimited.");
       setTimeout(()=>setToast(""), 2600);
       return "limit";
     }
