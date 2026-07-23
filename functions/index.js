@@ -1590,6 +1590,9 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
 // v4 = switch the trace to RealEstateAPI (PropertyDetail owner + SkipTrace),
 // Endato kept as fallback — re-run cached Endato results through it.
 const REVEAL_V = 4;
+// Pro accounts get this many owner reveals included each month (use it or lose
+// it); beyond it they spend credits at $0.99 each, same as free accounts.
+const PRO_REVEAL_FREE = 10;
 const addrKeyOf = (street, city, state, zip) =>
   (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
@@ -1614,13 +1617,22 @@ exports.revealOwner = onRequest({
     // data we return on a non-charged (miss/entity) result.
     const tier = (await admin.database().ref(`billing/${user.uid}/tier`).get()).val();
     const isFree = !isAdmin && tier !== "pro";
+    const isProMember = !isAdmin && tier === "pro";
 
     const balRef = admin.database().ref(`credits/${user.uid}/balance`);
     const balance = (await balRef.get()).val() || 0;
+    // Pro's monthly included-reveal allotment (use it or lose it).
+    const moKey = new Date().toISOString().slice(0, 7);
+    const moRef = admin.database().ref(`revealMonthly/${user.uid}/${moKey}`);
+    const monthlyUsed = numOr0((await moRef.get()).val());
+    const proMeter = (u) => isProMember
+      ? {monthlyUsed: u, monthlyLimit: PRO_REVEAL_FREE, monthlyLeft: Math.max(0, PRO_REVEAL_FREE - u)}
+      : {};
     const b = req.body || {};
     // The admin flag rides every response so the client can offer the reveal
-    // without a balance — the owner's own account runs unmetered.
-    const flags = isAdmin ? {admin: true} : {};
+    // without a balance — the owner's own account runs unmetered. Pro responses
+    // also carry the monthly allotment so the UI can show reveals-left.
+    const flags = isAdmin ? {admin: true} : proMeter(monthlyUsed);
     if (b.balanceOnly) { res.json({balance, ...flags}); return; }
 
     const street = String(b.street || "").trim();
@@ -1654,7 +1666,14 @@ exports.revealOwner = onRequest({
         return;
       }
     }
-    if (!isAdmin && !alreadyPaid && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
+    // Pro reveals within the monthly 10 are free; beyond that (and every
+    // free-account reveal) a credit is required up front.
+    if (!isAdmin && !alreadyPaid) {
+      const needsCredit = !isProMember || monthlyUsed >= PRO_REVEAL_FREE;
+      if (needsCredit && balance < 1) {
+        res.status(402).json({error: "credits", balance, ...proMeter(monthlyUsed)}); return;
+      }
+    }
 
     // Two trace vendors. RealEstateAPI (owner from PropertyDetail, phones from
     // SkipTrace, $0.05/match) leads; Endato stays as an automatic fallback.
@@ -1768,29 +1787,45 @@ exports.revealOwner = onRequest({
       return;
     }
 
-    // Exactly one credit, atomically, only for a hit. Admin runs unmetered.
-    // A free refresh of an address the member already paid for skips the charge.
+    // Charge for the hit. Pro's first 10 reveals each month are included (we
+    // just tally them); the 11th+ spend a credit, same as every free-account
+    // reveal. Admin and already-paid refreshes never charge.
+    let newMonthlyUsed = monthlyUsed;
     if (!isAdmin && !alreadyPaid) {
-      // RTDB runs the update fn first against the (empty) local cache — v is
-      // null on that pass in a cold function. Returning undefined there would
-      // ABORT before ever seeing the real balance (the bug that flipped a
-      // funded member to "buy credits"). Propose 0 on null so RTDB re-runs
-      // against the true server value; only a genuine <1 balance aborts.
-      const tx = await balRef.transaction(v => {
-        if (v === null) return 0;
-        if (v < 1) return; // truly out of credits → abort, no charge
-        return v - 1;
-      });
-      if (!tx.committed) {
-        res.status(402).json({error: "credits", balance: (await balRef.get()).val() || 0});
-        return;
+      let mustCharge = true;
+      if (isProMember) {
+        // Atomically claim this month's slot; the returned count is 1-based.
+        const moTx = await moRef.transaction(v => numOr0(v) + 1);
+        newMonthlyUsed = moTx.snapshot.val() || (monthlyUsed + 1);
+        mustCharge = newMonthlyUsed > PRO_REVEAL_FREE;
       }
-      await admin.database().ref(`creditsLedger/${user.uid}`).push(
-        {delta: -1, reason: "reveal", addr: k, at: Date.now()});
+      if (mustCharge) {
+        // RTDB runs the update fn first against the (empty) local cache — v is
+        // null on that pass in a cold function. Returning undefined there would
+        // ABORT before ever seeing the real balance (the bug that flipped a
+        // funded member to "buy credits"). Propose 0 on null so RTDB re-runs
+        // against the true server value; only a genuine <1 balance aborts.
+        const tx = await balRef.transaction(v => {
+          if (v === null) return 0;
+          if (v < 1) return; // truly out of credits → abort, no charge
+          return v - 1;
+        });
+        if (!tx.committed) {
+          // No credit to cover the over-allotment reveal — roll back the Pro
+          // monthly tally so the slot isn't wasted, and refuse.
+          if (isProMember) await moRef.transaction(v => Math.max(0, numOr0(v) - 1));
+          res.status(402).json({error: "credits",
+            balance: (await balRef.get()).val() || 0, ...proMeter(monthlyUsed)});
+          return;
+        }
+        await admin.database().ref(`creditsLedger/${user.uid}`).push(
+          {delta: -1, reason: "reveal", addr: k, at: Date.now()});
+      }
     }
     await revRef.set(result);
     const newBal = (await balRef.get()).val() || 0;
-    res.json({revealed: result, balance: newBal, ...flags});
+    res.json({revealed: result, balance: newBal,
+      ...(isAdmin ? {admin: true} : proMeter(newMonthlyUsed))});
   } catch (e) {
     logger.error("revealOwner", {error: e.message});
     res.status(500).json({error: "unavailable"});
@@ -2031,15 +2066,18 @@ exports.createCheckoutSession = onRequest(
 
       const plan = (req.body && req.body.plan) || "monthly";
       let session;
-      if (plan === "credits10" || plan === "reveal1") {
+      if (plan === "credits10" || plan === "reveal1" || plan === "reveal5") {
         // One-time Reveal credit purchase. Amounts are pinned here — the client
-        // only ever names the plan, never a price. The 10-pack ($1/credit) is a
-        // Pro perk; free accounts buy a single report at $4.99.
+        // only ever names the plan, never a price. The 10-pack ($0.99/credit) is
+        // a Pro perk (extra reveals past their monthly 10); free accounts buy a
+        // single report at $4.99 or a 5-pack at $19.99 ($4/report).
         const isProBuyer = user.email === "harut@ymail.com" ||
           (await billingRef(user.uid).child("tier").get()).val() === "pro";
         const pack = (plan === "credits10" && isProBuyer)
-          ? {name: "DealHive Reveal Credits (10 pack)", amount: "1000", credits: "10"}
-          : {name: "DealHive Owner Contact Report", amount: "499", credits: "1"};
+          ? {name: "DealHive Reveal Credits (10 pack)", amount: "990", credits: "10"}
+          : plan === "reveal5"
+            ? {name: "DealHive Owner Contact Reports (5 pack)", amount: "1999", credits: "5"}
+            : {name: "DealHive Owner Contact Report", amount: "499", credits: "1"};
         session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
           "mode": "payment",
           "customer": customerId,
