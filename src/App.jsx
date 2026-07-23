@@ -154,12 +154,12 @@ const fbStorageUpload = async (path, blob, token) => {
     } catch { continue; } // browser-level rejection (nonexistent bucket blocks CORS) — try the next name
     if (r.status === 404) continue; // bucket doesn't exist under this name
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error((d.error && d.error.message) || "Upload failed — try again.");
+    if (!r.ok) throw new Error((d.error && d.error.message) || "Upload failed. Try again.");
     fbBucketPick = i;
     const tok = String(d.downloadTokens || "").split(",")[0];
     return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(d.name)}?alt=media${tok ? `&token=${tok}` : ""}`;
   }
-  throw new Error("Photo storage isn't switched on yet — it's coming shortly.");
+  throw new Error("Photo storage isn't switched on yet. It's coming shortly.");
 };
 
 // Shrink phone photos before upload: max 1600px on the long edge, JPEG.
@@ -644,11 +644,13 @@ const newDeal = () => ({
   // untouched; "multifamily" switches the analyzer to the income model (calcMF).
   assetClass:"residential",
   units:[],                 // rent roll: [{id, label, count, rent}]
+  cspaces:[],               // commercial spaces: [{id, label, sqft, rate, lease:"gross"|"nnn"}]
   mfOtherIncome:0,          // monthly other income (laundry, parking, storage)
   mfVacancyPct:5, mfMarketCapPct:8,
   mfDownPct:25, mfRate:7, mfAmortYears:30,
   mfExpTaxes:0, mfExpInsurance:0, mfExpUtilities:0,
-  mfExpMgmtPct:8, mfExpMaintPct:8, mfExpReservesPerUnit:250, mfExpOther:0
+  mfExpMgmtPct:8, mfExpMaintPct:8, mfExpReservesPerUnit:250, mfExpOther:0,
+  mfExpRecovered:0          // $/yr reimbursed by NNN tenants (taxes, insurance, CAM)
 });
 
 // Income-approach engine for multifamily / commercial. Deliberately separate
@@ -658,18 +660,25 @@ function calcMF(p) {
   const n = v => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const units = Array.isArray(p.units) ? p.units : [];
+  const cspaces = Array.isArray(p.cspaces) ? p.cspaces : [];
   const totalUnits  = units.reduce((s, u) => s + n(u.count), 0);
-  const rentMo      = units.reduce((s, u) => s + n(u.count) * n(u.rent), 0);
+  const unitRentMo  = units.reduce((s, u) => s + n(u.count) * n(u.rent), 0);
+  // Commercial space rent: sqft × $/SF/yr, entered as an annual rate.
+  const cRentYr     = cspaces.reduce((s, c) => s + n(c.sqft) * n(c.rate), 0);
+  const rentMo      = unitRentMo + cRentYr / 12;
   const grossRentYr = rentMo * 12;                              // rent only (for GRM)
-  const gprYr       = (rentMo + n(p.mfOtherIncome)) * 12;       // gross potential income
+  const gprYr       = grossRentYr + n(p.mfOtherIncome) * 12;    // gross potential income
   const vacLoss     = gprYr * (clamp(n(p.mfVacancyPct), 0, 100) / 100);
   const egi         = gprYr - vacLoss;                          // effective gross income
   // Operating expenses (never includes debt service or capex on the purchase).
   const mgmt     = egi * (clamp(n(p.mfExpMgmtPct), 0, 100) / 100);
   const maint    = egi * (clamp(n(p.mfExpMaintPct), 0, 100) / 100);
   const reserves = totalUnits * n(p.mfExpReservesPerUnit);
-  const opex = n(p.mfExpTaxes) + n(p.mfExpInsurance) + n(p.mfExpUtilities) +
+  const opexGross = n(p.mfExpTaxes) + n(p.mfExpInsurance) + n(p.mfExpUtilities) +
     mgmt + maint + reserves + n(p.mfExpOther);
+  // NNN tenants reimburse part of the operating bill; never below zero.
+  const recovered = Math.min(n(p.mfExpRecovered), opexGross);
+  const opex = opexGross - recovered;
   const noi = egi - opex;                                       // net operating income (yr)
 
   const price   = n(p.purchasePrice);
@@ -700,8 +709,8 @@ function calcMF(p) {
   const expRatio = egi > 0 ? (opex / egi) * 100 : 0;
 
   return {
-    totalUnits, rentMo, grossRentYr, gprYr, vacLoss, egi,
-    mgmt, maint, reserves, opex, noi,
+    totalUnits, rentMo, unitRentMo, cRentYr, grossRentYr, gprYr, vacLoss, egi,
+    mgmt, maint, reserves, opexGross, recovered, opex, noi,
     capOnPrice, valueAtCap, marketCapPct: marketCap * 100,
     isCash, loanAmt, dsMo, dsYr, cfYr, cfMo: cfYr / 12, dscr, debtYield,
     downAmt, closing, rehab, cashIn, coc, pricePerUnit, grm, expRatio, price,
@@ -1000,11 +1009,12 @@ const applyReapi = (prev, rp, rates) => {
   const med  = rp.value || prev.listingArv || prev.homeValueMedian || 0;
   const taxVal  = rp.assessedValue || prev.taxValue || 0;
   const annual  = rp.taxAnnual || 0;
-  // Auto-detect income property from the record. 5+ units (or an apartment /
-  // multifamily use code) flips the analyzer to the multifamily model; 2-4 units
-  // seed a rent-roll row so the count is there if the user switches to it.
+  // Auto-detect income property from the record. 5+ units (or an apartment use
+  // code) flips the analyzer to the multifamily model. 2-4 units stay
+  // residential (banks underwrite them that way) but seed a rent-roll row so the
+  // count is ready if the user switches models.
   const recUnits   = rp.units || 0;
-  const detectedMF = recUnits >= 5 || /apartment|multi-?family/i.test(rp.type || "");
+  const detectedMF = recUnits >= 5 || /apartment/i.test(rp.type || "");
   const seedUnits  = (Array.isArray(prev.units) && prev.units.length) ? prev.units
     : (recUnits >= 2 ? [{id: "u" + Date.now(), label: "Unit", count: recUnits, rent: rp.rent || 0}] : (prev.units || []));
   return {
@@ -1495,7 +1505,7 @@ function AuthPage({onAuth}) {
           headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})}).catch(()=>{});
         // Generic on purpose: works whether we sent a reset link or the
         // "you sign in with Google" email, and never confirms the account exists.
-        setMsg("Check your inbox — we just sent a link to get you back in."); setMode("signin");
+        setMsg("Check your inbox. We just sent a link to get you back in."); setMode("signin");
       } else {
         const u = mode==="signup" ? await fbSignUp(email,password) : await fbSignIn(email,password);
         onAuth(u, mode==="signup");
@@ -1519,7 +1529,7 @@ function AuthPage({onAuth}) {
   const googleSignIn = () => {
     setErr(""); setMsg("");
     if (!GOOGLE_OAUTH_CLIENT_ID) {
-      setMsg("Google sign-in is coming online shortly — use email for now.");
+      setMsg("Google sign-in is coming online shortly. Use email for now.");
       return;
     }
     const launch = () => {
@@ -1551,8 +1561,8 @@ function AuthPage({onAuth}) {
             } catch (ex) {
               const m = String((ex && ex.message) || "");
               setErr(
-                m.includes("UNAUTHORIZED_DOMAIN")    ? "This domain isn't authorized for Google sign-in yet — use email for now." :
-                m.includes("OPERATION_NOT_ALLOWED")  ? "Google sign-in isn't enabled on the account system yet — use email for now." :
+                m.includes("UNAUTHORIZED_DOMAIN")    ? "This domain isn't authorized for Google sign-in yet. Use email for now." :
+                m.includes("OPERATION_NOT_ALLOWED")  ? "Google sign-in isn't enabled on the account system yet. Use email for now." :
                 "Google sign-in failed (" + (m || "unknown") + "). Try email instead.");
             }
             setL(false);
@@ -1571,7 +1581,7 @@ function AuthPage({onAuth}) {
     sc.onerror = () => setErr("Couldn't reach Google. Try email instead.");
     document.head.appendChild(sc);
   };
-  const comingSoon = name => { setErr(""); setMsg(`${name} sign-in is coming soon — use email or Google for now.`); };
+  const comingSoon = name => { setErr(""); setMsg(`${name} sign-in is coming soon. Use email or Google for now.`); };
 
   const linkBtn = {
     background:"none", border:"none", padding:0, color:C.greenDark, fontWeight:600,
@@ -2079,6 +2089,65 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
     (async () => {
       try {
         const q    = encodeURIComponent(`${p.address}, ${p.city}, ${p.state} ${p.zip||""}`.trim());
+
+        // Multifamily: one whole-building rent number is meaningless. Pull the
+        // market rent PER UNIT SIZE (apartment AVM per bedroom count in the rent
+        // roll) plus nearby apartment listings. First size is the counted
+        // lookup; the rest ride along free, same policy as the property pull.
+        const isMF = p.assetClass === "multifamily" && Array.isArray(p.units) && p.units.length > 0;
+        if (isMF) {
+          const parseBeds = lbl => {
+            const s = String(lbl || "");
+            if (/studio|effic/i.test(s)) return 0;
+            const mm = /(\d+)\s*(?:br|bed)/i.exec(s) || /^\s*(\d+)\b/.exec(s);
+            return mm ? Math.min(5, parseInt(mm[1], 10)) : null;
+          };
+          const bySize = new Map();
+          p.units.forEach(un => {
+            const b = parseBeds(un.label);
+            if (b == null) return;
+            const cur = bySize.get(b) || {count: 0, rentSum: 0};
+            bySize.set(b, {count: cur.count + (+un.count || 0),
+              rentSum: cur.rentSum + (+un.count || 0) * (+un.rent || 0)});
+          });
+          let entries = [...bySize.entries()].sort((a, b) => a[0] - b[0]);
+          if (!entries.length) entries = [[2, {count: 0, rentSum: 0}]];
+          const sizes = [];
+          for (let i = 0; i < entries.length; i++) {
+            const [beds2, agg] = entries[i];
+            try {
+              const avm2 = await apiLookup(
+                lookupKey("rc-rentavm-apt", p.address, p.city, p.state, p.zip, beds2),
+                () => rcGet(`/avm/rent/long-term?address=${q}&bedrooms=${beds2}&propertyType=Apartment`, rcAuth),
+                i === 0 ? undefined : {count: false});
+              if (avm2 && avm2.rent) sizes.push({
+                beds: beds2,
+                label: beds2 === 0 ? "Studio" : `${beds2} Bedroom`,
+                market: avm2.rent,
+                low:  avm2.rentRangeLow  || Math.round(avm2.rent * 0.9),
+                high: avm2.rentRangeHigh || Math.round(avm2.rent * 1.1),
+                mine: agg.count ? Math.round(agg.rentSum / agg.count) : 0,
+              });
+            } catch (e2) { if (e2 && e2.code === "CAP") throw e2; }
+          }
+          let comps2 = [];
+          try {
+            const listings2 = await apiLookup(
+              lookupKey("rc-rentcomps-apt", p.address, p.city, p.state, p.zip),
+              () => rcGet(`/listings/rental/long-term?address=${q}&propertyType=Apartment&radius=1&limit=15&status=Active`, rcAuth),
+              {count: false});
+            comps2 = (Array.isArray(listings2) ? listings2 : []).map(l => ({...l,
+              _mi: (p.lat != null && p.lng != null && l.latitude != null && l.longitude != null)
+                ? milesBetween(p.lat, p.lng, l.latitude, l.longitude) : null}))
+              .sort((a, b) => (a._mi ?? 99) - (b._mi ?? 99));
+          } catch { /* comps are a bonus */ }
+          if (!alive) return;
+          setSt({loading: false,
+            err: sizes.length ? null : "No apartment rent data came back for this area.",
+            rent: 0, low: 0, high: 0, comps: comps2, sizes});
+          return;
+        }
+
         const beds = p.beds || 3;
         const avm  = await apiLookup(lookupKey("rc-rentavm", p.address, p.city, p.state, p.zip, beds),
           () => rcGet(`/avm/rent/long-term?address=${q}&bedrooms=${beds}`, rcAuth));
@@ -2153,6 +2222,49 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
           </div>
         ) : (
           <>
+            {Array.isArray(st.sizes) && st.sizes.length > 0 ? (
+              <div style={{
+                background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
+                border:"1px solid "+C.greenBorder, borderRadius:C.r4,
+                padding:"16px", boxShadow:C.sh2,
+              }}>
+                <div style={{textAlign:"center", marginBottom:12}}>
+                  <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
+                    letterSpacing:".07em", textTransform:"uppercase"}}>Market Rent by Unit Size</div>
+                  <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:3}}>
+                    Apartment rents for this area, next to your rent roll
+                  </div>
+                </div>
+                <div style={{background:"#fff", border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden"}}>
+                  {st.sizes.map((s2, i) => (
+                    <div key={s2.beds} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                      gap:10, padding:"12px 14px", borderTop: i === 0 ? "none" : "1px solid "+C.border}}>
+                      <div>
+                        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F}}>{s2.label}</div>
+                        {s2.mine > 0 && (
+                          <div style={{display:"inline-flex", alignItems:"center", gap:5, marginTop:4,
+                            padding:"2px 9px", borderRadius:9999, fontSize:10.5, fontWeight:700, fontFamily:F,
+                            background: s2.market >= s2.mine ? C.greenSubtle : C.amberSubtle,
+                            border:"1px solid "+(s2.market >= s2.mine ? C.greenBorder : C.amberBorder),
+                            color: s2.market >= s2.mine ? C.greenDark : C.amberDark}}>
+                            Yours {$(s2.mine)}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:16, fontWeight:800, color:C.text, fontFamily:F,
+                          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.01em"}}>
+                          {$(s2.market)}<span style={{fontSize:11, color:C.textSub, fontWeight:500}}>/mo</span>
+                        </div>
+                        <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums", marginTop:1}}>
+                          {$(s2.low)} to {$(s2.high)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
             <div style={{
               background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
               border:"1px solid "+C.greenBorder, borderRadius:C.r4,
@@ -2176,6 +2288,7 @@ function RentCompsSheet({p, apiLookup, rcAuth, tier, onUseRent, onClose, onUpgra
                 </button>
               )}
             </div>
+            )}
 
             {st.comps.length > 0 && (() => {
               const visible = isPro ? st.comps : st.comps.slice(0, 5);
@@ -2381,7 +2494,7 @@ function DealSummaryBlock({p, m, exit}) {
       ["Net Cash Flow / mo", $mo(m.chosenCF), cfC(m.chosenCF)],
       ["NOI / yr",           $(m.noi*12),     C.text],
       [m.owned ? "Return on New Cash" : "Cash-on-Cash",
-        m.chosenOOP > 0 ? pct(m.chosenCoC) : "∞ — no cash in", cfC(m.chosenCF)],
+        m.chosenOOP > 0 ? pct(m.chosenCoC) : "∞ no cash in", cfC(m.chosenCF)],
       ["Cap Rate",           pct(m.chosenCap), C.text],
       ...(fin ? [
         ["hr"],
@@ -2537,7 +2650,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               fontSize:13.5, fontWeight:600, color:C.greenDark, fontFamily:F,
               animation:"dhNudge .4s ease",
             }}>
-              <I.pin size={15} stroke={2.2}/> Enter the property address above first — the analysis starts there.
+              <I.pin size={15} stroke={2.2}/> Enter the property address above first. The analysis starts there.
             </div>
           )}
           <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12, maxWidth:520, margin:"0 auto"}}>
@@ -2673,7 +2786,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               <InputField label="Purchase Costs" val={p.purchaseCostsPct ?? 3}
                 set={v=>set({...p, purchaseCostsPct:v, closingItems:null, closingCosts:null})} suf="%"
                 note={Array.isArray(p.closingItems) && p.closingItems.length
-                  ? `Itemized (${p.closingItems.length} items) — typing here clears the breakdown`
+                  ? `Itemized (${p.closingItems.length} items). Typing here clears the breakdown`
                   : `= ${$(m.cc)} (closing, lender, title…)`}
                 mobile={mobile} />
               <button onClick={()=>setItemize("closing")} {...btnStyle("secondary","sm", {marginBottom:12})}>
@@ -2683,7 +2796,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           )}
           <InputField label="Rehab Costs" val={p.repairCosts}
             set={v=>set({...p, repairCosts:v, repairItems:null})} pre="$"
-            note={Array.isArray(p.repairItems) && p.repairItems.length ? `Itemized (${p.repairItems.length} items) — typing here clears the breakdown` : undefined}
+            note={Array.isArray(p.repairItems) && p.repairItems.length ? `Itemized (${p.repairItems.length} items). Typing here clears the breakdown` : undefined}
             mobile={mobile} />
           <button onClick={()=>setItemize("repair")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.repairItems) && p.repairItems.length ? "Edit Itemized Rehab" : "Itemize"}
@@ -2775,7 +2888,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
                       <InputField label="Loan Term (Years)" val={ln.termYears} set={v=>setLn({termYears:v})} mobile={mobile} />
                     </div>
                     <InputField label="Points / Lender Fees" val={ln.pointsPct} set={v=>setLn({pointsPct:v})} suf="%"
-                      note={(ln.pointsPct||0) > 0 ? `= ${$(Math.round(amt * (ln.pointsPct||0)/100))} paid at closing` : "Optional — added to cash needed"}
+                      note={(ln.pointsPct||0) > 0 ? `= ${$(Math.round(amt * (ln.pointsPct||0)/100))} paid at closing` : "Optional. Added to cash needed"}
                       mobile={mobile} />
                     <DataRow label={"Loan " + (i+1) + " Payment / mo"} value={$mo(loanPayment(amt, ln))} />
                     {i === 0 && m.rolledIn > 0 && (
@@ -2844,7 +2957,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
           </div>
           <InputField label="Other Income / mo" val={p.otherIncome}
             set={v=>set({...p, otherIncome:v, incomeItems:null})} pre="$"
-            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items) — typing here clears the breakdown` : "Parking, laundry, storage…"}
+            note={Array.isArray(p.incomeItems) && p.incomeItems.length ? `Itemized (${p.incomeItems.length} items). Typing here clears the breakdown` : "Parking, laundry, storage…"}
             mobile={mobile} />
           <button onClick={()=>setItemize("income")} {...btnStyle("secondary","sm", {marginBottom:12})}>
             <I.edit size={12}/> {Array.isArray(p.incomeItems) && p.incomeItems.length ? "Edit Itemized Income" : "Itemize"}
@@ -2883,7 +2996,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               </div>
               {(p.expMgmtPct == null && (p.expManagement||0) > 0) ? (
                 <InputField label="Management / mo" val={p.expManagement} set={v=>u("expManagement",v)} pre="$"
-                  note="Flat amount from an earlier save — managers usually charge % of rent" mobile={mobile} />
+                  note="Flat amount from an earlier save. Managers usually charge % of rent" mobile={mobile} />
               ) : (
                 <InputField label="Property Management" val={p.expMgmtPct ?? 0}
                   set={v=>set({...p, expMgmtPct:v, expManagement:0})} suf="%"
@@ -3042,7 +3155,7 @@ function Calculator({p, set, renoRates={light:7,medium:13,full:45}, mobile, stic
               </div>
             )}
             <InputField label="Sale Price (ARV)" val={p.flipSalePrice||0} set={v=>u("flipSalePrice",v)} pre="$"
-              note="From your ARV above — adjust if you'd list differently" mobile={mobile} />
+              note="From your ARV above. Adjust if you'd list differently" mobile={mobile} />
             <InputField label="Agent Fee" val={p.agentFeePct ?? 6} set={v=>u("agentFeePct",v)} suf="%" mobile={mobile} />
             <div style={{fontSize:12, color:C.textSub, fontFamily:F, lineHeight:1.5, padding:"2px 0"}}>
               Sale proceeds, profit, and returns are in the Summary below.
@@ -3163,7 +3276,7 @@ function Dashboard({properties, onSelect, onAdd, mobile}) {
       <PageHeader
         title="Portfolio"
         subtitle={properties.length===0
-          ? "Welcome — let's add your first property."
+          ? "Welcome, let's add your first property."
           : `${properties.length} ${properties.length===1?"property":"properties"} in your portfolio`}
         action={<button onClick={onAdd} {...btnStyle("primary","md")}><I.plus size={14}/> Add property</button>}
       />
@@ -4046,7 +4159,7 @@ function FileUploader({files=[], onChange, mobile}) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (file.size > MAX_FILE_BYTES) { setErr(`"${file.name}" is over 4 MB — too large to attach.`); return; }
+    if (file.size > MAX_FILE_BYTES) { setErr(`"${file.name}" is over 4 MB, too large to attach.`); return; }
     setErr("");
     const reader = new FileReader();
     reader.onload = (ev) => onChange([...(files||[]), {name:file.name, dataUrl:ev.target.result}]);
@@ -4540,7 +4653,7 @@ function FollowupRow({pr, propLabel, propId, showProperty=false, onPropertyClick
           if (e.key === "Enter") submitInlineNote();
           if (e.key === "Escape") { setNoteText(""); setNoteOpen(false); }
         }}
-        placeholder={mobile ? "Quick note…" : "Quick note — Enter to save, Esc to cancel"}
+        placeholder={mobile ? "Quick note…" : "Quick note. Enter to save, Esc to cancel"}
         style={{...iS(mobile), flex:1, minWidth:0}} />
       {mobile ? (
         <button onClick={submitInlineNote} disabled={!noteText.trim()}
@@ -5272,7 +5385,7 @@ function ProjectsPage({properties, onUpdateProperty, mobile}) {
         <EmptyState
           icon={<I.clipboardCheck size={22}/>}
           title="Add a property first"
-          body="Once you have properties in your portfolio, this is where you'll capture every follow-up from contractor calls — what's due, what it costs, and whether it's done."
+          body="Once you have properties in your portfolio, this is where you'll capture every follow-up from contractor calls. What's due, what it costs, and whether it's done."
         />
       </div>
     );
@@ -5889,6 +6002,8 @@ const proFormaToFeedDeal = pf => ({
   // Multifamily / commercial underwriting persists with the saved deal.
   assetClass:           pf.assetClass || "residential",
   units:                Array.isArray(pf.units) ? pf.units : [],
+  cspaces:              Array.isArray(pf.cspaces) ? pf.cspaces : [],
+  mfExpRecovered:       pf.mfExpRecovered || 0,
   mfOtherIncome:        pf.mfOtherIncome || 0,
   mfVacancyPct:         pf.mfVacancyPct ?? 5,
   mfMarketCapPct:       pf.mfMarketCapPct ?? 8,
@@ -5990,6 +6105,8 @@ const dealToProForma = (deal) => {
     // saved income deal reopens straight into the multifamily calculator.
     assetClass:           deal.assetClass || "residential",
     units:                Array.isArray(deal.units) ? deal.units : [],
+    cspaces:              Array.isArray(deal.cspaces) ? deal.cspaces : [],
+    mfExpRecovered:       deal.mfExpRecovered || 0,
     mfOtherIncome:        deal.mfOtherIncome || 0,
     mfVacancyPct:         deal.mfVacancyPct ?? 5,
     mfMarketCapPct:       deal.mfMarketCapPct ?? 8,
@@ -7896,7 +8013,7 @@ const ownerInitials = (name) => {
   return (a + b).toUpperCase();
 };
 
-function OwnerHeroCard({name, occupied, absentee}) {
+function OwnerHeroCard({name, occupied, absentee, corporate = false}) {
   return (
     <div style={{position:"relative", background:`linear-gradient(158deg, #fff 0%, ${C.greenSubtle} 100%)`,
       border:"1px solid "+C.greenBorder, borderRadius:C.r5, padding:"22px 18px 20px",
@@ -7915,14 +8032,25 @@ function OwnerHeroCard({name, occupied, absentee}) {
         letterSpacing:"-0.025em", marginTop:6, lineHeight:1.2}}>
         {name || "Not disclosed in records"}
       </div>
-      {(absentee || occupied) && (
-        <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:12,
-          padding:"5px 13px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
-          background: absentee ? C.amberSubtle : C.greenSubtle,
-          border:"1px solid "+(absentee ? C.amberBorder : C.greenBorder),
-          color: absentee ? C.amberDark : C.greenDark}}>
-          <span style={{width:6, height:6, borderRadius:"50%", background: absentee ? C.amber : C.green}}/>
-          {absentee ? "Absentee Owner" : "Owner Occupied"}
+      {(absentee || occupied || corporate) && (
+        <div style={{display:"flex", justifyContent:"center", gap:7, flexWrap:"wrap", marginTop:12}}>
+          {corporate && (
+            <span style={{display:"inline-flex", alignItems:"center", gap:6,
+              padding:"5px 13px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+              background:C.blueSubtle, border:"1px solid "+C.blueBorder, color:C.blueDark}}>
+              <I.building size={12} stroke={2.4}/> Company or Trust
+            </span>
+          )}
+          {(absentee || occupied) && (
+            <span style={{display:"inline-flex", alignItems:"center", gap:6,
+              padding:"5px 13px", borderRadius:9999, fontSize:11.5, fontWeight:700, fontFamily:F,
+              background: absentee ? C.amberSubtle : C.greenSubtle,
+              border:"1px solid "+(absentee ? C.amberBorder : C.greenBorder),
+              color: absentee ? C.amberDark : C.greenDark}}>
+              <span style={{width:6, height:6, borderRadius:"50%", background: absentee ? C.amber : C.green}}/>
+              {absentee ? "Absentee Owner" : "Owner Occupied"}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -8304,20 +8432,50 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
   const st  = usePropertyRecord(deal, apiLookup, rcAuth, entitled);
   const rec = st.rec || {};
   const names = (rec.owner && Array.isArray(rec.owner.names) ? rec.owner.names : []).filter(Boolean);
+  // The RentCast county record often omits entity owners (LLCs, trusts) — but
+  // RealEstateAPI knows them. Whenever the record has no person name, pull the
+  // (cached) REAPI detail and use its owner, so this sheet never says "not
+  // disclosed" for a property whose owner we actually know.
+  const [ro, setRo] = useState(null);
+  useEffect(() => {
+    if (!entitled || st.loading || names.length) return;
+    let alive = true;
+    (async () => {
+      try {
+        if (!apiLookup || !rcAuth || !rcAuth.token) return;
+        const rp = await apiLookup(
+          lookupKey("reapi-detail", deal.address, deal.city, deal.state, deal.zip),
+          () => reapiFetch(deal.address, deal.city, deal.state, deal.zip, rcAuth.token),
+          {count: false, shortCacheIf: r => !reapiHasData(r)});
+        if (alive && reapiHasData(rp)) setRo(rp.property.owner || null);
+      } catch { /* the county-record view stands on its own */ }
+    })();
+    return () => { alive = false; };
+  }, [entitled, st.loading, names.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const roName    = ro ? (ro.name || ro.second || ro.company) : null;
+  const corporate = !!(ro && (ro.corporate || (!ro.name && ro.company)));
+  const heroName  = names.length ? names.join(" & ") : (roName || "");
   const mail  = rec.owner && rec.owner.mailingAddress;
   const mailStr = mail
     ? (mail.formattedAddress || [mail.addressLine1, mail.city,
         [mail.state, mail.zipCode].filter(Boolean).join(" ")].filter(Boolean).join(", "))
-    : null;
-  const occupied = rec.ownerOccupied === true;
-  const absentee = rec.ownerOccupied === false;
+    : (ro && ro.mailing
+        ? [ro.mailing, ro.mailingCity, [ro.mailingState, ro.mailingZip].filter(Boolean).join(" ")]
+            .filter(Boolean).join(", ")
+        : null);
+  const occRaw   = rec.ownerOccupied != null ? rec.ownerOccupied : (ro ? ro.ownerOccupied : null);
+  const occupied = occRaw === true;
+  const absentee = occRaw === false;
+  // A missing county record is no longer a dead end when REAPI knows the owner.
+  const ownerView = (!st.err || (st.code === "empty" && roName)) && !st.loading;
   return (
     <SheetShell title="Owner Lookup" hive sub={`${deal.address}${deal.city ? `, ${deal.city}` : ""}`}
       onClose={onClose} mobile={mobile}>
       {!entitled ? (
         <RevealBlock deal={deal} rcAuth={rcAuth} mode="free" onUpgrade={onUpgrade}/>
       ) : st.loading ? sheetSpinner("Pulling county records…")
-        : st.err ? (
+        : !ownerView ? (
           <SheetNotice
             icon={st.code === "empty" ? <I.search size={25} stroke={2}/> : <I.alert size={25} stroke={2}/>}
             title={st.code === "empty" ? "No county record yet"
@@ -8330,10 +8488,11 @@ function OwnerLookupSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, m
             closeLabel="Back to deal"/>
         ) : (
         <>
-          <OwnerHeroCard name={names.length ? names.join(" & ") : ""} occupied={occupied} absentee={absentee}/>
-          <OwnerInfoCard mailingStr={mailStr} county={rec.county}/>
+          <OwnerHeroCard name={heroName} occupied={occupied} absentee={absentee} corporate={corporate}/>
+          <OwnerInfoCard mailingStr={mailStr} county={rec.county || (ro && ro.county) || null}/>
           <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, lineHeight:1.6, marginTop:13}}>
             Sourced from county assessor records. Names can lag a recent sale by a few weeks.
+            {corporate ? " Company-owned properties are reached through the mailing address above." : ""}
             {absentee ? " Absentee owners are often the most open to offers." : ""}
           </div>
           <RevealBlock deal={deal} rcAuth={rcAuth} mode="pro"/>
@@ -8402,18 +8561,31 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
       try {
         if (!rcOk(rcAuth) || !apiLookup) throw new Error("unavailable");
         const q   = encodeURIComponent(`${deal.address}, ${deal.city}, ${deal.state} ${deal.zip||""}`.trim());
-        const key = lookupKey("rc-salescomps", deal.address, deal.city, deal.state, deal.zip);
-        const val = await apiLookup(key, () => rcGet(`/avm/value?address=${q}&compCount=15`, rcAuth));
+        // Income property: steer the value model and its comparables toward
+        // multifamily sales instead of single-family houses.
+        const isMF = deal.assetClass === "multifamily";
+        const key = lookupKey(isMF ? "rc-salescomps-mf" : "rc-salescomps", deal.address, deal.city, deal.state, deal.zip);
+        const val = await apiLookup(key, () => rcGet(
+          `/avm/value?address=${q}&compCount=15${isMF ? "&propertyType=Multi-Family" : ""}`, rcAuth));
         if (!alive) return;
         const med = (val && val.price) || 0;
+        let comps = ((val && Array.isArray(val.comparables)) ? [...val.comparables] : [])
+          .sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99));
+        let compNote = null;
+        if (isMF) {
+          // Keep the comp list honest: multifamily sales only. If the area has
+          // none in the model's set, say so rather than pass off houses as comps.
+          const mfComps = comps.filter(l => /multi|apartment|duplex|triplex|fourplex/i.test(l.propertyType || ""));
+          if (mfComps.length) comps = mfComps;
+          else compNote = "The value model found no true multifamily sales nearby, so the sales below are mixed property types. Weigh the income value above them.";
+        }
         setSt({
           loading:false,
           err: med ? null : "No value estimate found for this address.",
           med,
           lo: (val && val.priceRangeLow)  || (med ? Math.round(med*0.9) : 0),
           hi: (val && val.priceRangeHigh) || (med ? Math.round(med*1.1) : 0),
-          comps: ((val && Array.isArray(val.comparables)) ? [...val.comparables] : [])
-            .sort((a, b) => (a.distance ?? 99) - (b.distance ?? 99)),
+          comps, compNote,
         });
       } catch (e) {
         if (!alive) return;
@@ -8481,13 +8653,42 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
         : st.err ? sheetError(st.err)
         : (
         <>
+          {(() => {
+            // Income property: the number that matters most is NOI ÷ cap rate
+            // from the member's own underwriting, so it leads the sheet.
+            if (deal.assetClass !== "multifamily") return null;
+            const mv = calcMF({...deal,
+              purchasePrice: deal.purchasePrice || deal.price || 0,
+              repairCosts:   deal.repairCosts   || deal.repair || 0,
+              chosenStrategy: deal.chosenStrategy || (deal.financing === "cash" ? "cash" : "finance")});
+            if (!(mv.noi > 0 && mv.valueAtCap > 0)) return null;
+            return (
+              <div style={{
+                background:`linear-gradient(150deg, ${C.greenSubtle} 0%, #fff 80%)`,
+                border:"1px solid "+C.greenBorder, borderRadius:C.r4,
+                padding:"18px 16px", textAlign:"center", boxShadow:C.sh2, marginBottom:12,
+              }}>
+                <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
+                  letterSpacing:".07em", textTransform:"uppercase"}}>Income Value at {pct(mv.marketCapPct)} Cap</div>
+                <div style={{fontSize:34, fontWeight:800, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:4}}>
+                  {$(mv.valueAtCap)}
+                </div>
+                <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
+                  background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
+                  padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                  {$(mv.noi)} NOI at your rent roll
+                </div>
+              </div>
+            );
+          })()}
           <div style={{
             background:`linear-gradient(150deg, ${C.blueSubtle} 0%, #fff 80%)`,
             border:"1px solid "+C.blueBorder, borderRadius:C.r4,
             padding:"18px 16px", textAlign:"center", boxShadow:C.sh2,
           }}>
             <div style={{fontSize:14, fontWeight:800, color:C.blueDark, fontFamily:F,
-              letterSpacing:"-0.01em"}}>Estimated Value</div>
+              letterSpacing:"-0.01em"}}>{deal.assetClass === "multifamily" ? "County Value Model" : "Estimated Value"}</div>
             <div style={{fontSize:34, fontWeight:800, color:C.text, fontFamily:F,
               fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:4}}>
               {$(st.med)}
@@ -8497,7 +8698,20 @@ function SalesCompsSheet({deal, isPro, apiLookup, rcAuth, onUpgrade, onClose, mo
               padding:"4px 12px", fontSize:12, color:C.textSub, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
               Range {$(st.lo)} – {$(st.hi)}
             </div>
+            {deal.assetClass === "multifamily" && (
+              <div style={{fontSize:11.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginTop:10}}>
+                Automated models lean on nearby sales and can misread income property. Trust the income value first.
+              </div>
+            )}
           </div>
+
+          {st.compNote && (
+            <div style={{fontSize:12, color:C.amberDark, background:C.amberSubtle,
+              border:"1px solid "+C.amberBorder, borderRadius:C.r2, padding:"10px 13px",
+              fontFamily:F, lineHeight:1.55, marginTop:12}}>
+              {st.compNote}
+            </div>
+          )}
 
           {st.comps.length > 0 && (
             <>
@@ -8970,7 +9184,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   const pickFiles = () => {
     setUpNote("");
     if (!isPro && uploads.length >= 5) {
-      setUpNote("Free plan holds 5 of your own photos per deal — Pro is unlimited.");
+      setUpNote("Free plan holds 5 of your own photos per deal. Pro is unlimited.");
       return;
     }
     if (fileRef.current) fileRef.current.click();
@@ -8993,7 +9207,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
       const urls = await onUploadPhotos(deal, take);
       if (onPatchDeal) onPatchDeal(deal.id, {userPhotos: [...uploads, ...urls]});
     } catch (err) {
-      setUpNote((err && err.message) || "Upload failed — try again.");
+      setUpNote((err && err.message) || "Upload failed. Try again.");
     }
     setUpBusy(false);
   };
@@ -9003,7 +9217,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
   };
 
   const share = async () => {
-    const text = `${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")} — ${$(deal.price)} · ${heroNumber.label}: ${heroNumber.value} · analyzed on DealHive (dealhive.io)`;
+    const text = `${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}: ${$(deal.price)} · ${heroNumber.label}: ${heroNumber.value} · analyzed on DealHive (dealhive.io)`;
     try {
       if (navigator.share) { await navigator.share({title: deal.address, text}); }
       else { await navigator.clipboard.writeText(text); setShared(true); setTimeout(()=>setShared(false), 2200); }
@@ -9246,8 +9460,8 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
               marginTop:9, lineHeight:1.5}}>
               {upNote || (uploads.length > 1
                 ? (isPro
-                  ? "Drag photos to reorder — the first one is the cover."
-                  : `Drag to reorder — the first is the cover. ${Math.max(5 - uploads.length, 0)} of 5 free slots left.`)
+                  ? "Drag photos to reorder. The first one is the cover."
+                  : `Drag to reorder. The first is the cover. ${Math.max(5 - uploads.length, 0)} of 5 free slots left.`)
                 : (isPro ? "" : `${Math.max(5 - uploads.length, 0)} of 5 free slots left.`))}
             </div>
             {!isPro && uploads.length >= 5 && onUpgrade && (
@@ -9369,7 +9583,7 @@ function SavedDealsDashboard({savedDeals = [], tier, onUpgrade, onAnalyze, onRem
         <EmptyState
           icon={<I.search size={22}/>}
           title="No saved deals yet"
-          body="Analyze any address and save it — your deals will live here, organized by strategy."
+          body="Analyze any address and save it. Your deals will live here, organized by strategy."
           action={
             <button onClick={onAnalyzeNew} {...btnStyle("primary","md")}>
               <I.search size={13}/> Analyze a Deal
@@ -9609,6 +9823,81 @@ function FinderSkeleton() {
   );
 }
 
+// One LoopNet commercial listing — price, type, size, and a straight path into
+// the multifamily underwriter. Lease listings underwrite too (price starts
+// blank); the LoopNet link keeps the full listing one tap away.
+function CommercialCard({l, mobile, onUnderwrite}) {
+  const chips = [
+    l.propertyType || "Commercial",
+    l.buildingClass ? `Class ${l.buildingClass}` : null,
+    l.searchType ? (/sale/i.test(l.searchType) ? "For Sale" : "For Lease") : null,
+  ].filter(Boolean);
+  const broker = (Array.isArray(l.brokers) && l.brokers[0]) || null;
+  return (
+    <Card padding={0} style={{display:"flex", flexDirection:"column", overflow:"hidden"}}>
+      <div style={{height:150, background:C.bgSubtle, position:"relative"}}>
+        {l.photo ? (
+          <SafeImg src={l.photo} fallback={imgPlaceholder(30)}
+            style={{width:"100%", height:"100%", objectFit:"cover", display:"block"}}/>
+        ) : (
+          <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+            color:C.textMuted}}><I.building size={34}/></div>
+        )}
+        {l.searchType && (
+          <span style={{position:"absolute", top:10, left:10, background:"rgba(9,9,11,.72)",
+            color:"#fff", padding:"3px 10px", borderRadius:9999, fontSize:10.5, fontWeight:800,
+            fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>
+            {/sale/i.test(l.searchType) ? "For Sale" : "For Lease"}
+          </span>
+        )}
+      </div>
+      <div style={{padding:"13px 14px 14px", display:"flex", flexDirection:"column", flex:1}}>
+        <div style={{fontSize:17, fontWeight:800, color:C.text, fontFamily:F,
+          letterSpacing:"-0.02em", fontVariantNumeric:"tabular-nums"}}>
+          {l.priceNum > 0 ? $(l.priceNum) : l.priceText}
+        </div>
+        <div style={{display:"flex", flexWrap:"wrap", gap:6, marginTop:7}}>
+          {chips.slice(0, 2).map(chip => (
+            <span key={chip} style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
+              background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+              padding:"3px 9px"}}>{chip}</span>
+          ))}
+          {l.sizeLabel && (
+            <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
+              background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+              padding:"3px 9px"}}>{l.sizeLabel}</span>
+          )}
+        </div>
+        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, marginTop:10,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{l.address}</div>
+        <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
+          {[l.city, l.state].filter(Boolean).join(", ")}{l.zip ? ` ${l.zip}` : ""}
+          {l.buildingInfo ? ` · ${l.buildingInfo}` : ""}
+        </div>
+        {broker && (broker.name || broker.company) && (
+          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            Listed by {[broker.name, broker.company].filter(Boolean).join(", ")}
+          </div>
+        )}
+        <div style={{display:"flex", gap:8, marginTop:12}}>
+          <button onClick={()=>onUnderwrite(l)}
+            {...btnStyle("primary","md", {flex:1, justifyContent:"center"})}>
+            <I.chart size={14}/> Underwrite
+          </button>
+          {l.url && (
+            <a href={l.url} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}>
+              <span {...btnStyle("secondary","md", {justifyContent:"center"})}>
+                <I.externalLink size={13}/> LoopNet
+              </span>
+            </a>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobile, apiLookup, rcAuth, isAdmin = false}) {
   const isWide = useIsWide();
   const isPro  = tier === "pro";
@@ -9624,6 +9913,13 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [maxPrice, setMaxPrice]   = useState(0);
   const [visN, setVisN]           = useState(36);
   const [selectedId, setSelectedId] = useState(null);
+  // What we're searching: houses (Zillow) or income property (LoopNet).
+  // `market` drives the next search; `resMarket` remembers which market the
+  // current results belong to so the two renderers never mix.
+  const [market, setMarket]       = useState("homes");   // homes | multifamily | commercial
+  const [subtype, setSubtype]     = useState("all");     // commercial only: all | office | industrial | retail
+  const [cmode, setCmode]         = useState("sale");    // commercial: sale | lease
+  const [resMarket, setResMarket] = useState("homes");
   const inputRef = useRef(null);
   const acRef = useRef(null);         // Google Places Autocomplete instance
   const runSearchRef = useRef(null);  // always points at the latest runSearch
@@ -9647,23 +9943,27 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     return () => { alive = false; };
   }, [token]);
 
-  const runSearch = async (q) => {
+  const runSearch = async (q, mk, md) => {
     const term = String(q ?? query).trim();
+    const mkt  = mk || market;
+    const mode = md || cmode;
     if (term.length < 2 || loading) return;
     setLoading(true); setError(null); setSubmitted(term); setVisN(36);
     setStrategy("all"); setMaxPrice(0);
     if (inputRef.current) inputRef.current.blur();
     try {
-      const r = await fetch(`${FN_BASE}/searchListings`, {
+      const commercial = mkt !== "homes";
+      const r = await fetch(`${FN_BASE}/${commercial ? "searchCommercial" : "searchListings"}`, {
         method:"POST",
         headers:{"Content-Type":"application/json", Authorization:`Bearer ${token}`},
-        body: JSON.stringify({query: term, page: 1}),
+        body: JSON.stringify(commercial ? {query: term, page: 1, mode} : {query: term, page: 1}),
       });
       const j = await r.json().catch(()=>({}));
       if (j.meter) { setMeter(j.meter); saveSearchMeter(j.meter); }
       if (r.ok) {
         setResults(Array.isArray(j.items) ? j.items : []);
         setCount(j.count || (j.items||[]).length);
+        setResMarket(mkt);
       } else if (j.error === "limit") {
         setResults(null);
         setError({kind:"limit",
@@ -9691,6 +9991,28 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     setLoading(false);
   };
   runSearchRef.current = runSearch;
+
+  // Switching market or sale/lease re-runs the current search in that lane.
+  const switchMarket = mk => {
+    if (mk === market) return;
+    setMarket(mk);
+    if (submitted) runSearch(submitted, mk);
+  };
+  const switchCmode = md => {
+    if (md === cmode) return;
+    setCmode(md);
+    if (submitted && market !== "homes") runSearch(submitted, market, md);
+  };
+  // A LoopNet listing walks into the analyzer as an income deal: address and
+  // photo carried over, price prefilled when the listing names one.
+  const underwriteCommercial = l => onAnalyzeDeal({
+    id: "ln" + l.id, address: l.address, streetAddress: l.address,
+    city: l.city, state: l.state, zip: l.zip, lat: l.lat, lng: l.lng,
+    type: l.propertyType || "Commercial", price: l.priceNum || 0,
+    photos: l.photo ? [l.photo] : [], photo: l.photo || null,
+    description: l.description || null, source: "LoopNet",
+    assetClass: "multifamily",
+  });
 
   // Google Places autocomplete on the search bar — city / ZIP / address, just
   // like Zillow. Re-attaches when the input remounts (hero ↔ results layouts).
@@ -9728,9 +10050,21 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   // Underwrite + filter client-side. Unlike the curated feed we never hide a
   // listing for failing the gates — the Finder shows the whole market and lets
   // the (honest, sometimes red) numbers speak. Passing deals just sort first.
-  const classified = (results || [])
+  const classified = (resMarket === "homes" ? (results || []) : [])
     .filter(isResidential)
     .map(d => ({d, c: classifyDeal(d)}));
+  // Commercial results, filtered by the active type chip.
+  const C_TYPES = {
+    office:     /office|medical|loft|creative|coworking/i,
+    industrial: /warehouse|manufactur|industrial|distribution|flex|storage/i,
+    retail:     /storefront|retail|restaurant|center|store|bank|freestanding/i,
+  };
+  const commercialAll = resMarket === "homes" ? [] : (results || []);
+  const commercialShown = commercialAll.filter(l => {
+    if (resMarket === "multifamily") return /apartment/i.test(l.propertyType || "");
+    if (subtype === "all") return true;
+    return (C_TYPES[subtype] || /./).test(l.propertyType || "");
+  });
   const counts = {
     all:     classified.length,
     buyhold: classified.filter(({c})=>c.tags.includes("buyhold")).length,
@@ -9792,6 +10126,30 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     </form>
   );
 
+  // What to search: houses, apartment buildings, or the rest of commercial.
+  const marketChips = (
+    <div className="dh-chip-row" style={{display:"flex", gap:8, overflowX:"auto", padding:2,
+      justifyContent: heroMode ? "center" : "flex-start",
+      flexWrap: heroMode ? "wrap" : "nowrap", marginBottom: heroMode ? 18 : 12}}>
+      {[["homes","Homes",I.home],["multifamily","Multifamily",I.building],["commercial","Commercial",I.tag]].map(([id,label,Ic]) => {
+        const active = market === id;
+        return (
+          <button key={id} onClick={()=>switchMarket(id)}
+            style={{display:"inline-flex", alignItems:"center", gap:7, flexShrink:0,
+              padding:"8px 15px", borderRadius:9999, cursor:"pointer", fontFamily:F,
+              fontSize:13, fontWeight:700, letterSpacing:"-0.005em",
+              background: active ? `linear-gradient(135deg, ${C.green}, ${C.greenDark})` : C.card,
+              color: active ? "#fff" : C.textSub,
+              border:"1px solid "+(active ? C.greenDark : C.border),
+              boxShadow: active ? "0 8px 18px -8px rgba(232,115,28,.55)" : C.sh1,
+              transition:"background .15s, color .15s"}}>
+            <Ic size={14} stroke={2.2}/> {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div style={{padding: mobile ? "16px 16px 100px" : "28px 32px 44px"}}>
       {heroMode ? (
@@ -9819,9 +10177,10 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
               Find your next deal
             </h1>
             <div style={{fontSize: mobile ? 15 : 17.5, color:C.textSub, fontFamily:F, lineHeight:1.5,
-              margin:"13px auto 28px", maxWidth:470}}>
+              margin:"13px auto 24px", maxWidth:470}}>
               Search any market and every live listing comes back already underwritten, strongest cash flow first.
             </div>
+            {marketChips}
             {searchBar}
             <div style={{display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginTop:22}}>
               {[["Rental", STRATEGY_LABELS.buyhold.dot], ["BRRRR", STRATEGY_LABELS.brrrr.dot],
@@ -9845,7 +10204,10 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
               <SearchMeterPill meter={meter}/>
             </div>
           )}
-          <div style={{marginBottom:18, maxWidth:760}}>{searchBar}</div>
+          <div style={{marginBottom:18, maxWidth:760}}>
+            {marketChips}
+            {searchBar}
+          </div>
         </>
       )}
 
@@ -9859,13 +10221,74 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         <FinderNotice error={error} isPro={isPro} isAdmin={isAdmin} onUpgrade={onUpgrade}
           onRetry={error.kind === "limit" ? null : () => runSearch(submitted)}/>
       ) : results === null ? null
+      : resMarket !== "homes" ? (
+        <>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+            gap:12, flexWrap:"wrap", marginBottom:14}}>
+            <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+              {commercialShown.length.toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{commercialShown.length===1?"":"s"} in {prettyLoc(submitted)}
+            </div>
+            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
+              {resMarket === "commercial" && (
+                <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
+                  {[["all","All types"],["office","Office"],["industrial","Industrial"],["retail","Retail"]].map(([id,label]) => {
+                    const active = subtype === id;
+                    return (
+                      <button key={id} onClick={()=>setSubtype(id)}
+                        style={{flexShrink:0, padding:"6px 12px", borderRadius:9999, cursor:"pointer",
+                          fontFamily:F, fontSize:12, fontWeight:700,
+                          background: active ? C.green : C.card, color: active ? "#fff" : C.textSub,
+                          border:"1px solid "+(active ? C.green : C.border)}}>{label}</button>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
+                border:"1px solid "+C.border}}>
+                {[["sale","For Sale"],["lease","For Lease"]].map(([id,label]) => {
+                  const active = cmode === id;
+                  return (
+                    <button key={id} onClick={()=>switchCmode(id)}
+                      style={{padding:"6px 13px", borderRadius:9999, border:"none", cursor:"pointer",
+                        background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                        fontSize:12, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {commercialShown.length === 0 ? (
+            <EmptyState
+              icon={<I.building size={20}/>}
+              title={`No ${resMarket === "multifamily" ? "multifamily" : subtype === "all" ? "commercial" : subtype} listings for “${prettyLoc(submitted)}” right now`}
+              body="Try the other listing mode, another type, or a nearby market. Commercial inventory moves in waves."
+            />
+          ) : (
+            <>
+              <div style={{display:"grid",
+                gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
+                {commercialShown.slice(0, visN).map(l => (
+                  <CommercialCard key={l.id || l.url} l={l} mobile={mobile} onUnderwrite={underwriteCommercial}/>
+                ))}
+              </div>
+              {commercialShown.length > visN && (
+                <div style={{display:"flex", justifyContent:"center", marginTop:20}}>
+                  <button onClick={()=>setVisN(n => n + 36)} {...btnStyle("secondary","lg")}>
+                    Show more listings
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )
       : filtered.length === 0 ? (
         <EmptyState
           icon={<I.search size={20}/>}
           title={classified.length === 0 ? `No live listings for “${prettyLoc(submitted)}” right now`
             : "No listings match this filter"}
           body={classified.length === 0
-            ? "Try another city or ZIP — inventory shifts constantly, so it's worth another look soon."
+            ? "Try another city or ZIP. Inventory shifts constantly, so it's worth another look soon."
             : "Widen your price or switch strategy tabs to see the rest of this market."}
         />
       ) : (
@@ -10235,7 +10658,7 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
         <EmptyState
           icon={<I.search size={20}/>}
           title="No deals match your filters"
-          body="Try widening your price range or switching markets — fresh deals come in throughout the week."
+          body="Try widening your price range or switching markets. Fresh deals come in throughout the week."
         />
       ) : (
         <>
@@ -10322,6 +10745,11 @@ function MultifamilyCalculator({p, set, mobile}) {
   const addUnit = () => setUnits([...units, {id: "u" + Date.now() + "-" + units.length, label: "", count: 1, rent: 0}]);
   const patchUnit = (id, patch) => setUnits(units.map(x => x.id === id ? {...x, ...patch} : x));
   const removeUnit = id => setUnits(units.filter(x => x.id !== id));
+  const cspaces = Array.isArray(p.cspaces) ? p.cspaces : [];
+  const setCs = next => set({...p, cspaces: next});
+  const addCs = () => setCs([...cspaces, {id: "c" + Date.now() + "-" + cspaces.length, label: "", sqft: 0, rate: 0, lease: "gross"}]);
+  const patchCs = (id, patch) => setCs(cspaces.map(x => x.id === id ? {...x, ...patch} : x));
+  const removeCs = id => setCs(cspaces.filter(x => x.id !== id));
   const isCash = (p.chosenStrategy || "finance") === "cash";
   useEffect(() => { if (!units.length) addUnit(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -10362,7 +10790,44 @@ function MultifamilyCalculator({p, set, mobile}) {
         })}
       </div>
 
-      {/* Rent Roll */}
+      {/* Purchase & financing — first: what you pay and how */}
+      <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: mobile ? 0 : 12}}>
+          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
+          <InputField label="Rehab / CapEx" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile}/>
+          <InputField label="Closing Costs" val={p.closingCosts != null ? p.closingCosts : m.closing} set={v=>u("closingCosts",v)} pre="$" mobile={mobile}/>
+        </div>
+        {!isCash && (
+          <>
+            <InputField label="Down Payment" val={p.mfDownPct} set={v=>u("mfDownPct",v)} suf="%"
+              note={`${$(m.downAmt)} down, ${$(m.loanAmt)} loan`} mobile={mobile}/>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+              <InputField label="Interest Rate" val={p.mfRate} set={v=>u("mfRate",v)} suf="%" mobile={mobile}/>
+              <InputField label="Amortization" val={p.mfAmortYears} set={v=>u("mfAmortYears",v)} suf="yrs" mobile={mobile}/>
+            </div>
+          </>
+        )}
+        {isCash && (
+          <div style={{display:"flex", alignItems:"center", gap:12, background:C.greenSubtle,
+            border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"13px 15px"}}>
+            <span style={{width:36, height:36, borderRadius:10, flexShrink:0, display:"flex",
+              alignItems:"center", justifyContent:"center", color:"#fff",
+              background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`}}>
+              <I.dollar size={17} stroke={2.2}/>
+            </span>
+            <div>
+              <div style={{fontSize:13.5, fontWeight:800, color:C.greenDark, fontFamily:F, letterSpacing:"-0.01em"}}>
+                Buying in all cash
+              </div>
+              <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.5, marginTop:1}}>
+                No loan payments. Every dollar of net operating income is yours.
+              </div>
+            </div>
+          </div>
+        )}
+      </SectionBlock>
+
+      {/* Rent Roll — the building's income, units then commercial space */}
       <SectionBlock title="Rent Roll" color={C.green} icon={I.building}
         right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
           fontVariantNumeric:"tabular-nums"}}>{m.totalUnits} unit{m.totalUnits===1?"":"s"} · {$mo(m.rentMo)}</span>}>
@@ -10393,72 +10858,128 @@ function MultifamilyCalculator({p, set, mobile}) {
             </button>
           </div>
         ))}
-        <button onClick={addUnit} style={{marginTop:2, display:"inline-flex", alignItems:"center", gap:6,
-          padding:"8px 13px", borderRadius:9999, background:C.greenSubtle, border:"1px solid "+C.greenBorder,
-          color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-          <I.plus size={13} stroke={2.4}/> Add unit type
-        </button>
-        <div style={{marginTop:16, display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr", gap:12}}>
-          <InputField label="Other income / mo" val={p.mfOtherIncome} set={v=>u("mfOtherIncome",v)} pre="$"
-            note="Laundry, parking, storage." mobile={mobile}/>
-          <InputField label="Vacancy" val={p.mfVacancyPct} set={v=>u("mfVacancyPct",v)} suf="%"
-            note="Share of gross rent lost to turnover." mobile={mobile}/>
+        <div style={{display:"flex", flexWrap:"wrap", gap:8, marginTop:2}}>
+          <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
+            padding:"8px 13px", borderRadius:9999, background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+            color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+            <I.plus size={13} stroke={2.4}/> Add unit type
+          </button>
+          <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
+            padding:"8px 13px", borderRadius:9999, background:"#fff", border:"1px dashed "+C.borderHover,
+            color:C.textSub, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+            <I.plus size={13} stroke={2.4}/> Add commercial space
+          </button>
         </div>
-        <div style={{marginTop:6, display:"flex", flexWrap:"wrap", gap:8}}>
-          {[["Gross Potential", $(m.gprYr)], ["− Vacancy", "-"+$(m.vacLoss)], ["Effective Gross Income", $(m.egi)]].map(([l,v],i)=>(
-            <span key={l} style={{fontSize:12, fontFamily:F, fontWeight:600, color: i===2?C.text:C.textSub,
-              background: i===2?C.greenSubtle:C.bgSubtle, border:"1px solid "+(i===2?C.greenBorder:C.border),
-              borderRadius:9999, padding:"4px 11px", fontVariantNumeric:"tabular-nums"}}>{l}: {v}/yr</span>
+
+        {cspaces.length > 0 && (
+          <div style={{marginTop:16}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8}}>
+              <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F,
+                letterSpacing:".04em", textTransform:"uppercase"}}>Commercial spaces</span>
+              <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+                fontVariantNumeric:"tabular-nums"}}>{$mo(m.cRentYr/12)}</span>
+            </div>
+            {cspaces.map(cs => (
+              <div key={cs.id} style={{border:"1px solid "+C.border, borderRadius:C.r3,
+                padding:"11px 12px", marginBottom:8, background:"linear-gradient(180deg,#fff,#fcfcfd)"}}>
+                <div style={{display:"flex", gap:8, alignItems:"center", marginBottom:8}}>
+                  <input value={cs.label} onChange={e=>patchCs(cs.id, {label:e.target.value})}
+                    placeholder="Storefront, office suite" style={{...cell, flex:1}}/>
+                  <button onClick={()=>removeCs(cs.id)} aria-label="Remove space"
+                    style={{width:30, height:30, borderRadius:8, border:"1px solid "+C.border, background:"#fff",
+                      color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0, flexShrink:0}}>
+                    <I.x size={13}/>
+                  </button>
+                </div>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:8, alignItems:"center"}}>
+                  <div style={{position:"relative"}}>
+                    <input type="number" inputMode="numeric" value={cs.sqft || ""} onChange={e=>patchCs(cs.id, {sqft:+e.target.value})}
+                      placeholder="Sqft" style={{...cell, paddingRight:38}}/>
+                    <span style={{position:"absolute", right:11, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:11, fontFamily:F, pointerEvents:"none"}}>sqft</span>
+                  </div>
+                  <div style={{position:"relative"}}>
+                    <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                    <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchCs(cs.id, {rate:+e.target.value})}
+                      placeholder="0" style={{...cell, paddingLeft:22, paddingRight:44}}/>
+                    <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:10.5, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
+                  </div>
+                  <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
+                    border:"1px solid "+C.border}}>
+                    {[["gross","Gross"],["nnn","NNN"]].map(([id,label]) => {
+                      const active = (cs.lease||"gross")===id;
+                      return (
+                        <button key={id} onClick={()=>patchCs(cs.id, {lease:id})}
+                          style={{padding:"5px 11px", borderRadius:9999, border:"none", cursor:"pointer",
+                            background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                            fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{marginTop:16, display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+          <InputField label="Other income / mo" val={p.mfOtherIncome} set={v=>u("mfOtherIncome",v)} pre="$" mobile={mobile}/>
+          <InputField label="Vacancy" val={p.mfVacancyPct} set={v=>u("mfVacancyPct",v)} suf="%" mobile={mobile}/>
+        </div>
+        <div style={{marginTop:4, border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1}}>
+          {[["Gross Potential Income", $(m.gprYr), false],
+            ["Vacancy Loss", "-" + $(m.vacLoss), false],
+            ["Effective Gross Income", $(m.egi), true]].map(([l, v, hero], i) => (
+            <div key={l} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"11px 14px", background: hero ? C.greenSubtle : "#fff",
+              borderTop: i === 0 ? "none" : "1px solid " + C.border}}>
+              <span style={{fontSize:12.5, fontWeight: hero ? 800 : 600,
+                color: hero ? C.greenDark : C.textSub, fontFamily:F}}>{l}</span>
+              <span style={{fontSize:13.5, fontWeight:800, color: hero ? C.greenDark : C.text,
+                fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{v}<span style={{fontWeight:600, fontSize:11.5, color: hero ? C.greenDark : C.textMuted}}>/yr</span></span>
+            </div>
           ))}
         </div>
       </SectionBlock>
 
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:14}}>
-        {/* Purchase & financing */}
-        <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}>
-          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
-          <InputField label="Rehab / CapEx" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$"
-            note="Upfront capital work at acquisition." mobile={mobile}/>
-          <InputField label="Closing Costs" val={p.closingCosts != null ? p.closingCosts : m.closing} set={v=>u("closingCosts",v)} pre="$" mobile={mobile}/>
-          {!isCash && (
-            <>
-              <InputField label="Down Payment" val={p.mfDownPct} set={v=>u("mfDownPct",v)} suf="%"
-                note={`≈ ${$(m.downAmt)} down · ${$(m.loanAmt)} loan`} mobile={mobile}/>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-                <InputField label="Interest Rate" val={p.mfRate} set={v=>u("mfRate",v)} suf="%" mobile={mobile}/>
-                <InputField label="Amortization" val={p.mfAmortYears} set={v=>u("mfAmortYears",v)} suf="yrs" mobile={mobile}/>
-              </div>
-            </>
-          )}
-          {isCash && (
-            <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, background:C.bgSubtle,
-              border:"1px solid "+C.border, borderRadius:C.r2, padding:"10px 12px", lineHeight:1.5}}>
-              All-cash purchase — full ${(m.price).toLocaleString()} in, no debt service.
-            </div>
-          )}
-        </SectionBlock>
-
-        {/* Operating expenses */}
-        <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
-          right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F}}>{pct(m.expRatio)} of EGI</span>}>
+      {/* Operating expenses */}
+      <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
+        right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F}}>{pct(m.expRatio)} of EGI</span>}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 12}}>
           <InputField label="Property Taxes / yr" val={p.mfExpTaxes} set={v=>u("mfExpTaxes",v)} pre="$"
             note="Auto-filled from tax records when available." mobile={mobile}/>
           <InputField label="Insurance / yr" val={p.mfExpInsurance} set={v=>u("mfExpInsurance",v)} pre="$" mobile={mobile}/>
-          <InputField label="Utilities / yr (owner-paid)" val={p.mfExpUtilities} set={v=>u("mfExpUtilities",v)} pre="$"
-            note="Common-area + any owner-paid utilities." mobile={mobile}/>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-            <InputField label="Management" val={p.mfExpMgmtPct} set={v=>u("mfExpMgmtPct",v)} suf="%" mobile={mobile}/>
-            <InputField label="Maintenance" val={p.mfExpMaintPct} set={v=>u("mfExpMaintPct",v)} suf="%" mobile={mobile}/>
-          </div>
-          <InputField label="Reserves / unit / yr" val={p.mfExpReservesPerUnit} set={v=>u("mfExpReservesPerUnit",v)} pre="$"
-            note={`≈ ${$(m.reserves)}/yr across ${m.totalUnits} unit${m.totalUnits===1?"":"s"}.`} mobile={mobile}/>
+        </div>
+        <InputField label="Utilities / yr" val={p.mfExpUtilities} set={v=>u("mfExpUtilities",v)} pre="$"
+          note="Common area plus any owner-paid utilities." mobile={mobile}/>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+          <InputField label="Management" val={p.mfExpMgmtPct} set={v=>u("mfExpMgmtPct",v)} suf="%" mobile={mobile}/>
+          <InputField label="Maintenance" val={p.mfExpMaintPct} set={v=>u("mfExpMaintPct",v)} suf="%" mobile={mobile}/>
+        </div>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+          <InputField label="Reserves / unit / yr" val={p.mfExpReservesPerUnit} set={v=>u("mfExpReservesPerUnit",v)} pre="$" mobile={mobile}/>
           <InputField label="Other / yr" val={p.mfExpOther} set={v=>u("mfExpOther",v)} pre="$" mobile={mobile}/>
-          <div style={{fontSize:12.5, color:C.text, fontFamily:F, fontWeight:700, marginTop:2,
-            display:"flex", justifyContent:"space-between", borderTop:"1px solid "+C.border, paddingTop:10}}>
-            <span>Total Operating Expenses</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(m.opex)}/yr</span>
+        </div>
+        {cspaces.some(cs => (cs.lease||"gross") === "nnn") && (
+          <InputField label="NNN Reimbursements / yr" val={p.mfExpRecovered} set={v=>u("mfExpRecovered",v)} pre="$"
+            note="What NNN tenants pay back toward taxes, insurance, and common areas." mobile={mobile}/>
+        )}
+        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", marginTop:2}}>
+          {m.recovered > 0 && (
+            <div style={{display:"flex", justifyContent:"space-between", padding:"10px 14px", background:"#fff"}}>
+              <span style={{fontSize:12.5, fontWeight:600, color:C.textSub, fontFamily:F}}>Recovered from NNN tenants</span>
+              <span style={{fontSize:13, fontWeight:700, color:"#059669", fontFamily:F, fontVariantNumeric:"tabular-nums"}}>-{$(m.recovered)}</span>
+            </div>
+          )}
+          <div style={{display:"flex", justifyContent:"space-between", padding:"11px 14px",
+            background:C.bgSubtle, borderTop: m.recovered > 0 ? "1px solid "+C.border : "none"}}>
+            <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F}}>Total Operating Expenses</span>
+            <span style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{$(m.opex)}<span style={{fontWeight:600, fontSize:11.5, color:C.textMuted}}>/yr</span></span>
           </div>
-        </SectionBlock>
-      </div>
+        </div>
+      </SectionBlock>
 
       {/* Valuation + results */}
       <SectionBlock title="Value & Returns" color={C.green} icon={I.chart}>
@@ -10486,7 +11007,7 @@ function MultifamilyCalculator({p, set, mobile}) {
             <Tile label="Cap Rate" value={pct(m.capOnPrice)} hero/>
             <Tile label="Cash Flow / mo" value={$mo(m.cfMo)} color={cfC(m.cfMo)}/>
             <Tile label="Cash-on-Cash" value={m.cashIn > 0 ? pct(m.coc) : "—"} color={cfC(m.coc)}/>
-            <Tile label="DSCR" value={dscrText} color={dscrColor} note={isCash ? "all cash" : m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want ≥1.25" : "healthy"}/>
+            <Tile label="DSCR" value={dscrText} color={dscrColor} note={isCash ? "all cash" : m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want 1.25+" : "healthy"}/>
             <Tile label="Debt Yield" value={m.loanAmt > 0 ? pct(m.debtYield) : "—"}/>
             <Tile label="Price / Unit" value={m.totalUnits > 0 ? $(m.pricePerUnit) : "—"}/>
             <Tile label="GRM" value={m.grm > 0 ? m.grm.toFixed(1) : "—"}/>
@@ -10664,7 +11185,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const saveDeal = () => {
     if (!d.address) { setErr("Enter an address first."); return; }
     if (!d.chosenStrategy) { setErr("Choose a purchase method (Cash or Finance) first."); return; }
-    if (!(d.purchasePrice > 0)) { setErr("Enter a purchase price before saving — the analysis is meaningless without it."); return; }
+    if (!(d.purchasePrice > 0)) { setErr("Enter a purchase price before saving. The analysis is meaningless without it."); return; }
     // Member accounts: file it on the home watchlist (opens the scenario +
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
@@ -11026,8 +11547,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".05em",
           textTransform:"uppercase", marginBottom:9}}>Underwriting model</div>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
-          {[["residential","Residential","Single-family & 1–4 unit · comps / ARV"],
-            ["multifamily","Multifamily","5+ units & commercial · cap rate / NOI"]].map(([id,label,sub]) => {
+          {[["residential","Residential","Single family to 4 units"],
+            ["multifamily","Multifamily","5+ units and commercial"]].map(([id,label,sub]) => {
             const active = (d.assetClass||"residential")===id;
             return (
               <button key={id} onClick={()=>u("assetClass",id)}
@@ -11878,7 +12399,7 @@ function AddPropertyModal({llcs, onAdd, onClose, renoRates, mobile, apiLookup, r
       const key = lookupKey("rc-detail", addr, city, state, zip);
       const data = await apiLookup(key, () => rentcastFetch(addr, city, state, zip, rcAuth),
         {shortCacheIf: d => !rcHasData(d)});
-      if (!rcHasData(data)) setErr("No public records found for that address yet — you can fill the details in manually.");
+      if (!rcHasData(data)) setErr("No public records found for that address yet. You can fill the details in manually.");
       else setP(prev => applyRentcast(prev, data, renoRates));
     } catch (e) { setErr(e && e.code === "CAP" ? (e.capMsg || LOOKUP_CAP_MSG) : "Auto-fill failed."); }
     setL(false);
@@ -12358,7 +12879,7 @@ function PlanSheet({busy, onChoose, onClose}) {
     return () => { unlockBodyScroll(); window.removeEventListener("keydown", h); };
   }, [onClose]);
   const opts = [
-    {id:"yearly",  tag:"Best value — save 33%", title:"$20/mo",    sub:"Billed $240 once a year", hot:true},
+    {id:"yearly",  tag:"Best value, save 33%", title:"$20/mo",    sub:"Billed $240 once a year", hot:true},
     {id:"monthly", tag:null,                    title:"$29.99/mo", sub:"Billed monthly",          hot:false},
   ];
   return (
@@ -12454,12 +12975,12 @@ function AdminUsagePanel({token}) {
       }).join("") + d.rows.filter(r => !matched.has(r.email)).map((r, i) =>
         rowHtml(r.email, r.tier, "—", "—", r, members.length + i)).join("");
       const html = `<!doctype html><html><head><meta charset="utf-8">
-        <title>DealHive — Members & Usage ${esc(d.month)}</title>
+        <title>DealHive Members & Usage ${esc(d.month)}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
         </head><body style="margin:0;background:#f7f6f3;font-family:Inter,system-ui,sans-serif;color:#18181b">
         <div style="background:#141d2b;color:#fff;padding:26px 28px">
-          <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">\u{1F41D} DealHive — Members & Usage</div>
+          <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em">\u{1F41D} DealHive Members & Usage</div>
           <div style="font-size:13px;color:#b8c0cc;margin-top:4px">${esc(d.month)} · about ${(d.costPerLookup * 100).toFixed(1)}\u00A2 per fresh lookup · cached re-opens are free</div>
         </div>
         <div style="max-width:860px;margin:24px auto;padding:0 20px">
@@ -12471,7 +12992,7 @@ function AdminUsagePanel({token}) {
                 <div style="font-size:22px;font-weight:800;margin-top:4px;font-variant-numeric:tabular-nums">${v}</div>
               </div>`).join("")}
           </div>
-          <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Members — newest first</div>
+          <div style="font-size:12px;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 8px">Members, newest first</div>
           <div style="background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:auto">
             <table style="width:100%;border-collapse:collapse;font-size:13.5px;min-width:680px">
               <thead><tr style="border-bottom:1px solid #e4e4e7">
@@ -12686,7 +13207,7 @@ export default function App() {
     if (!r.ok || !d.url) {
       // Include the server's `detail` (the real Stripe reason) when present, so a
       // billing failure is diagnosable from the toast instead of a generic line.
-      const base = d.error || "Billing is unavailable right now — try again in a minute.";
+      const base = d.error || "Billing is unavailable right now. Try again in a minute.";
       throw new Error(d.detail ? `${base} (${d.detail})` : base);
     }
     return d.url;
@@ -13302,7 +13823,7 @@ export default function App() {
         <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
           padding:"8px 16px", display:"flex", alignItems:"center", gap:8,
           fontSize:12.5, color:C.amberDark, fontFamily:F}}>
-          <I.alert size={14}/> Changes are saving to this device only right now — they'll sync automatically once your connection is back.
+          <I.alert size={14}/> Changes are saving to this device only right now. They'll sync automatically once your connection is back.
         </div>
       )}
       <ErrorBoundary>
@@ -13393,7 +13914,7 @@ export default function App() {
         <div style={{background:C.amberSubtle, borderBottom:"1px solid "+C.amberBorder,
           padding:"8px 16px", display:"flex", alignItems:"center", gap:8,
           fontSize:12.5, color:C.amberDark, fontFamily:F}}>
-          <I.alert size={14}/> Changes are saving to this device only right now — they'll sync automatically once your connection is back.
+          <I.alert size={14}/> Changes are saving to this device only right now. They'll sync automatically once your connection is back.
         </div>
       )}
         <div style={{maxWidth:1200, margin:"0 auto"}}>

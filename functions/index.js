@@ -1219,6 +1219,179 @@ exports.searchListings = onRequest({
   }
 });
 
+// == Commercial listing search (LoopNet via RapidAPI) ===========================
+// Same shape as searchListings: shared member meter (one search pool across
+// homes and commercial), the same global backstop, and a shared result cache.
+// LoopNet's bylocation search takes a city/state string and returns lease and
+// sale listings; the exact "for sale" parameter name is resolved once in
+// production and remembered in config/commercialSale.
+const LOOPNET_HOST = "loopnet-api3.p.rapidapi.com";
+function mapLoopnetListing(r) {
+  if (!r || typeof r !== "object") return null;
+  // A single absolute dollar figure is a real asking price; ranges, per-SF
+  // rates, and "Negotiable" parse to 0 so the client never invents a number.
+  const priceStr = String(r.price || "");
+  let priceNum = 0;
+  if (!/\/|\bto\b|-/.test(priceStr.replace(/[\d,]/g, (m) => m))) {
+    const m = /^\s*\$\s*([\d,]+)\s*$/.exec(priceStr);
+    if (m) priceNum = parseInt(m[1].replace(/,/g, ""), 10) || 0;
+  }
+  return {
+    id: String(r.id || r.propertyId || ""),
+    url: r.url || null,
+    address: r.address || "",
+    city: r.city || "", state: r.state || "", zip: r.zipCode || "",
+    priceText: priceStr || "Negotiable",
+    priceNum,
+    propertyType: r.propertyType || "Commercial",
+    buildingClass: r.buildingClass || null,
+    spaces: r.spaces || null,
+    sizeLabel: r.sizeLabel || r.availableSpace || null,
+    buildingInfo: r.buildingInfo || null,
+    description: r.description ? String(r.description).slice(0, 400) : null,
+    searchType: r.searchType || null,
+    photo: r.photo || null,
+    brokers: Array.isArray(r.brokers)
+      ? r.brokers.slice(0, 2).map((b) => ({name: b.name || null, company: b.company || null}))
+      : [],
+    lat: (typeof r.latitude === "number") ? r.latitude : null,
+    lng: (typeof r.longitude === "number") ? r.longitude : null,
+  };
+}
+exports.searchCommercial = onRequest({
+  secrets: [RAPIDAPI_KEY],
+  cors: true, region: "us-central1", timeoutSeconds: 30,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const body = req.body || {};
+
+    const isAdmin = user.email === "harut@ymail.com";
+    const tierVal = (await admin.database().ref(`billing/${user.uid}/tier`).get()).val();
+    const tier = (isAdmin || tierVal === "pro") ? "pro" : "free";
+    const limit = isAdmin ? Infinity : (SEARCH_LIMITS[tier] || SEARCH_LIMITS.free);
+    const mo = new Date().toISOString().slice(0, 7);
+    const usageRef = admin.database().ref(`searchUsage/${user.uid}/${mo}`);
+    const used = numOr0((await usageRef.get()).val());
+    const meter = (u) => {
+      const shown = tier === "free" && limit !== Infinity;
+      return {tier, limit: shown ? limit : null, used: u,
+        remaining: shown ? Math.max(0, limit - u) : null, resets: nextMonthResetISO()};
+    };
+
+    const query = String(body.query || "").trim();
+    const mode = body.mode === "lease" ? "lease" : "sale";
+    const page = Math.max(1, Math.min(20, parseInt(body.page, 10) || 1));
+    if (query.length < 2) {
+      res.status(400).json({error: "query", message: "Enter a city or ZIP."});
+      return;
+    }
+
+    const cacheRef = admin.database().ref(
+      `commercialCache/${listingCacheKey(`${mode}:${query}`, page)}`);
+    const cached = (await cacheRef.get()).val();
+    if (cached && cached.ts && (Date.now() - cached.ts) < LISTING_CACHE_TTL_MS && Array.isArray(cached.items)) {
+      res.json({items: cached.items, count: cached.count || cached.items.length,
+        nextPage: !!cached.nextPage, page, cached: true, meter: meter(used)});
+      return;
+    }
+
+    const key = RAPIDAPI_KEY.value();
+    if (!key || key === "unset") {
+      res.status(503).json({error: "staged",
+        message: "Commercial search is warming up. Check back shortly."});
+      return;
+    }
+    if (limit !== Infinity && used >= limit) {
+      res.status(429).json({error: "limit", meter: meter(used), message: tier === "pro"
+        ? "You've hit this month's search limit. It resets on the 1st."
+        : "You've used your 5 free searches this month. Upgrade to Pro for unlimited search."});
+      return;
+    }
+    const globalRef = admin.database().ref(`globalSearchUsage/${mo}`);
+    const globalUsed = numOr0((await globalRef.get()).val());
+    if (globalUsed >= GLOBAL_SEARCH_CAP) {
+      res.status(503).json({error: "busy",
+        message: "Deal Finder is handling heavy demand right now. Please try again shortly."});
+      return;
+    }
+
+    const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LOOPNET_HOST};
+    const base = `https://${LOOPNET_HOST}/search/bylocation?location=${encodeURIComponent(query)}&page=${page}`;
+    const getJson = async (url) => {
+      const r = await fetch(url, {headers});
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        return {err: `HTTP ${r.status}: ${txt.slice(0, 120)}`};
+      }
+      const j = await r.json().catch(() => null);
+      return Array.isArray(j && j.searchResults) ? {json: j} : {err: "unexpected body"};
+    };
+
+    // "For sale" parameter self-resolution, remembered once it works. If no
+    // candidate flips the results to sales, we mark it unsupported for a week
+    // and serve the base (mostly lease) results with honest labeling.
+    const saleRef = admin.database().ref("config/commercialSale");
+    let saleConf = (await saleRef.get()).val() || null;
+    let out = null, detail = "";
+    if (mode === "sale") {
+      const CANDS = ["searchType=For_Sale", "searchtype=For_Sale", "searchType=ForSale",
+        "type=For_Sale", "listingType=For_Sale", "saleOrLease=sale"];
+      const tryOrder = [];
+      if (saleConf && saleConf.param && saleConf.param !== "unsupported") tryOrder.push(saleConf.param);
+      const stale = !saleConf || (saleConf.param === "unsupported" &&
+        (Date.now() - (saleConf.ts || 0)) > 7 * 24 * 3600 * 1000);
+      if (!saleConf || stale || (saleConf.param && saleConf.param !== "unsupported")) {
+        for (const c of CANDS) if (!tryOrder.includes(c)) tryOrder.push(c);
+      }
+      for (const param of tryOrder) {
+        const got = await getJson(`${base}&${param}`);
+        if (got.err) { detail = `${param} ${got.err}`; continue; }
+        const arr = got.json.searchResults || [];
+        const sales = arr.filter((x) => /sale/i.test(String(x.searchType || "")));
+        if (sales.length > 0) {
+          out = {...got.json, searchResults: sales};
+          if (!saleConf || saleConf.param !== param) await saleRef.set({param, ts: Date.now()});
+          break;
+        }
+        detail = `${param} returned no sale listings`;
+      }
+      if (out == null && (!saleConf || saleConf.param !== "unsupported")) {
+        await saleRef.set({param: "unsupported", ts: Date.now()});
+      }
+    }
+    // Lease mode, or sale unresolved: base call, filtered to the asked mode
+    // when the data supports it.
+    if (out == null) {
+      const got = await getJson(base);
+      if (got.err) {
+        res.status(502).json({error: "upstream",
+          message: "Commercial search is temporarily unavailable. Try again in a moment.",
+          detail: (detail || got.err).slice(0, 220), host: LOOPNET_HOST});
+        return;
+      }
+      const arr = got.json.searchResults || [];
+      const want = mode === "lease"
+        ? arr.filter((x) => /lease/i.test(String(x.searchType || "")))
+        : arr;
+      out = {...got.json, searchResults: want.length ? want : arr};
+    }
+
+    const items = (out.searchResults || []).map(mapLoopnetListing).filter(Boolean);
+    const count = out.total || items.length;
+    await cacheRef.set({ts: Date.now(), items, count, nextPage: !!out.nextPage, query, page, mode});
+    await globalRef.transaction((v) => numOr0(v) + 1);
+    let newUsed = used;
+    if (!isAdmin) { await usageRef.transaction((v) => numOr0(v) + 1); newUsed = used + 1; }
+    res.json({items, count, nextPage: !!out.nextPage, page, cached: false, meter: meter(newUsed)});
+  } catch (e) {
+    logger.error("searchCommercial", {error: e.message});
+    res.status(500).json({error: "search failed"});
+  }
+});
+
 // == RealEstateAPI (property data + owner) ======================================
 // One licensed vendor for the two per-property jobs we used to split across
 // RentCast (specs + value + rent) and Endato (owner name). Property Detail
