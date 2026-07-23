@@ -7744,7 +7744,7 @@ function RevealCardHeader({subtitle, admin, balance, monthlyLeft}) {
           border:"1px solid "+(has ? C.greenBorder : C.border), borderRadius:9999,
           padding:"5px 11px", whiteSpace:"nowrap", fontFamily:F}}>
           {admin ? "Unmetered"
-            : hasMonthly ? `${monthlyLeft} left this month`
+            : hasMonthly ? "Included with Pro"
             : `${balance} credit${balance === 1 ? "" : "s"}`}
         </span>
       )}
@@ -7878,7 +7878,7 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
             From public and proprietary records. Please check the National Do Not Call
             Registry before calling. See our Terms for outreach rules.
             {!st.admin && (monthlyLeft != null
-              ? ` You have ${monthlyLeft} included reveal${monthlyLeft === 1 ? "" : "s"} left this month.`
+              ? " Included with your Pro plan."
               : bal != null ? ` You have ${bal} reveal credit${bal === 1 ? "" : "s"} left.` : "")}
           </div>
           {rv.stale && (
@@ -8006,19 +8006,19 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
         </div>
         <button onClick={() => buy("reveal1")} disabled={busy}
           {...btnStyle("primary","lg", {marginTop:18, width:"100%", justifyContent:"center"})}>
-          {busy ? "Opening…" : "Unlock for $4.99"}
+          {busy ? "Opening…" : "Unlock for $2.99"}
         </button>
         <button onClick={() => buy("reveal5")} disabled={busy}
           {...btnStyle("secondary","md", {marginTop:9, width:"100%", justifyContent:"center"})}>
-          Or get a 5-pack for $19.99
-          <span style={{color:C.textMuted, fontWeight:600, marginLeft:6}}>just $4 each</span>
+          Or get a 5-pack for $9.99
+          <span style={{color:C.textMuted, fontWeight:600, marginLeft:6}}>just $2 each</span>
         </button>
         <div style={{fontSize:11.5, color:C.textMuted, fontFamily:F, marginTop:8}}>
           You only pay when a number is found.
         </div>
         {onUpgrade && (
           <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:12}}>
-            Reveal often? <span onClick={onUpgrade} style={{color:C.greenDark, fontWeight:700, cursor:"pointer"}}>DealHive Pro</span> includes 10 a month.
+            Reveal often? <span onClick={onUpgrade} style={{color:C.greenDark, fontWeight:700, cursor:"pointer"}}>DealHive Pro</span> includes unlimited owner contacts.
           </div>
         )}
         {err && <div style={{fontSize:12, color:C.redDark, fontFamily:F, marginTop:7, textAlign:"center"}}>{err}</div>}
@@ -8031,7 +8031,7 @@ function RevealBlock({deal, rcAuth, mode = "pro", onUpgrade}) {
     <RevealCardShell free={free}>
       <RevealCardHeader subtitle="Phone and email for this owner" admin={st.admin} balance={bal} monthlyLeft={monthlyLeft}/>
       <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.55, marginBottom:11}}>
-        You've used your <strong style={{color:C.text}}>10 included reveals</strong> this month. Grab a credit pack for the rest — each reveal is just $0.99.
+        You've reached this month's included reveals. Grab a credit pack to keep going, just $0.99 each.
       </div>
       <button onClick={() => buy("credits10")} disabled={busy}
         {...btnStyle("primary","md", {width:"100%", justifyContent:"center", marginTop:4})}>
