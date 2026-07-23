@@ -10512,26 +10512,15 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </button>
       )}
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
-        action={<button onClick={()=>{setD(seedDeal());setErr("");setOpen(1);setMaxReached(1);}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
+        action={curStep === 4
+          ? <button onClick={()=>{setD(seedDeal());setErr("");setOpen(1);setMaxReached(1);}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>
+          : undefined} />
 
       <AnalyzerSteps current={curStep} mobile={mobile} />
 
       {/* STEP 1 — Address (photo + address fields) */}
       {open === 1 ? (
       <SectionBlock title="Property address" color={C.green} icon={I.pin}>
-        {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
-            show that deal's photo carousel. Otherwise (custom address search)
-            fall back to a Street View image. */}
-        {Array.isArray(d.photos) && d.photos.length > 0 ? (
-          <div style={{borderRadius:C.r4, overflow:"hidden", marginBottom:16,
-            border:"1px solid "+C.border, boxShadow:C.sh1}}>
-            <PhotoCarousel photos={d.photos}
-              fallbackLat={d.lat} fallbackLng={d.lng}
-              height={mobile ? 220 : 280} mobile={mobile} />
-          </div>
-        ) : (
-          <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={200} />
-        )}
         <div style={{marginBottom:12}}>
           <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>
             Address
@@ -10572,6 +10561,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* STEP 2 — Property details (auto-filled from records) */}
       {maxReached >= 2 && (open === 2 ? (
       <>
+      {/* The property, up top — the deal's own photos when we have them, else a
+          Street View of the address, right above its details. */}
+      {Array.isArray(d.photos) && d.photos.length > 0 ? (
+        <div style={{borderRadius:C.r4, overflow:"hidden", marginBottom:16,
+          border:"1px solid "+C.border, boxShadow:C.sh1}}>
+          <PhotoCarousel photos={d.photos}
+            fallbackLat={d.lat} fallbackLng={d.lng}
+            height={mobile ? 220 : 280} mobile={mobile} />
+        </div>
+      ) : (
+        <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={mobile ? 200 : 230} />
+      )}
       {/* Free lookup limit reached — the auto-pull is blocked, but manual entry
           below still works. Shown as a branded card, never an error line. */}
       {capMsg && (
