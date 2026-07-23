@@ -875,9 +875,13 @@ const applyRentcast = (prev, data, rates) => {
     expInsurance: (prev.expInsurance||0) > 0 ? prev.expInsurance
       : Math.round(((med || taxVal || prev.purchasePrice || 0)
           * (INSURANCE_RATES[(prev.state||"").toUpperCase()] || DEFAULT_INS_RATE)) / 12),
-    homeValueMedian: med, homeValueLow: lo, homeValueHigh: med || hi,
-    flipSalePrice: med || hi || prev.flipSalePrice,
-    brrrCashOut:   med ? Math.round(med * 0.75) : prev.brrrCashOut,
+    // A listing's own ARV wins over the AVM median — the user asked to go by
+    // the value the source API provides, not a recomputed midpoint.
+    homeValueMedian: prev.listingArv || med,
+    homeValueLow:    prev.listingArv ? Math.round(prev.listingArv * 0.9) : lo,
+    homeValueHigh:   prev.listingArv || med || hi,
+    flipSalePrice:   prev.listingArv || med || hi || prev.flipSalePrice,
+    brrrCashOut:     (prev.listingArv || med) ? Math.round((prev.listingArv || med) * 0.75) : prev.brrrCashOut,
     repairLight:   sqft ? Math.round(sqft * r.light)  : prev.repairLight,
     repairMedium:  sqft ? Math.round(sqft * r.medium) : prev.repairMedium,
     repairFull:    sqft ? Math.round(sqft * r.full)   : prev.repairFull,
@@ -896,7 +900,8 @@ const applyRentcast = (prev, data, rates) => {
 const applyReapi = (prev, rp, rates) => {
   const r    = rates || {light:7, medium:13, full:45};
   const sqft = rp.sqft || prev.sqft || 0;
-  const med  = rp.value || prev.homeValueMedian || 0;
+  // Listing ARV (from the source API) stays authoritative; else RealEstateAPI value.
+  const med  = prev.listingArv || rp.value || prev.homeValueMedian || 0;
   const taxVal  = rp.assessedValue || prev.taxValue || 0;
   const annual  = rp.taxAnnual || 0;
   return {
@@ -5784,6 +5789,9 @@ const dealToProForma = (deal) => {
     homeValueHigh:   deal.arv || Math.round((deal.price||0) * 1.35),
     homeValueLow:    Math.round((deal.arv || deal.price * 1.3) * 0.9),
     flipSalePrice:   deal.arv || Math.round((deal.price||0) * 1.35),
+    // The listing's own ARV (Zillow/API value) is authoritative — carry it so
+    // the auto property-pull doesn't overwrite it with a recomputed median.
+    listingArv:      deal.arv || 0,
     expPropTax:      deal.expPropTax    || Math.round((deal.price || 0) * (STATE_TAX_RATES[deal.state] || DEFAULT_TAX_RATE) / 12),
     expInsurance:    deal.expInsurance  || 100,
     expManagement:   deal.expManagement || 0,
@@ -9196,10 +9204,17 @@ function DealsLockedPreview({mobile, isWide, onUpgrade}) {
 // analyzer. Everything routes through the searchListings Cloud Function so the
 // RapidAPI key stays server-side, popular cities are served from a shared cache
 // for free, and fresh searches meter per member.
-const FINDER_SUGGESTIONS = [
-  "Cleveland, OH", "Memphis, TN", "Birmingham, AL", "Indianapolis, IN",
-  "Kansas City, MO", "Columbus, OH", "Jacksonville, FL", "Detroit, MI",
-];
+// Pretty-print a searched location: title-case the words, keep 2-letter state
+// codes uppercase, leave ZIPs alone. "cleveland, oh" → "Cleveland, OH".
+const prettyLoc = (s) => String(s || "").split(",").map((part) => {
+  const t = part.trim();
+  if (/^[a-zA-Z]{2}$/.test(t)) return t.toUpperCase();
+  return t.split(/\s+/).map((w) => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w).join(" ");
+}).filter(Boolean).join(", ");
+
+// Hero backdrop for the first-run Deal Finder — a soft branded wash, no busy
+// texture, so the search bar stays the hero.
+const HERO_BG = `radial-gradient(130% 120% at 50% -10%, ${C.greenSubtle} 0%, ${C.card} 62%)`;
 
 // A meter pill that reads "3 of 5 searches left this month". Hidden for admin
 // (unlimited → meter.limit is null). Turns amber when the tank is nearly empty.
@@ -9243,7 +9258,6 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [loading, setLoading]     = useState(false);
   const [results, setResults]     = useState(null);  // array | null (never searched)
   const [count, setCount]         = useState(0);
-  const [cachedHit, setCachedHit] = useState(false);
   const [error, setError]         = useState(null);  // {kind, title, body} | null
   const [meter, setMeter]         = useState(null);
   const [strategy, setStrategy]   = useState("all");
@@ -9251,6 +9265,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [visN, setVisN]           = useState(36);
   const [selectedId, setSelectedId] = useState(null);
   const inputRef = useRef(null);
+  const acRef = useRef(null);         // Google Places Autocomplete instance
+  const runSearchRef = useRef(null);  // always points at the latest runSearch
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
@@ -9288,7 +9304,6 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
       if (r.ok) {
         setResults(Array.isArray(j.items) ? j.items : []);
         setCount(j.count || (j.items||[]).length);
-        setCachedHit(!!j.cached);
       } else if (j.error === "limit") {
         setResults(null);
         setError({kind:"limit",
@@ -9311,6 +9326,40 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     }
     setLoading(false);
   };
+  runSearchRef.current = runSearch;
+
+  // Google Places autocomplete on the search bar — city / ZIP / address, just
+  // like Zillow. Re-attaches when the input remounts (hero ↔ results layouts).
+  // Picking a suggestion runs the search immediately.
+  useEffect(() => {
+    let cancelled = false;
+    loadGM().then(() => {
+      if (cancelled || !inputRef.current) return;
+      if (acRef.current && acRef.current._el === inputRef.current) return;
+      const a = new window.google.maps.places.Autocomplete(inputRef.current, {
+        types: ["geocode"], componentRestrictions: {country: "us"},
+        fields: ["formatted_address", "address_components", "name"],
+      });
+      a._el = inputRef.current;
+      a.addListener("place_changed", () => {
+        const p = a.getPlace() || {};
+        const comp = p.address_components || [];
+        const find = t => comp.find(c => c.types.includes(t));
+        const streetNo = find("street_number");
+        const city = (find("locality") || find("sublocality") || find("postal_town") || {}).long_name || "";
+        const st   = (find("administrative_area_level_1") || {}).short_name || "";
+        const zip  = (find("postal_code") || {}).long_name || "";
+        // A full street address searches that address; a city or ZIP searches
+        // the market. Build the cleanest query for each.
+        const q = streetNo ? (p.formatted_address || p.name)
+          : (city && st) ? `${city}, ${st}`
+          : zip || p.name || p.formatted_address || "";
+        if (q) { setQuery(q); if (runSearchRef.current) runSearchRef.current(q); }
+      });
+      acRef.current = a;
+    });
+    return () => { cancelled = true; };
+  }, [results === null && !error && !loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Underwrite + filter client-side. Unlike the curated feed we never hide a
   // listing for failing the gates — the Finder shows the whole market and lets
@@ -9340,50 +9389,102 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     ? classified.filter(({c}) => c.tags.length > 0).length : 0;
   const visible = filtered.slice(0, visN);
 
-  const inputWrap = {
-    display:"flex", alignItems:"center", gap:8, background:C.card,
-    border:"1px solid "+C.border, borderRadius:9999, boxShadow:C.sh2,
-    padding:"6px 6px 6px 18px", width:"100%", maxWidth:640,
-  };
+  const heroMode = !loading && !error && results === null;
+
+  // One search bar element, styled for hero vs compact. Its Google-autocomplete
+  // input lives here; the effect above re-binds it when it remounts.
+  const searchBar = (
+    <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{width:"100%"}}>
+      <div style={{display:"flex", alignItems:"center", gap:8, background:C.card,
+        border:"1px solid "+C.border, borderRadius:9999,
+        boxShadow: heroMode
+          ? "0 22px 50px -20px rgba(232,115,28,.32), 0 8px 22px -12px rgba(15,23,42,.14)"
+          : C.sh2,
+        padding: heroMode ? "8px 8px 8px 22px" : "6px 6px 6px 18px"}}>
+        <span style={{display:"inline-flex", color:C.textMuted, flexShrink:0}}>
+          <I.search size={heroMode ? 21 : 19} stroke={2.2}/>
+        </span>
+        <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
+          placeholder="Enter a city, ZIP, or address" enterKeyHint="search" autoComplete="off"
+          onKeyDown={e => {
+            // When the Google suggestions are open, let Enter pick one (its
+            // place_changed runs the search) instead of submitting typed text.
+            if (e.key === "Enter") {
+              const pac = document.querySelector(".pac-container");
+              if (pac && pac.offsetParent !== null && pac.querySelector(".pac-item")) e.preventDefault();
+            }
+          }}
+          style={{flex:1, minWidth:0, border:"none", outline:"none", background:"transparent",
+            fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
+            padding: heroMode ? "11px 0" : "8px 0"}}/>
+        <button type="submit" disabled={loading || query.trim().length < 2}
+          {...btnStyle("primary", heroMode ? "xl" : "lg", {borderRadius:9999, flexShrink:0,
+            minWidth: mobile ? 44 : 0, opacity: (loading || query.trim().length < 2) ? .6 : 1})}>
+          {loading
+            ? <span className="dh-spin" style={{display:"inline-flex"}}><I.cycle size={16} stroke={2.4}/></span>
+            : <><I.search size={16} stroke={2.4}/>{!mobile && " Search"}</>}
+        </button>
+      </div>
+    </form>
+  );
 
   return (
-    <div style={{padding: mobile ? "20px 16px 100px" : "32px 32px"}}>
-      {/* Header */}
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start",
-        gap:12, flexWrap:"wrap", marginBottom:6}}>
-        <h1 style={{margin:0, fontSize:24, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-          Deal Finder
-        </h1>
-        <SearchMeterPill meter={meter}/>
-      </div>
-      <div style={{fontSize:14, color:C.textSub, fontFamily:F, lineHeight:1.5, marginBottom:18, maxWidth:560}}>
-        Search any market and every live listing comes back already underwritten. The strongest cash flow floats to the top.
-      </div>
-
-      {/* Search bar */}
-      <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{marginBottom:18}}>
-        <div style={inputWrap}>
-          <span style={{display:"inline-flex", color:C.textMuted, flexShrink:0}}>
-            <I.search size={19} stroke={2.2}/>
-          </span>
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Enter a city, ZIP, or address"
-            enterKeyHint="search"
-            style={{flex:1, minWidth:0, border:"none", outline:"none", background:"transparent",
-              fontSize:16, fontWeight:600, color:C.text, fontFamily:F, letterSpacing:"-0.01em",
-              padding:"8px 0"}}/>
-          <button type="submit" disabled={loading || query.trim().length < 2}
-            {...btnStyle("primary","lg", {borderRadius:9999, flexShrink:0, minWidth:mobile?44:0,
-              opacity: (loading || query.trim().length < 2) ? .6 : 1})}>
-            {loading
-              ? <span className="dh-spin" style={{display:"inline-flex"}}><I.cycle size={16} stroke={2.4}/></span>
-              : <><I.search size={16} stroke={2.4}/>{!mobile && " Search"}</>}
-          </button>
+    <div style={{padding: mobile ? "16px 16px 100px" : "28px 32px 44px"}}>
+      {heroMode ? (
+        // -- Hero (first run): premium, centered, no city chips ---------------
+        <div style={{position:"relative", overflow:"hidden", borderRadius: mobile ? 20 : 28,
+          border:"1px solid "+C.greenBorder, background:HERO_BG,
+          padding: mobile ? "40px 20px 34px" : "76px 32px 64px"}}>
+          <div style={{position:"absolute", top:-150, left:"50%", transform:"translateX(-50%)",
+            width:560, height:380, borderRadius:"50%", pointerEvents:"none",
+            background:"radial-gradient(circle, rgba(232,115,28,.18), transparent 62%)"}}/>
+          <div style={{position:"relative", maxWidth:600, margin:"0 auto", textAlign:"center"}}>
+            {meter && meter.limit != null && (
+              <div style={{display:"flex", justifyContent:"center", marginBottom:20}}>
+                <SearchMeterPill meter={meter}/>
+              </div>
+            )}
+            <div style={{width:58, height:58, borderRadius:17, margin:"0 auto 20px",
+              background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`, color:"#fff",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              boxShadow:`0 16px 32px -12px ${C.green}`}}>
+              <I.search size={27} stroke={2.4}/>
+            </div>
+            <h1 style={{margin:0, fontSize: mobile ? 30 : 44, fontWeight:800, color:C.text,
+              fontFamily:F, letterSpacing:"-0.03em", lineHeight:1.04}}>
+              Find your next deal
+            </h1>
+            <div style={{fontSize: mobile ? 15 : 17.5, color:C.textSub, fontFamily:F, lineHeight:1.5,
+              margin:"13px auto 28px", maxWidth:470}}>
+              Search any market and every live listing comes back already underwritten, strongest cash flow first.
+            </div>
+            {searchBar}
+            <div style={{display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginTop:22}}>
+              {[["Rental", STRATEGY_LABELS.buyhold.dot], ["BRRRR", STRATEGY_LABELS.brrrr.dot],
+                ["Fix & Flip", STRATEGY_LABELS.flip.dot]].map(([lab, dot]) => (
+                <span key={lab} style={{display:"inline-flex", alignItems:"center", gap:7,
+                  background:C.card, border:"1px solid "+C.border, borderRadius:9999,
+                  padding:"7px 14px", fontSize:12.5, fontWeight:700, color:C.textSub, fontFamily:F,
+                  boxShadow:C.sh1}}>
+                  <span style={{width:7, height:7, borderRadius:"50%", background:dot}}/> {lab}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
-      </form>
+      ) : (
+        // -- Compact header once a search is in play -------------------------
+        <>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+            gap:12, flexWrap:"wrap", marginBottom:14}}>
+            <h1 style={{margin:0, fontSize:22, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
+              Deal Finder
+            </h1>
+            <SearchMeterPill meter={meter}/>
+          </div>
+          <div style={{marginBottom:18, maxWidth:760}}>{searchBar}</div>
+        </>
+      )}
 
       {/* States */}
       {loading ? (
@@ -9394,12 +9495,11 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
       ) : error ? (
         <FinderNotice error={error} isPro={isPro} isAdmin={isAdmin} onUpgrade={onUpgrade}
           onRetry={error.kind === "limit" ? null : () => runSearch(submitted)}/>
-      ) : results === null ? (
-        <FinderIntro onPick={c => { setQuery(c); runSearch(c); }}/>
-      ) : filtered.length === 0 ? (
+      ) : results === null ? null
+      : filtered.length === 0 ? (
         <EmptyState
           icon={<I.search size={20}/>}
-          title={classified.length === 0 ? `No live listings for “${submitted}” right now`
+          title={classified.length === 0 ? `No live listings for “${prettyLoc(submitted)}” right now`
             : "No listings match this filter"}
           body={classified.length === 0
             ? "Try another city or ZIP — inventory shifts constantly, so it's worth another look soon."
@@ -9412,11 +9512,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             gap:12, flexWrap:"wrap", marginBottom:14}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
-                {count.toLocaleString()} listing{count===1?"":"s"} in {submitted}
-                {cachedHit && (
-                  <span style={{marginLeft:8, fontSize:11, fontWeight:700, color:C.textMuted,
-                    fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>· cached</span>
-                )}
+                {count.toLocaleString()} listing{count===1?"":"s"} in {prettyLoc(submitted)}
               </div>
               {passCount > 0 && (
                 <div style={{fontSize:13, color:C.greenDark, fontFamily:F, marginTop:2, fontWeight:600,
@@ -9480,37 +9576,6 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   );
 }
 
-// First-run canvas before any search: a friendly prompt plus one-tap city chips.
-function FinderIntro({onPick}) {
-  return (
-    <Card style={{padding:"36px 28px", textAlign:"center",
-      background:`linear-gradient(160deg, ${C.greenSubtle} 0%, ${C.card} 60%)`, borderColor:C.greenBorder}}>
-      <div style={{width:52, height:52, borderRadius:C.r3, background:C.green, color:"#fff",
-        display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:14}}>
-        <I.search size={24} stroke={2.2}/>
-      </div>
-      <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-        Find your next deal
-      </div>
-      <div style={{fontSize:14, color:C.textSub, fontFamily:F, marginTop:6, lineHeight:1.55, maxWidth:460, marginLeft:"auto", marginRight:"auto"}}>
-        Type a city, ZIP, or address above. We pull the live for-sale listings and run the rental, BRRRR, and flip numbers on every one.
-      </div>
-      <div style={{marginTop:20, display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center"}}>
-        <span style={{fontSize:12, fontWeight:700, color:C.textMuted, fontFamily:F, alignSelf:"center",
-          letterSpacing:".04em", textTransform:"uppercase"}}>Popular:</span>
-        {FINDER_SUGGESTIONS.map(c => (
-          <button key={c} onClick={() => onPick(c)}
-            style={{display:"inline-flex", alignItems:"center", gap:6, background:C.card,
-              border:"1px solid "+C.border, borderRadius:9999, padding:"7px 13px",
-              fontSize:13, fontWeight:600, color:C.text, fontFamily:F, cursor:"pointer",
-              boxShadow:C.sh1, letterSpacing:"-0.005em"}}>
-            <span style={{display:"inline-flex", color:C.greenDark}}><I.pin size={12} stroke={2.2}/></span> {c}
-          </button>
-        ))}
-      </div>
-    </Card>
-  );
-}
 
 // Recoverable error / limit / staged surface for the Finder — same calm tone as
 // the sheet notices, with a Try Again and (when out of searches) an Upgrade CTA.
@@ -11829,6 +11894,12 @@ export default function App() {
 
       @keyframes dhSpin{to{transform:rotate(360deg)}}
       .dh-spin{animation:dhSpin .8s linear infinite}
+      /* Google Places autocomplete dropdown — styled to match the app. */
+      .pac-container{border-radius:14px;box-shadow:0 14px 38px -12px rgba(15,23,42,.30);border:1px solid ${C.border};margin-top:8px;padding:5px;background:${C.card};z-index:100000;font-family:${F}}
+      .pac-item{border:0;border-radius:10px;padding:9px 12px;font-size:14px;color:${C.textSub};cursor:pointer;line-height:1.35}
+      .pac-item:hover{background:${C.bgSubtle}}
+      .pac-item-query{font-size:14px;color:${C.text};font-weight:600}
+      .pac-matched{font-weight:700}
       @keyframes dhNudge{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
       @keyframes dhExitPulse{0%{box-shadow:0 0 0 0 var(--dh-pulse, rgba(232,115,28,.4))}70%{box-shadow:0 0 0 12px transparent}100%{box-shadow:0 0 0 0 transparent}}
       .dh-exit-pulse{animation:dhExitPulse 1.15s ease-out 2 both}
