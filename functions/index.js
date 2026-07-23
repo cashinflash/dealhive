@@ -1259,6 +1259,55 @@ async function reapiPropertyDetail(key, body, uid) {
   return {ok: true, property: mapReapiDetail(j && j.data)};
 }
 
+// RealEstateAPI SkipTrace: name + address → the owner's phones and emails.
+// Returns the same shape the reveal already consumes from Endato so it drops
+// straight in. Phones are deduped; DNC-flagged numbers sort last (isConnected
+// doubles as the "safe to call" signal the existing sorter reads).
+async function reapiSkipTrace(key, q, uid) {
+  const body = {};
+  if (q.firstName) body.first_name = q.firstName;
+  if (q.lastName)  body.last_name  = q.lastName;
+  if (q.address)   body.address    = q.address;
+  if (q.city)      body.city       = q.city;
+  if (q.state)     body.state      = q.state;
+  if (q.zip)       body.zip        = q.zip;
+  if (q.mailAddress) {
+    body.mail_address = q.mailAddress;
+    if (q.mailCity)  body.mail_city  = q.mailCity;
+    if (q.mailState) body.mail_state = q.mailState;
+    if (q.mailZip)   body.mail_zip   = q.mailZip;
+  }
+  const r = await fetch(REAPI_BASE + "/v2/SkipTrace", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "x-api-key": key, "x-user-id": uid || "dealhive"},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    logger.error("reapi SkipTrace", {status: r.status, body: txt.slice(0, 200)});
+    return {error: `reapi ${r.status}`, phones: [], emails: []};
+  }
+  const j = await r.json().catch(() => null);
+  const persons = j && Array.isArray(j.persons) ? j.persons : [];
+  const phones = [], emails = [], seenP = new Set(), seenE = new Set();
+  for (const per of persons) {
+    for (const ph of (Array.isArray(per.phones) ? per.phones : [])) {
+      const num = ph && ph.phone;
+      if (!num || seenP.has(num)) continue;
+      seenP.add(num);
+      const dnc = /^(y|yes|true|1)$/i.test(String(ph.phoneFtcDnc || ""));
+      phones.push({number: num, type: ph.phoneType || null, isConnected: !dnc,
+        lastSeen: ph.phoneLastSeen || null, dnc});
+    }
+    for (const em of (Array.isArray(per.emails) ? per.emails : [])) {
+      const key2 = String(em || "").toLowerCase();
+      if (key2 && !seenE.has(key2)) { seenE.add(key2); emails.push(em); }
+    }
+  }
+  const matched = persons[0] ? [persons[0].firstName, persons[0].lastName].filter(Boolean).join(" ") : null;
+  return {phones, emails, matchedName: matched || null};
+}
+
 exports.reapiProperty = onRequest({
   secrets: [REALESTATEAPI_KEY],
   cors: true, region: "us-central1", timeoutSeconds: 30,
@@ -1513,7 +1562,9 @@ async function rcOwnerName(rcKey, street, city, state, zip) {
 // and already-unlocked addresses. v2 = anchor on the owner's mailing address.
 // v3 = carry owner name, mailing and county into the result so a free-account
 // report is self-contained. An already-paid address refreshes free.
-const REVEAL_V = 3;
+// v4 = switch the trace to RealEstateAPI (PropertyDetail owner + SkipTrace),
+// Endato kept as fallback — re-run cached Endato results through it.
+const REVEAL_V = 4;
 const addrKeyOf = (street, city, state, zip) =>
   (`${street} ${city} ${state} ${zip || ""}`.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 200)) || "x";
@@ -1524,7 +1575,7 @@ const sortPhones = phones => [...phones].sort((a, b) =>
   ((Date.parse(b.lastSeen) || 0) - (Date.parse(a.lastSeen) || 0)));
 
 exports.revealOwner = onRequest({
-  secrets: [RENTCAST_API_KEY, ENDATO_AP_NAME, ENDATO_AP_PASSWORD],
+  secrets: [RENTCAST_API_KEY, ENDATO_AP_NAME, ENDATO_AP_PASSWORD, REALESTATEAPI_KEY],
   cors: true, region: "us-central1", timeoutSeconds: 60,
 }, async (req, res) => {
   try {
@@ -1580,11 +1631,15 @@ exports.revealOwner = onRequest({
     }
     if (!isAdmin && !alreadyPaid && balance < 1) { res.status(402).json({error: "credits", balance}); return; }
 
+    // Two trace vendors. RealEstateAPI (owner from PropertyDetail, phones from
+    // SkipTrace, $0.05/match) leads; Endato stays as an automatic fallback.
+    // We only need one of them configured to run.
+    const reapiKey = REALESTATEAPI_KEY.value();
+    const reapiOn  = !!(reapiKey && reapiKey !== "unset");
     const apName = ENDATO_AP_NAME.value();
     const apPass = ENDATO_AP_PASSWORD.value();
-    if (!apName || apName === "unset" || !apPass || apPass === "unset") {
-      res.status(503).json({error: "unavailable"}); return;
-    }
+    const endatoOn = !!(apName && apName !== "unset" && apPass && apPass !== "unset");
+    if (!reapiOn && !endatoOn) { res.status(503).json({error: "unavailable"}); return; }
 
     // Hits serve from cache for 90 days, misses for 7 (county data moves).
     const cacheRef = admin.database().ref(`skipCache/${k}`);
@@ -1595,12 +1650,38 @@ exports.revealOwner = onRequest({
       result = cached;
     } else {
       const address2 = `${city}, ${state}${zip ? " " + zip : ""}`;
+      const fullAddr = `${street}, ${address2}`;
+      // 1) Owner of record: RealEstateAPI PropertyDetail first, RentCast fallback.
       let rec = null;
-      try { rec = await rcOwnerName(RENTCAST_API_KEY.value(), street, city, state, zip); }
-      catch { rec = null; }
-      if (!rec || rec.error || !rec.name) {
+      if (reapiOn) {
+        try {
+          const det = await reapiPropertyDetail(reapiKey, {address: fullAddr}, user.uid);
+          const o = det.ok && det.property ? det.property.owner : null;
+          if (o && o.name) {
+            rec = {
+              name: o.name, firstName: o.firstName, lastName: o.lastName,
+              ownerOccupied: !!o.ownerOccupied, corporate: !!o.corporate,
+              mailing: o.mailing ? {line1: o.mailing, city: o.mailingCity || "",
+                state: o.mailingState || "", zip: o.mailingZip || ""} : null,
+              mailingStr: o.mailing
+                ? [o.mailing, o.mailingCity, [o.mailingState, o.mailingZip].filter(Boolean).join(" ")]
+                  .filter(Boolean).join(", ")
+                : null,
+              county: o.county || (det.property && det.property.county) || null,
+            };
+          }
+        } catch { rec = null; }
+      }
+      if (!rec || !rec.name) {
+        try {
+          const rc = await rcOwnerName(RENTCAST_API_KEY.value(), street, city, state, zip);
+          if (rc && !rc.error && rc.name) rec = rc;
+        } catch { /* keep whatever we have */ }
+      }
+
+      if (!rec || !rec.name) {
         result = {found: false, v: REVEAL_V, reason: "no-record", at: Date.now()};
-      } else if (ENTITY_RX.test(rec.name)) {
+      } else if (rec.corporate || ENTITY_RX.test(rec.name)) {
         result = {found: false, v: REVEAL_V, reason: "entity", ownerName: rec.name, at: Date.now()};
       } else {
         // Anchor where the owner LIVES — their county mailing (tax-bill)
@@ -1609,13 +1690,32 @@ exports.revealOwner = onRequest({
         // -person matches. Owner-occupied properties are unaffected (equal).
         const m = rec.mailing;
         const useMailing = !!(m && m.line1);
-        const tAddr1 = useMailing ? m.line1 : street;
-        const tAddr2 = useMailing
-          ? `${m.city}, ${m.state}${m.zip ? " " + m.zip : ""}`.trim()
-          : address2;
-        const out = await traceOwnerPhones(apName, apPass,
-          {name: rec.name, address1: tAddr1, address2: tAddr2});
-        result = out.phones.length ? {
+        const nm = splitOwnerName(rec.name);
+        // 2) Phones: RealEstateAPI SkipTrace first, Endato fallback.
+        let out = null;
+        if (reapiOn) {
+          try {
+            const st = await reapiSkipTrace(reapiKey, {
+              firstName: rec.firstName || nm.first, lastName: rec.lastName || nm.last,
+              address: street, city, state, zip,
+              mailAddress: useMailing ? m.line1 : null,
+              mailCity: useMailing ? m.city : null,
+              mailState: useMailing ? m.state : null,
+              mailZip: useMailing ? m.zip : null,
+            }, user.uid);
+            if (st && !st.error && st.phones.length) out = st;
+          } catch { out = null; }
+        }
+        if ((!out || !out.phones.length) && endatoOn) {
+          const tAddr1 = useMailing ? m.line1 : street;
+          const tAddr2 = useMailing ? `${m.city}, ${m.state}${m.zip ? " " + m.zip : ""}`.trim() : address2;
+          try {
+            const eOut = await traceOwnerPhones(apName, apPass,
+              {name: rec.name, address1: tAddr1, address2: tAddr2});
+            if (eOut && eOut.phones.length) out = eOut;
+          } catch { /* keep null → no-phone */ }
+        }
+        result = (out && out.phones.length) ? {
           found: true,
           v: REVEAL_V,
           ownerName: rec.name,

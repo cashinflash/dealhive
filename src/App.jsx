@@ -9473,15 +9473,14 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           </div>
         </div>
       ) : (
-        // -- Compact header once a search is in play -------------------------
+        // Compact once a search is in play — no page title (the tab already
+        // says "Deal Finder"), just the quota and the search bar.
         <>
-          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
-            gap:12, flexWrap:"wrap", marginBottom:14}}>
-            <h1 style={{margin:0, fontSize:22, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em"}}>
-              Deal Finder
-            </h1>
-            <SearchMeterPill meter={meter}/>
-          </div>
+          {meter && meter.limit != null && (
+            <div style={{display:"flex", justifyContent:"flex-end", marginBottom:10}}>
+              <SearchMeterPill meter={meter}/>
+            </div>
+          )}
           <div style={{marginBottom:18, maxWidth:760}}>{searchBar}</div>
         </>
       )}
@@ -9525,18 +9524,22 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           </div>
           <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center"}}>
             <StrategySegments value={strategy} onChange={setStrategy} counts={counts}/>
-            <div style={{position:"relative", flex:1, minWidth:140, maxWidth: mobile ? "100%" : 200}}>
+            <div style={{position:"relative", flex:1, minWidth:150, maxWidth: mobile ? "100%" : 200}}>
               <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
-                color:C.greenDark, display:"inline-flex", pointerEvents:"none"}}>
+                color:C.greenDark, display:"inline-flex", pointerEvents:"none", zIndex:1}}>
                 <I.dollar size={13} stroke={2.2}/>
               </span>
-              <input type="text" inputMode="decimal"
-                value={maxPrice ? Number(maxPrice).toLocaleString() : ""}
-                onChange={e => { const raw = e.target.value.replace(/[^0-9]/g, "");
-                  setMaxPrice(raw === "" ? 0 : parseInt(raw, 10)); }}
-                placeholder="Max price"
-                style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:32,
-                  fontWeight:600, background:C.card, boxShadow:C.sh1, marginBottom:0}}/>
+              <select value={maxPrice} onChange={e => setMaxPrice(parseInt(e.target.value, 10) || 0)}
+                style={{...iS(mobile), height:40, borderRadius:9999, paddingLeft:34, paddingRight:34,
+                  fontWeight:600, color: maxPrice ? C.text : C.textSub,
+                  background:C.card, boxShadow:C.sh1, marginBottom:0}}>
+                <option value={0}>Any price</option>
+                {[50000, 100000, 150000, 200000, 250000, 300000, 400000, 500000, 750000, 1000000, 1500000].map(v => (
+                  <option key={v} value={v}>
+                    Up to {v >= 1000000 ? `$${(v / 1000000).toString()}M` : `$${v / 1000}k`}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -9626,13 +9629,13 @@ function FinderNotice({error, isPro, isAdmin = false, onUpgrade, onRetry}) {
 }
 
 // Tabbed shell for the Deals section: the search-first Deal Finder up front,
-// the curated Fresh Finds feed a tap away.
+// the curated Off Market feed a tap away.
 function DealsHub(props) {
   const {mobile} = props;
   const [tab, setTab] = useState("finder");
   const tabs = [
     {id:"finder", label:"Deal Finder", Icon:I.search},
-    {id:"fresh",  label:"Fresh Finds", Icon:I.star},
+    {id:"fresh",  label:"Off Market", Icon:I.star},
   ];
   return (
     <div>
