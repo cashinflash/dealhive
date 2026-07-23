@@ -638,8 +638,75 @@ const newDeal = () => ({
   vacancyRate:8,
   brrrCashOut:0, brrrRate:7.5, brrrTermYears:30, brrrRefiCostPct:2, flipSalePrice:0, agentFeePct:6,
   alreadyOwned:false, ownedLoanBalance:0, ownedLoanPayment:0,
-  chosenStrategy:null, notes:"", savedAt:""
+  chosenStrategy:null, notes:"", savedAt:"",
+  // Multifamily / income-property underwriting. `assetClass` defaults to
+  // "residential" so every existing deal and the entire residential engine stay
+  // untouched; "multifamily" switches the analyzer to the income model (calcMF).
+  assetClass:"residential",
+  units:[],                 // rent roll: [{id, label, count, rent}]
+  mfOtherIncome:0,          // monthly other income (laundry, parking, storage)
+  mfVacancyPct:5, mfMarketCapPct:8,
+  mfDownPct:25, mfRate:7, mfAmortYears:30,
+  mfExpTaxes:0, mfExpInsurance:0, mfExpUtilities:0,
+  mfExpMgmtPct:8, mfExpMaintPct:8, mfExpReservesPerUnit:250, mfExpOther:0
 });
+
+// Income-approach engine for multifamily / commercial. Deliberately separate
+// from the residential calc() so it can never regress those numbers. Value is
+// driven by NOI ÷ cap rate; debt is judged on DSCR and debt yield.
+function calcMF(p) {
+  const n = v => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const units = Array.isArray(p.units) ? p.units : [];
+  const totalUnits  = units.reduce((s, u) => s + n(u.count), 0);
+  const rentMo      = units.reduce((s, u) => s + n(u.count) * n(u.rent), 0);
+  const grossRentYr = rentMo * 12;                              // rent only (for GRM)
+  const gprYr       = (rentMo + n(p.mfOtherIncome)) * 12;       // gross potential income
+  const vacLoss     = gprYr * (clamp(n(p.mfVacancyPct), 0, 100) / 100);
+  const egi         = gprYr - vacLoss;                          // effective gross income
+  // Operating expenses (never includes debt service or capex on the purchase).
+  const mgmt     = egi * (clamp(n(p.mfExpMgmtPct), 0, 100) / 100);
+  const maint    = egi * (clamp(n(p.mfExpMaintPct), 0, 100) / 100);
+  const reserves = totalUnits * n(p.mfExpReservesPerUnit);
+  const opex = n(p.mfExpTaxes) + n(p.mfExpInsurance) + n(p.mfExpUtilities) +
+    mgmt + maint + reserves + n(p.mfExpOther);
+  const noi = egi - opex;                                       // net operating income (yr)
+
+  const price   = n(p.purchasePrice);
+  const rehab   = n(p.repairCosts);
+  const closing = p.closingCosts != null ? n(p.closingCosts)
+    : Math.round(price * (n(p.purchaseCostsPct || 3) / 100));
+
+  // Valuation
+  const capOnPrice  = price > 0 ? (noi / price) * 100 : 0;
+  const marketCap   = clamp(n(p.mfMarketCapPct), 0.25, 25) / 100;
+  const valueAtCap  = marketCap > 0 ? noi / marketCap : 0;
+
+  // Financing
+  const isCash   = (p.chosenStrategy || "finance") === "cash";
+  const downPct  = clamp(n(p.mfDownPct), 0, 100) / 100;
+  const loanAmt  = isCash ? 0 : Math.round(price * (1 - downPct));
+  const dsMo     = isCash ? 0 : monthlyPI(loanAmt, n(p.mfRate), n(p.mfAmortYears || 30));
+  const dsYr     = dsMo * 12;
+  const cfYr     = noi - dsYr;
+  const dscr     = dsYr > 0 ? noi / dsYr : (noi > 0 ? Infinity : 0);
+  const debtYield = loanAmt > 0 ? (noi / loanAmt) * 100 : 0;
+  const downAmt  = isCash ? price : Math.round(price * downPct);
+  const cashIn   = downAmt + rehab + closing;
+  const coc      = cashIn > 0 ? (cfYr / cashIn) * 100 : 0;
+
+  const pricePerUnit = totalUnits > 0 ? price / totalUnits : 0;
+  const grm      = grossRentYr > 0 ? price / grossRentYr : 0;
+  const expRatio = egi > 0 ? (opex / egi) * 100 : 0;
+
+  return {
+    totalUnits, rentMo, grossRentYr, gprYr, vacLoss, egi,
+    mgmt, maint, reserves, opex, noi,
+    capOnPrice, valueAtCap, marketCapPct: marketCap * 100,
+    isCash, loanAmt, dsMo, dsYr, cfYr, cfMo: cfYr / 12, dscr, debtYield,
+    downAmt, closing, rehab, cashIn, coc, pricePerUnit, grm, expRatio, price,
+  };
+}
 
 // Body scroll lock with a counter, so stacked sheets (Deal View with a
 // research sheet on top) don't unlock the page when the top one closes.
@@ -933,8 +1000,18 @@ const applyReapi = (prev, rp, rates) => {
   const med  = rp.value || prev.listingArv || prev.homeValueMedian || 0;
   const taxVal  = rp.assessedValue || prev.taxValue || 0;
   const annual  = rp.taxAnnual || 0;
+  // Auto-detect income property from the record. 5+ units (or an apartment /
+  // multifamily use code) flips the analyzer to the multifamily model; 2-4 units
+  // seed a rent-roll row so the count is there if the user switches to it.
+  const recUnits   = rp.units || 0;
+  const detectedMF = recUnits >= 5 || /apartment|multi-?family/i.test(rp.type || "");
+  const seedUnits  = (Array.isArray(prev.units) && prev.units.length) ? prev.units
+    : (recUnits >= 2 ? [{id: "u" + Date.now(), label: "Unit", count: recUnits, rent: rp.rent || 0}] : (prev.units || []));
   return {
     ...prev,
+    assetClass: detectedMF ? "multifamily" : (prev.assetClass || "residential"),
+    units:      seedUnits,
+    mfExpTaxes: prev.mfExpTaxes || annual || 0,
     beds:      rp.beds      || prev.beds,
     baths:     rp.baths     || prev.baths,
     sqft,
@@ -5809,6 +5886,22 @@ const proFormaToFeedDeal = pf => ({
   otherIncome:   pf.otherIncome   || 0,
   source: pf.listingSource || "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
+  // Multifamily / commercial underwriting persists with the saved deal.
+  assetClass:           pf.assetClass || "residential",
+  units:                Array.isArray(pf.units) ? pf.units : [],
+  mfOtherIncome:        pf.mfOtherIncome || 0,
+  mfVacancyPct:         pf.mfVacancyPct ?? 5,
+  mfMarketCapPct:       pf.mfMarketCapPct ?? 8,
+  mfDownPct:            pf.mfDownPct ?? 25,
+  mfRate:               pf.mfRate ?? 7,
+  mfAmortYears:         pf.mfAmortYears ?? 30,
+  mfExpTaxes:           pf.mfExpTaxes || 0,
+  mfExpInsurance:       pf.mfExpInsurance || 0,
+  mfExpUtilities:       pf.mfExpUtilities || 0,
+  mfExpMgmtPct:         pf.mfExpMgmtPct ?? 8,
+  mfExpMaintPct:        pf.mfExpMaintPct ?? 8,
+  mfExpReservesPerUnit: pf.mfExpReservesPerUnit ?? 250,
+  mfExpOther:           pf.mfExpOther || 0,
 });
 
 // Convert a curated deal record into the shape DealAnalyzer/portfolio expects.
@@ -5893,6 +5986,23 @@ const dealToProForma = (deal) => {
         ? deal.photos
         : (deal.photo ? [deal.photo] : [])),
     ],
+    // Multifamily / commercial underwriting carries through unchanged, so a
+    // saved income deal reopens straight into the multifamily calculator.
+    assetClass:           deal.assetClass || "residential",
+    units:                Array.isArray(deal.units) ? deal.units : [],
+    mfOtherIncome:        deal.mfOtherIncome || 0,
+    mfVacancyPct:         deal.mfVacancyPct ?? 5,
+    mfMarketCapPct:       deal.mfMarketCapPct ?? 8,
+    mfDownPct:            deal.mfDownPct ?? 25,
+    mfRate:               deal.mfRate ?? 7,
+    mfAmortYears:         deal.mfAmortYears ?? 30,
+    mfExpTaxes:           deal.mfExpTaxes || 0,
+    mfExpInsurance:       deal.mfExpInsurance || 0,
+    mfExpUtilities:       deal.mfExpUtilities || 0,
+    mfExpMgmtPct:         deal.mfExpMgmtPct ?? 8,
+    mfExpMaintPct:        deal.mfExpMaintPct ?? 8,
+    mfExpReservesPerUnit: deal.mfExpReservesPerUnit ?? 250,
+    mfExpOther:           deal.mfExpOther || 0,
   };
 };
 
@@ -6067,6 +6177,27 @@ function StrategySegments({value, onChange, counts}) {
 // snapshot (displayed verbatim); feed deals fall back to the classifier.
 const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const c = classifyDeal(deal);
+  // Income properties are underwritten on cap rate / NOI, so their card and
+  // deal view show those numbers instead of the residential hold/flip math.
+  if (deal.assetClass === "multifamily") {
+    const mf = calcMF({
+      ...deal,
+      purchasePrice: deal.purchasePrice || deal.price || 0,
+      repairCosts:   deal.repairCosts   || deal.repair || 0,
+      chosenStrategy: deal.chosenStrategy || (deal.financing === "cash" ? "cash" : "finance"),
+    });
+    const strat = {label: mf.totalUnits ? `${mf.totalUnits}-Unit` : "Multifamily",
+      bg: C.blueSubtle, color: C.blueDark, border: C.blueBorder, dot: C.blue};
+    return {
+      c, isBrrrr: false, primary: "multifamily", strat, cashMode: mf.isCash, methods: {},
+      heroNumber: {label: "Cash flow", value: $mo(mf.cfMo), color: cfC(mf.cfMo)},
+      secondaryMetrics: [
+        ["Cap rate", pct(mf.capOnPrice)],
+        ["DSCR", mf.isCash ? "—" : (isFinite(mf.dscr) ? mf.dscr.toFixed(2) + "x" : "∞"), null, true],
+        ["Price / unit", mf.totalUnits ? $(mf.pricePerUnit) : "—"],
+      ],
+    };
+  }
   // The pipeline stamp wins; local classification covers samples and saves.
   const methods = deal.methods || c.methods || {};
   // BRRRR is an overlay: it never drives the primary badge (that stays a
@@ -10179,6 +10310,193 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
+// Income-property (multifamily / commercial) calculator. Rent roll → NOI → cap
+// rate / DSCR, valued on NOI ÷ market cap. Rendered in place of the residential
+// Calculator when a deal's assetClass is "multifamily"; the residential engine
+// is never touched.
+function MultifamilyCalculator({p, set, mobile}) {
+  const u = (f, v) => set({...p, [f]: v});
+  const m = calcMF(p);
+  const units = Array.isArray(p.units) ? p.units : [];
+  const setUnits = next => set({...p, units: next});
+  const addUnit = () => setUnits([...units, {id: "u" + Date.now() + "-" + units.length, label: "", count: 1, rent: 0}]);
+  const patchUnit = (id, patch) => setUnits(units.map(x => x.id === id ? {...x, ...patch} : x));
+  const removeUnit = id => setUnits(units.filter(x => x.id !== id));
+  const isCash = (p.chosenStrategy || "finance") === "cash";
+  useEffect(() => { if (!units.length) addUnit(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cell = {...iS(mobile), padding: mobile ? "9px 10px" : "9px 11px"};
+  const dscrColor = isCash ? C.textSub : m.dscr >= 1.25 ? "#059669" : m.dscr >= 1 ? C.amberDark : "#dc2626";
+  const dscrText  = isCash ? "—" : !isFinite(m.dscr) ? "∞" : m.dscr.toFixed(2) + "x";
+
+  const Tile = ({label, value, color, hero, note}) => (
+    <div style={{background:"linear-gradient(180deg,#fff,#fcfcfd)", padding: hero ? "15px 14px" : "13px 12px",
+      textAlign:"center"}}>
+      <div style={{fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".05em",
+        textTransform:"uppercase"}}>{label}</div>
+      <div style={{fontSize: hero ? 22 : 18, fontWeight:600, color: color || C.text, fontFamily:F,
+        fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4}}>{value}</div>
+      {note && <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, marginTop:2}}>{note}</div>}
+    </div>
+  );
+
+  const valDiff = m.valueAtCap - m.price;
+
+  return (
+    <div>
+      {/* Purchase method — same cash/finance switch as residential */}
+      <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase", marginBottom:8}}>Purchase Method</div>
+      <div style={{display:"flex", padding:4, background:C.bgSubtle, borderRadius:C.r2,
+        border:"1px solid "+C.border, marginBottom:18}}>
+        {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
+          const active = (p.chosenStrategy||"finance")===id;
+          return (
+            <button key={id} onClick={()=>u("chosenStrategy",id)}
+              style={{flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
+                background: active ? accent : "transparent", color: active ? "#fff" : C.textSub,
+                fontWeight: active?700:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
+                transition:"background .15s, color .15s"}}>{label}</button>
+          );
+        })}
+      </div>
+
+      {/* Rent Roll */}
+      <SectionBlock title="Rent Roll" color={C.green} icon={I.building}
+        right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+          fontVariantNumeric:"tabular-nums"}}>{m.totalUnits} unit{m.totalUnits===1?"":"s"} · {$mo(m.rentMo)}</span>}>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 62px 104px 30px", gap:8, alignItems:"center",
+          marginBottom:6}}>
+          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase"}}>Unit type</span>
+          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase", textAlign:"center"}}>Qty</span>
+          <span style={{fontSize:10.5, color:C.textMuted, fontWeight:700, fontFamily:F, letterSpacing:".04em", textTransform:"uppercase", textAlign:"right"}}>Rent / mo</span>
+          <span/>
+        </div>
+        {units.map(un => (
+          <div key={un.id} style={{display:"grid", gridTemplateColumns:"1fr 62px 104px 30px", gap:8,
+            alignItems:"center", marginBottom:8}}>
+            <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
+              placeholder="2BR / 1BA" style={cell}/>
+            <input type="number" inputMode="numeric" value={un.count || ""} onChange={e=>patchUnit(un.id, {count:+e.target.value})}
+              style={{...cell, textAlign:"center"}}/>
+            <div style={{position:"relative"}}>
+              <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+              <input type="number" inputMode="numeric" value={un.rent || ""} onChange={e=>patchUnit(un.id, {rent:+e.target.value})}
+                style={{...cell, paddingLeft:22, textAlign:"right"}}/>
+            </div>
+            <button onClick={()=>removeUnit(un.id)} aria-label="Remove unit type"
+              style={{width:30, height:30, borderRadius:8, border:"1px solid "+C.border, background:"#fff",
+                color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", padding:0}}>
+              <I.x size={13}/>
+            </button>
+          </div>
+        ))}
+        <button onClick={addUnit} style={{marginTop:2, display:"inline-flex", alignItems:"center", gap:6,
+          padding:"8px 13px", borderRadius:9999, background:C.greenSubtle, border:"1px solid "+C.greenBorder,
+          color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+          <I.plus size={13} stroke={2.4}/> Add unit type
+        </button>
+        <div style={{marginTop:16, display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "1fr 1fr", gap:12}}>
+          <InputField label="Other income / mo" val={p.mfOtherIncome} set={v=>u("mfOtherIncome",v)} pre="$"
+            note="Laundry, parking, storage." mobile={mobile}/>
+          <InputField label="Vacancy" val={p.mfVacancyPct} set={v=>u("mfVacancyPct",v)} suf="%"
+            note="Share of gross rent lost to turnover." mobile={mobile}/>
+        </div>
+        <div style={{marginTop:6, display:"flex", flexWrap:"wrap", gap:8}}>
+          {[["Gross Potential", $(m.gprYr)], ["− Vacancy", "-"+$(m.vacLoss)], ["Effective Gross Income", $(m.egi)]].map(([l,v],i)=>(
+            <span key={l} style={{fontSize:12, fontFamily:F, fontWeight:600, color: i===2?C.text:C.textSub,
+              background: i===2?C.greenSubtle:C.bgSubtle, border:"1px solid "+(i===2?C.greenBorder:C.border),
+              borderRadius:9999, padding:"4px 11px", fontVariantNumeric:"tabular-nums"}}>{l}: {v}/yr</span>
+          ))}
+        </div>
+      </SectionBlock>
+
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:14}}>
+        {/* Purchase & financing */}
+        <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}>
+          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
+          <InputField label="Rehab / CapEx" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$"
+            note="Upfront capital work at acquisition." mobile={mobile}/>
+          <InputField label="Closing Costs" val={p.closingCosts != null ? p.closingCosts : m.closing} set={v=>u("closingCosts",v)} pre="$" mobile={mobile}/>
+          {!isCash && (
+            <>
+              <InputField label="Down Payment" val={p.mfDownPct} set={v=>u("mfDownPct",v)} suf="%"
+                note={`≈ ${$(m.downAmt)} down · ${$(m.loanAmt)} loan`} mobile={mobile}/>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+                <InputField label="Interest Rate" val={p.mfRate} set={v=>u("mfRate",v)} suf="%" mobile={mobile}/>
+                <InputField label="Amortization" val={p.mfAmortYears} set={v=>u("mfAmortYears",v)} suf="yrs" mobile={mobile}/>
+              </div>
+            </>
+          )}
+          {isCash && (
+            <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, background:C.bgSubtle,
+              border:"1px solid "+C.border, borderRadius:C.r2, padding:"10px 12px", lineHeight:1.5}}>
+              All-cash purchase — full ${(m.price).toLocaleString()} in, no debt service.
+            </div>
+          )}
+        </SectionBlock>
+
+        {/* Operating expenses */}
+        <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
+          right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F}}>{pct(m.expRatio)} of EGI</span>}>
+          <InputField label="Property Taxes / yr" val={p.mfExpTaxes} set={v=>u("mfExpTaxes",v)} pre="$"
+            note="Auto-filled from tax records when available." mobile={mobile}/>
+          <InputField label="Insurance / yr" val={p.mfExpInsurance} set={v=>u("mfExpInsurance",v)} pre="$" mobile={mobile}/>
+          <InputField label="Utilities / yr (owner-paid)" val={p.mfExpUtilities} set={v=>u("mfExpUtilities",v)} pre="$"
+            note="Common-area + any owner-paid utilities." mobile={mobile}/>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+            <InputField label="Management" val={p.mfExpMgmtPct} set={v=>u("mfExpMgmtPct",v)} suf="%" mobile={mobile}/>
+            <InputField label="Maintenance" val={p.mfExpMaintPct} set={v=>u("mfExpMaintPct",v)} suf="%" mobile={mobile}/>
+          </div>
+          <InputField label="Reserves / unit / yr" val={p.mfExpReservesPerUnit} set={v=>u("mfExpReservesPerUnit",v)} pre="$"
+            note={`≈ ${$(m.reserves)}/yr across ${m.totalUnits} unit${m.totalUnits===1?"":"s"}.`} mobile={mobile}/>
+          <InputField label="Other / yr" val={p.mfExpOther} set={v=>u("mfExpOther",v)} pre="$" mobile={mobile}/>
+          <div style={{fontSize:12.5, color:C.text, fontFamily:F, fontWeight:700, marginTop:2,
+            display:"flex", justifyContent:"space-between", borderTop:"1px solid "+C.border, paddingTop:10}}>
+            <span>Total Operating Expenses</span><span style={{fontVariantNumeric:"tabular-nums"}}>{$(m.opex)}/yr</span>
+          </div>
+        </SectionBlock>
+      </div>
+
+      {/* Valuation + results */}
+      <SectionBlock title="Value & Returns" color={C.green} icon={I.chart}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "220px 1fr", gap:14, alignItems:"start"}}>
+          <div>
+            <InputField label="Market Cap Rate" val={p.mfMarketCapPct} set={v=>u("mfMarketCapPct",v)} suf="%"
+              note="What buyers pay in this market. Drives the value below." mobile={mobile}/>
+            <div style={{background:`linear-gradient(160deg,#fff, ${C.greenSubtle})`, border:"1px solid "+C.greenBorder,
+              borderRadius:C.r3, padding:"13px 15px"}}>
+              <div style={{fontSize:10.5, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
+                Value @ {pct(m.marketCapPct)} cap
+              </div>
+              <div style={{fontSize:22, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
+                fontVariantNumeric:"tabular-nums", marginTop:3}}>{$(m.valueAtCap)}</div>
+              {m.price > 0 && m.valueAtCap > 0 && (
+                <div style={{fontSize:12, fontWeight:600, color: valDiff >= 0 ? "#059669" : "#dc2626", fontFamily:F, marginTop:2}}>
+                  {valDiff >= 0 ? $(valDiff)+" above" : $(Math.abs(valDiff))+" below"} your price
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
+            border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+            <Tile label="NOI / yr" value={$(m.noi)} color={cfC(m.noi)} hero/>
+            <Tile label="Cap Rate" value={pct(m.capOnPrice)} hero/>
+            <Tile label="Cash Flow / mo" value={$mo(m.cfMo)} color={cfC(m.cfMo)}/>
+            <Tile label="Cash-on-Cash" value={m.cashIn > 0 ? pct(m.coc) : "—"} color={cfC(m.coc)}/>
+            <Tile label="DSCR" value={dscrText} color={dscrColor} note={isCash ? "all cash" : m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want ≥1.25" : "healthy"}/>
+            <Tile label="Debt Yield" value={m.loanAmt > 0 ? pct(m.debtYield) : "—"}/>
+            <Tile label="Price / Unit" value={m.totalUnits > 0 ? $(m.pricePerUnit) : "—"}/>
+            <Tile label="GRM" value={m.grm > 0 ? m.grm.toFixed(1) : "—"}/>
+          </div>
+        </div>
+      </SectionBlock>
+    </div>
+  );
+}
+
 // Progressive-disclosure rail for the analyzer — four beats: address, property,
 // buying method, analyze. Done beats show a check; the current one glows; the
 // rest wait quietly. Guides a newer investor instead of dumping the whole form.
@@ -10701,6 +11019,28 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       ) : (
         <StreetViewImg lat={d.lat} lng={d.lng} address={d.fullAddress||d.address} height={mobile ? 200 : 230} />
       )}
+      {/* Underwriting model — residential (comps/ARV) vs income (cap rate/NOI).
+          Auto-detected from records below; the investor can always override. */}
+      <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r4,
+        boxShadow:C.sh1, padding: mobile ? "13px 14px" : "14px 16px", marginBottom:18}}>
+        <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".05em",
+          textTransform:"uppercase", marginBottom:9}}>Underwriting model</div>
+        <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
+          {[["residential","Residential","Single-family & 1–4 unit · comps / ARV"],
+            ["multifamily","Multifamily","5+ units & commercial · cap rate / NOI"]].map(([id,label,sub]) => {
+            const active = (d.assetClass||"residential")===id;
+            return (
+              <button key={id} onClick={()=>u("assetClass",id)}
+                style={{flex:1, padding:"9px 12px", borderRadius:C.r1, border:"none",
+                  background: active ? C.green : "transparent", cursor:"pointer", fontFamily:F, textAlign:"center",
+                  boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none", transition:"background .15s"}}>
+                <div style={{fontSize:13.5, fontWeight: active?800:600, color: active?"#fff":C.text, letterSpacing:"-0.01em"}}>{label}</div>
+                <div style={{fontSize:10.5, fontWeight:500, color: active?"rgba(255,255,255,.85)":C.textMuted, marginTop:1}}>{sub}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       {/* Free lookup limit reached — the auto-pull is blocked, but manual entry
           below still works. Shown as a branded card, never an error line. */}
       {capMsg && (
@@ -10835,15 +11175,20 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           full body; Notes ride along at the very end so they never show early. */}
       {open === 3 && (
         <>
-          <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
-            exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
-            midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
-            stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+          {(d.assetClass === "multifamily" && d.chosenStrategy) ? (
+            <MultifamilyCalculator p={d} set={setD} mobile={mobile} />
+          ) : (
+            <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
+              exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
+              midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
+              stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+          )}
 
           {d.chosenStrategy && (
             <>
-              {/* Summary — always right above Notes */}
-              <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>
+              {/* Residential rolls up in DealSummaryBlock; multifamily shows its
+                  own Value & Returns block inside the calculator above. */}
+              {d.assetClass !== "multifamily" && <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>}
 
               {/* Deal Notes — only at the final step, never earlier */}
               <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
@@ -10861,9 +11206,10 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               )}
               <button onClick={saveDeal}
                 {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-                <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
-                  : exitStrategy === "flip" ? "Fix & Flip"
-                  : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
+                <I.star size={15}/> {d.assetClass === "multifamily" ? "Save Multifamily Deal"
+                  : <>Save as {exitStrategy === "brrrr" ? "BRRRR"
+                    : exitStrategy === "flip" ? "Fix & Flip"
+                    : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}</>}
               </button>
             </>
           )}
