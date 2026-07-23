@@ -252,6 +252,24 @@ const saveAuth  = u  => { try { localStorage.setItem("dh_auth", JSON.stringify(u
 const loadAuth  = () => { try { const r = localStorage.getItem("dh_auth"); return r ? JSON.parse(r) : null; } catch { return null; } };
 const clearAuth = () => { try { localStorage.removeItem("dh_auth"); } catch {} };
 
+// The Deal Finder's search meter, cached per account + month so the
+// "N of 5 searches left" pill paints instantly on revisit instead of waiting on
+// a (possibly cold) server ping. The ping still refreshes it a moment later.
+const smeterMonth = () => { try { return new Date().toISOString().slice(0, 7); } catch { return ""; } };
+const loadSearchMeter = () => {
+  try {
+    const a = loadAuth(); if (!a || !a.localId) return null;
+    const c = JSON.parse(localStorage.getItem(`dh_smeter_${a.localId}`) || "null");
+    return c && c.mo === smeterMonth() ? c.meter : null;
+  } catch { return null; }
+};
+const saveSearchMeter = (m) => {
+  try {
+    const a = loadAuth(); if (!a || !a.localId || !m) return;
+    localStorage.setItem(`dh_smeter_${a.localId}`, JSON.stringify({meter: m, mo: smeterMonth()}));
+  } catch {}
+};
+
 // -- Seed ----------------------------------------------------------------------
 const SEED = {
   rentcastKey:"", llcs:["My LLC"], deals:[], auctions:[],
@@ -9469,7 +9487,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [results, setResults]     = useState(null);  // array | null (never searched)
   const [count, setCount]         = useState(0);
   const [error, setError]         = useState(null);  // {kind, title, body} | null
-  const [meter, setMeter]         = useState(null);
+  // Seed from the cached meter so the pill shows immediately with the page.
+  const [meter, setMeter]         = useState(loadSearchMeter);
   const [strategy, setStrategy]   = useState("all");
   const [maxPrice, setMaxPrice]   = useState(0);
   const [visN, setVisN]           = useState(36);
@@ -9491,7 +9510,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           body: JSON.stringify({meterOnly:true}),
         });
         const j = await r.json().catch(()=>null);
-        if (alive && j && j.meter) setMeter(j.meter);
+        if (alive && j && j.meter) { setMeter(j.meter); saveSearchMeter(j.meter); }
       } catch { /* the pill just stays hidden */ }
     })();
     return () => { alive = false; };
@@ -9510,7 +9529,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         body: JSON.stringify({query: term, page: 1}),
       });
       const j = await r.json().catch(()=>({}));
-      if (j.meter) setMeter(j.meter);
+      if (j.meter) { setMeter(j.meter); saveSearchMeter(j.meter); }
       if (r.ok) {
         setResults(Array.isArray(j.items) ? j.items : []);
         setCount(j.count || (j.items||[]).length);
