@@ -2297,6 +2297,17 @@ function emailReset(link) {
   return {subject: "Reset your DealHive password", from: EMAIL_FROM,
     html: emailShell({hero: "reset", preview: "Reset your DealHive password.", body})};
 }
+// Sent when a Google-only account asks to reset a password it never had. Points
+// them to the Google button, but still offers a link to set a password if they
+// actually want one (completing it adds a password credential to the account).
+function emailGoogleSignin(setPasswordLink) {
+  const body = eH("No password to reset.") +
+    eP("Your DealHive account signs in with Google, so there is nothing to reset. Just tap below and you are right back in.") +
+    `<div style="padding:6px 0 2px;">${eBtn("Continue with Google &rarr;", EMAIL_SITE)}</div>` +
+    eMuted(`Prefer a password too? You can <a href="${setPasswordLink}" style="color:#C2410C;font-weight:600;">set one here</a> and use either way to sign in.`);
+  return {subject: "Signing in to DealHive", from: EMAIL_FROM,
+    html: emailShell({hero: "google", preview: "You sign in with Google — no password needed.", body})};
+}
 // Internal purchase alert to the founder, same shell for a consistent look.
 function emailAdminPurchase({who, desc, amount}) {
   const row = (k, v) => `<tr><td style="padding:9px 0;color:#52525b;font-size:14px;">${k}</td>` +
@@ -2330,9 +2341,21 @@ exports.requestPasswordReset = onRequest({
     const email = String((req.body && req.body.email) || "").trim().toLowerCase();
     if (!email || !email.includes("@")) { res.status(400).json({error: "email"}); return; }
     try {
+      // Look up the account so we send the RIGHT email. A Google user has no
+      // password to reset — a plain reset email would just confuse them.
+      const user = await admin.auth().getUserByEmail(email);
+      const providers = (user.providerData || []).map(p => p.providerId);
       const link = await admin.auth().generatePasswordResetLink(email, {url: EMAIL_SITE});
-      const {subject, html, from} = emailReset(link);
-      await sendEmail({to: email, subject, html, from});
+      if (!providers.includes("password") && providers.includes("google.com")) {
+        // Google-only: guide them to the Google button (link lets them add a
+        // password if they want one).
+        const {subject, html, from} = emailGoogleSignin(link);
+        await sendEmail({to: email, subject, html, from});
+      } else {
+        // Has a password (or some other/legacy provider): the normal reset.
+        const {subject, html, from} = emailReset(link);
+        await sendEmail({to: email, subject, html, from});
+      }
     } catch (e) {
       // No such user (or other) — stay silent so we never leak account existence.
       logger.info("requestPasswordReset noop", {reason: e.code || e.message});
