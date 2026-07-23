@@ -6159,7 +6159,10 @@ function DealCard({deal, isPro, onAnalyze, onSave, onUpgrade, onOpen, mobile,
               fontVariantNumeric:"tabular-nums", lineHeight:1.1}}>{$(deal.price)}</div>
             <div style={{fontSize:12, color:"rgba(255,255,255,.85)", marginTop:2,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-              {deal.city}, {deal.state}
+              {/* The full address sits right below the photo, so the price
+                  caption reads "Asking Price". On locked preview cards the
+                  address is hidden, so keep the city/state as the location cue. */}
+              {(isPro || showAddress) ? "Asking Price" : `${deal.city}, ${deal.state}`}
             </div>
           </div>
           <span style={{
