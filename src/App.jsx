@@ -10051,6 +10051,62 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
+// Progressive-disclosure rail for the analyzer — four beats: address, property,
+// buying method, analyze. Done beats show a check; the current one glows; the
+// rest wait quietly. Guides a newer investor instead of dumping the whole form.
+function AnalyzerSteps({current, mobile}) {
+  const steps = [[1, "Address"], [2, "Property"], [3, "Buying"], [4, "Analyze"]];
+  return (
+    <div style={{display:"flex", alignItems:"flex-start", marginBottom:20}}>
+      {steps.map(([n, label], i) => {
+        const done = n < current, cur = n === current;
+        return [
+          i > 0 && (
+            <div key={"c" + n} style={{flex:1, height:2, borderRadius:2,
+              margin: mobile ? "13px 3px 0" : "14px 6px 0",
+              background: n <= current ? C.green : C.border, transition:"background .2s"}} />
+          ),
+          <div key={"s" + n} style={{display:"flex", flexDirection:"column", alignItems:"center", gap:6, flexShrink:0}}>
+            <div style={{width: mobile ? 26 : 30, height: mobile ? 26 : 30, borderRadius:9999,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              background: done ? C.green : cur ? "#fff" : C.bgSubtle,
+              border:"2px solid " + (done || cur ? C.green : C.border),
+              color: done ? "#fff" : cur ? C.greenDark : C.textMuted,
+              fontSize: mobile ? 12 : 13, fontWeight:800, fontFamily:F,
+              boxShadow: cur ? `0 0 0 4px ${C.greenSubtle}` : "none", transition:"all .2s"}}>
+              {done ? <I.check size={mobile ? 13 : 14} stroke={3}/> : n}
+            </div>
+            <span style={{fontSize: mobile ? 10 : 11, fontWeight: cur ? 700 : 600,
+              color: done ? C.green : cur ? C.text : C.textMuted, fontFamily:F, letterSpacing:"-0.01em"}}>{label}</span>
+          </div>,
+        ];
+      })}
+    </div>
+  );
+}
+// A finished step, collapsed to one tappable line so it stays out of the way
+// but is a tap away from editing.
+function StepDone({n, title, value, onEdit, mobile}) {
+  return (
+    <button onClick={onEdit} style={{display:"flex", alignItems:"center", gap:12, width:"100%",
+      textAlign:"left", background:C.card, border:"1px solid " + C.border, borderRadius:C.r3,
+      padding: mobile ? "11px 13px" : "12px 15px", marginBottom:12, cursor:"pointer",
+      fontFamily:F, boxShadow:C.sh1}}>
+      <span style={{width:26, height:26, borderRadius:9999, flexShrink:0, background:C.green, color:"#fff",
+        display:"flex", alignItems:"center", justifyContent:"center"}}>
+        <I.check size={14} stroke={3}/>
+      </span>
+      <span style={{minWidth:0, flex:1}}>
+        <span style={{display:"block", fontSize:10.5, color:C.textMuted, fontWeight:700,
+          letterSpacing:".05em", textTransform:"uppercase"}}>{title}</span>
+        <span style={{display:"block", fontSize:14, color:C.text, fontWeight:600, letterSpacing:"-0.01em",
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{value}</span>
+      </span>
+      <span style={{fontSize:12.5, color:C.greenDark, fontWeight:700, flexShrink:0,
+        display:"inline-flex", alignItems:"center", gap:4}}><I.edit size={13}/> Edit</span>
+    </button>
+  );
+}
 function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,medium:13,full:45}, onMoveToPortfolio, mobile, apiLookup, rentcastKey, rcAuth, onUpgrade, assumptions, initial, onConsumeInitial, onBackToDeals, backLabel, tier="free"}) {
   // `initial` lets the Deals page hand us a pre-filled deal — we seed state once
   // on mount and then tell App to clear its prefill so a fresh visit later gets
@@ -10066,6 +10122,14 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const [fromDeals]     = useState(() => !!initial);
   const [basicsLoading, setBasicsLoading] = useState(false);
   const [capMsg, setCapMsg] = useState("");
+  // Progressive disclosure: reveal the analyzer one step at a time — address →
+  // property → buying method → full calculator + notes — so it never dumps the
+  // whole form at once. `open` is the expanded step; `maxReached` keeps earlier
+  // steps around as tap-to-edit summaries. A prefilled deal opens further along.
+  const stepSeed = initial && initial.chosenStrategy ? 3 : initial && initial.address ? 2 : 1;
+  const [open, setOpen] = useState(stepSeed);
+  const [maxReached, setMaxReached] = useState(stepSeed);
+  const reveal = (n) => { setOpen(n); setMaxReached(r => Math.max(r, n)); };
 
   // Auto-fill beds/baths/sqft/year/type from property records (light endpoint,
   // cached, not counted against the monthly cap — the full "Pull property
@@ -10126,6 +10190,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   const handleAddressSelect = loc => {
     setD(prev => ({...prev, ...loc, fullAddress: loc.fullAddress}));
     pullProperty(loc);
+    reveal(2); // picking an address moves us to the property-review step
   };
   // Safety net: a full address without specs (manual typing, prefilled saves)
   // pulls after a short pause.
@@ -10158,7 +10223,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     // financing picker). The form stays put so they can keep tweaking.
     if (onSaveToWatchlist) { setErr(""); onSaveToWatchlist(d, exitStrategy || "buyhold"); return; }
     onSave([...deals.filter(x => x.id !== d.id), {...d, savedAt:new Date().toISOString()}]);
-    setD(seedDeal()); setErr("");
+    setD(seedDeal()); setErr(""); setOpen(1); setMaxReached(1);
   };
 
   const m = calc(d);
@@ -10427,6 +10492,18 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         );
       })();
 
+  const methodLabel = d.alreadyOwned ? "Already owned"
+    : (d.chosenStrategy||"finance") === "cash" ? "Cash purchase" : "Financed";
+  const propSummary = [
+    d.beds ? `${d.beds} bd` : null,
+    d.baths ? `${d.baths} ba` : null,
+    d.sqft ? `${d.sqft.toLocaleString()} sqft` : null,
+    d.yearBuilt ? `Built ${d.yearBuilt}` : null,
+  ].filter(Boolean).join("  ·  ") || "Details pending";
+  // Which beat the rail highlights (method vs. analyze depends on whether a
+  // purchase method has been picked yet).
+  const curStep = open === 1 ? 1 : open === 2 ? 2 : (d.chosenStrategy ? 4 : 3);
+
   return (
     <div style={{padding:mobile?"20px 16px 100px":"32px 32px"}}>
       {fromDeals && onBackToDeals && (
@@ -10435,10 +10512,13 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </button>
       )}
       <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
-        action={<button onClick={()=>{setD(seedDeal());setErr("");}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
+        action={<button onClick={()=>{setD(seedDeal());setErr("");setOpen(1);setMaxReached(1);}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>} />
 
-      {/* Property — photo up top, then the address fields together */}
-      <SectionBlock title="Property" color={C.green} icon={I.home}>
+      <AnalyzerSteps current={curStep} mobile={mobile} />
+
+      {/* STEP 1 — Address (photo + address fields) */}
+      {open === 1 ? (
+      <SectionBlock title="Property address" color={C.green} icon={I.pin}>
         {/* When the analyzer is prefilled from a deal (Deals page → Analyze),
             show that deal's photo carousel. Otherwise (custom address search)
             fall back to a Street View image. */}
@@ -10477,8 +10557,21 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             <I.alert size={14}/> {err}
           </div>
         )}
+        <button onClick={()=>reveal(2)} disabled={!(d.address && d.city)}
+          {...btnStyle("primary","lg",{width:"100%", marginTop:18, justifyContent:"center",
+            opacity:(d.address && d.city) ? 1 : .5, cursor:(d.address && d.city) ? "pointer" : "not-allowed"})}>
+          Continue <I.arrowRight size={15}/>
+        </button>
       </SectionBlock>
+      ) : (
+        <StepDone n={1} title="Address" mobile={mobile}
+          value={d.fullAddress || [d.address, d.city, d.state].filter(Boolean).join(", ") || "—"}
+          onEdit={()=>setOpen(1)} />
+      )}
 
+      {/* STEP 2 — Property details (auto-filled from records) */}
+      {maxReached >= 2 && (open === 2 ? (
+      <>
       {/* Free lookup limit reached — the auto-pull is blocked, but manual entry
           below still works. Shown as a branded card, never an error line. */}
       {capMsg && (
@@ -10592,36 +10685,61 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
         </div>
       )}
 
-      {/* Calculator */}
-      <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
-        exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
-        midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
-        stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+      {/* close STEP 2 — property review */}
+        <button onClick={()=>reveal(3)}
+          {...btnStyle("primary","lg",{width:"100%", marginTop:18, justifyContent:"center"})}>
+          Continue <I.arrowRight size={15}/>
+        </button>
+      </>
+      ) : (
+        <StepDone n={2} title="Property" mobile={mobile} value={propSummary} onEdit={()=>setOpen(2)} />
+      ))}
 
-      {/* Summary — always right above Notes (once a method is chosen) */}
-      {d.chosenStrategy && <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>}
-
-      {/* Deal Notes */}
-      <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
-        <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)} className="dh-italic-ph"
-          placeholder="Seller motivation, condition, neighborhood, rehab scope…"
-          style={{...iS(mobile), minHeight:110, resize:"vertical", lineHeight:1.55}} />
-      </SectionBlock>
-
-      {/* Save */}
-      {err && (
-        <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark,
-          background:C.redSubtle, border:"1px solid "+C.redBorder, borderRadius:C.r2,
-          padding:"10px 12px", fontSize:13, marginBottom:12, fontFamily:F}}>
-          <I.alert size={14}/> {err}
-        </div>
+      {/* STEP 3 collapsed — buying method, shown while an earlier step is open */}
+      {open !== 3 && maxReached >= 3 && (
+        <StepDone n={3} title="Buying method" mobile={mobile}
+          value={d.chosenStrategy ? methodLabel : "Not chosen yet"} onEdit={()=>setOpen(3)} />
       )}
-      <button onClick={saveDeal}
-        {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-        <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
-          : exitStrategy === "flip" ? "Fix & Flip"
-          : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
-      </button>
+
+      {/* STEP 3 & 4 — buying-method chooser → full calculator + notes. The
+          Calculator shows only its method chooser until one is picked, then the
+          full body; Notes ride along at the very end so they never show early. */}
+      {open === 3 && (
+        <>
+          <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
+            exit={exitStrategy} onExitChange={v => { exitTouched.current = true; setExitStrategy(v); }} externalSummary
+            midSlot={(d.chosenStrategy||"finance") === "cash" ? cashRecommendation : finRecommendation}
+            stickyTop="calc(env(safe-area-inset-top, 0px) + 54px)" />
+
+          {d.chosenStrategy && (
+            <>
+              {/* Summary — always right above Notes */}
+              <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>
+
+              {/* Deal Notes — only at the final step, never earlier */}
+              <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
+                <textarea value={d.notes||""} onChange={e=>u("notes",e.target.value)} className="dh-italic-ph"
+                  placeholder="Seller motivation, condition, neighborhood, rehab scope…"
+                  style={{...iS(mobile), minHeight:110, resize:"vertical", lineHeight:1.55}} />
+              </SectionBlock>
+
+              {err && (
+                <div style={{display:"flex", gap:8, alignItems:"center", color:C.redDark,
+                  background:C.redSubtle, border:"1px solid "+C.redBorder, borderRadius:C.r2,
+                  padding:"10px 12px", fontSize:13, marginBottom:12, fontFamily:F}}>
+                  <I.alert size={14}/> {err}
+                </div>
+              )}
+              <button onClick={saveDeal}
+                {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
+                <I.star size={15}/> Save as {exitStrategy === "brrrr" ? "BRRRR"
+                  : exitStrategy === "flip" ? "Fix & Flip"
+                  : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}
+              </button>
+            </>
+          )}
+        </>
+      )}
 
       {/* Saved Deals */}
       {deals.length > 0 && (
