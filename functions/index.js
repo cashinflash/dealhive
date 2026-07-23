@@ -24,6 +24,7 @@ const {onSchedule}   = require("firebase-functions/v2/scheduler");
 const {onRequest}    = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const {logger}       = require("firebase-functions/v2");
+const functionsV1    = require("firebase-functions/v1"); // auth onCreate trigger (welcome email)
 const admin          = require("firebase-admin");
 
 admin.initializeApp();
@@ -2155,6 +2156,170 @@ exports.syncBilling = onRequest(
 // Idempotent credit grant for a paid checkout session — used by both the
 // return-URL claim (below) and the webhook, so credits land even if one path
 // never fires. The creditSessions/{id} marker makes double-grants impossible.
+// == Transactional email (Resend) ==============================================
+// Beautiful branded emails matching the site. Every message shares one shell:
+// the dark navy home-hero banner (pre-rendered images under /email), a white
+// body, and a footer. The key stays server-side; if it is not configured the
+// helper no-ops so nothing else breaks.
+const RESEND_API_KEY   = defineSecret("RESEND_API_KEY");
+const EMAIL_SITE       = "https://dealhive.io";
+const EMAIL_FROM       = "DealHive <hello@dealhive.io>";
+const EMAIL_FROM_BILL  = "DealHive <billing@dealhive.io>";
+const ADMIN_EMAIL      = "info@dealhive.io";
+
+async function sendEmail({to, subject, html, from}) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key || key === "unset") { logger.warn("email skipped (RESEND_API_KEY unset)", {subject}); return false; }
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {Authorization: `Bearer ${key}`, "Content-Type": "application/json"},
+      body: JSON.stringify({from: from || EMAIL_FROM, to: Array.isArray(to) ? to : [to], subject, html}),
+    });
+    if (!r.ok) { const t = await r.text().catch(() => ""); logger.error("resend", {status: r.status, body: t.slice(0, 300)}); return false; }
+    return true;
+  } catch (e) { logger.error("sendEmail", {error: e.message}); return false; }
+}
+
+const emailForUid = async (uid) => {
+  try { return (await admin.auth().getUser(uid)).email || null; } catch { return null; }
+};
+
+// Shared shell: hero = image basename under /email, preview = inbox text,
+// body = inner HTML below the hero.
+function emailShell({hero, preview, body}) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+`<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting">` +
+`<style>body{margin:0;padding:0;background:#eef1f5;-webkit-font-smoothing:antialiased;}a{text-decoration:none;}` +
+`@media(max-width:620px){.container{width:100%!important;}.px{padding-left:24px!important;padding-right:24px!important;}}</style></head>` +
+`<body style="margin:0;padding:0;background:#eef1f5;">` +
+`<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#eef1f5;font-size:1px;">${preview}</div>` +
+`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;"><tr><td align="center" style="padding:32px 12px;">` +
+`<table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 20px 52px -18px rgba(15,23,42,.30);font-family:'Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">` +
+`<tr><td style="padding:0;font-size:0;line-height:0;"><img src="${EMAIL_SITE}/email/${hero}-hero.png" width="600" alt="DealHive" style="display:block;border:0;width:100%;height:auto;"></td></tr>` +
+`<tr><td class="px" style="padding:28px 40px 6px;">${body}</td></tr>` +
+`<tr><td class="px" style="padding:18px 40px 0;"><div style="height:1px;background:#eef0f3;line-height:1px;">&nbsp;</div></td></tr>` +
+`<tr><td class="px" style="padding:18px 40px 34px;">` +
+`<img src="${EMAIL_SITE}/logo.png" width="118" alt="DealHive" style="display:block;border:0;width:118px;height:auto;opacity:.92;">` +
+`<p style="margin:12px 0 0;color:#a1a1aa;font-size:12.5px;line-height:1.6;">The investment property analyzer.</p>` +
+`<p style="margin:8px 0 0;font-size:12px;"><a href="${EMAIL_SITE}" style="color:#C2410C;font-weight:600;">dealhive.io</a></p>` +
+`</td></tr></table></td></tr></table></body></html>`;
+}
+const eBtn = (label, href) =>
+  `<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td align="center" style="border-radius:12px;background:linear-gradient(135deg,#E8731C,#C2410C);box-shadow:0 12px 26px -8px rgba(232,115,28,.5);">` +
+  `<a href="${href}" style="display:inline-block;padding:15px 34px;color:#ffffff;font-size:16px;font-weight:800;letter-spacing:-.01em;border-radius:12px;">${label}</a></td></tr></table>`;
+const eH = (t) => `<p style="margin:0 0 6px;color:#1F2D3D;font-size:16px;font-weight:700;">${t}</p>`;
+const eP = (t) => `<p style="margin:0 0 12px;color:#52525b;font-size:15px;line-height:1.65;">${t}</p>`;
+const eMuted = (t) => `<p style="margin:12px 0 0;color:#a1a1aa;font-size:13px;line-height:1.55;">${t}</p>`;
+
+function emailWelcome() {
+  const feat = (e, t, b) =>
+    `<tr><td style="padding:8px 0;"><table role="presentation" cellpadding="0" cellspacing="0"><tr>` +
+    `<td width="46" valign="top"><div style="width:38px;height:38px;border-radius:10px;background:#FFF7ED;border:1px solid #FDBA74;color:#C2410C;text-align:center;line-height:38px;font-size:18px;">${e}</div></td>` +
+    `<td valign="top" style="padding-left:12px;"><div style="color:#1F2D3D;font-size:15px;font-weight:700;">${t}</div>` +
+    `<div style="color:#52525b;font-size:14px;line-height:1.5;margin-top:2px;">${b}</div></td></tr></table></td></tr>`;
+  const body = eH("Hi there,") + eP("Thanks for joining. Here is everything you can do right now, free:") +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 2px;">` +
+    feat("&#128270;", "Find live deals", "Search any market and see real listings, already underwritten.") +
+    feat("&#128202;", "Run the numbers", "Cash flow, cap rate, ARV, and the winning strategy in one view.") +
+    feat("&#128222;", "Reach the owner", "Pull the owner name, mailing address, phone, and email.") +
+    `</table><div style="padding:16px 0 2px;">${eBtn("Analyze your first deal &rarr;", EMAIL_SITE)}</div>` +
+    eMuted("Or just reply to this email with a question. A real person reads it.");
+  return {subject: "Welcome to DealHive", from: EMAIL_FROM,
+    html: emailShell({hero: "welcome", preview: "Your account is ready. Analyze any property in seconds.", body})};
+}
+function emailProWelcome() {
+  const body = eH("You are officially Pro.") +
+    eP("Thanks for upgrading. Everything is unlocked:") +
+    `<ul style="margin:0 0 14px;padding-left:20px;color:#52525b;font-size:15px;line-height:1.9;">` +
+    `<li>The full off-market deal feed</li><li>Unlimited saved properties and photos</li>` +
+    `<li>Owner contacts included on every property</li><li>250 property lookups a month</li></ul>` +
+    `<div style="padding:6px 0 2px;">${eBtn("Open DealHive &rarr;", EMAIL_SITE)}</div>`;
+  return {subject: "Welcome to DealHive Pro", from: EMAIL_FROM_BILL,
+    html: emailShell({hero: "pro", preview: "Your DealHive Pro plan is active.", body})};
+}
+function emailPaymentFailed() {
+  const body = eH("We could not process your payment.") +
+    eP("Your latest DealHive Pro payment did not go through. Update your card and we will retry automatically, so you keep uninterrupted access.") +
+    `<div style="padding:6px 0 2px;">${eBtn("Update payment method", EMAIL_SITE + "/?billing=portal")}</div>` +
+    eMuted("If you think this is a mistake, just reply to this email.");
+  return {subject: "Your DealHive payment needs attention", from: EMAIL_FROM_BILL,
+    html: emailShell({hero: "payment", preview: "Update your card to keep DealHive Pro.", body})};
+}
+function emailCancelled() {
+  const body = eH("Your Pro plan is cancelled.") +
+    eP("You are back on the Free plan. Your saved deals and analyses stay exactly where they are, and the full calculator is still yours.") +
+    eP("Changed your mind? You can pick Pro back up anytime.") +
+    `<div style="padding:6px 0 2px;">${eBtn("Resubscribe to Pro", EMAIL_SITE + "/pricing")}</div>`;
+  return {subject: "Your DealHive Pro subscription was cancelled", from: EMAIL_FROM_BILL,
+    html: emailShell({hero: "cancel", preview: "You are back on the Free plan.", body})};
+}
+function emailReceipt({desc, amount}) {
+  const row = (k, v) => `<tr><td style="padding:9px 0;color:#52525b;font-size:14px;">${k}</td>` +
+    `<td align="right" style="padding:9px 0;color:#1F2D3D;font-size:14px;font-weight:700;">${v}</td></tr>`;
+  const body = eH("Thanks for your purchase.") + eP("Here is your receipt:") +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eef0f3;border-radius:12px;margin:6px 0 4px;">` +
+    `<tr><td style="padding:6px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">` +
+    row("Item", desc) + row("Amount", amount) + row("Billed to", "Your card on file") +
+    `</table></td></tr></table>` + eMuted("A copy of this charge also appears on your card statement as DealHive.");
+  return {subject: "Your DealHive receipt", from: EMAIL_FROM_BILL,
+    html: emailShell({hero: "receipt", preview: `Receipt: ${desc}`, body})};
+}
+function emailReset(link) {
+  const body = eH("Reset your password.") +
+    eP("Click the button below to choose a new password. For your security this link expires in one hour.") +
+    `<div style="padding:6px 0 2px;">${eBtn("Reset password", link)}</div>` +
+    eMuted("If you did not request this, you can safely ignore this email. Your password will not change.");
+  return {subject: "Reset your DealHive password", from: EMAIL_FROM,
+    html: emailShell({hero: "reset", preview: "Reset your DealHive password.", body})};
+}
+// Internal purchase alert to the founder, same shell for a consistent look.
+function emailAdminPurchase({who, desc, amount}) {
+  const row = (k, v) => `<tr><td style="padding:9px 0;color:#52525b;font-size:14px;">${k}</td>` +
+    `<td align="right" style="padding:9px 0;color:#1F2D3D;font-size:14px;font-weight:700;">${v}</td></tr>`;
+  const body = eH("New purchase &#127881;") + eP("Someone just bought on DealHive:") +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eef0f3;border-radius:12px;margin:6px 0 4px;">` +
+    `<tr><td style="padding:6px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">` +
+    row("Customer", who || "unknown") + row("Purchase", desc) + row("Amount", amount) +
+    `</table></td></tr></table>`;
+  return {subject: `New purchase: ${desc} (${amount})`, from: EMAIL_FROM_BILL,
+    html: emailShell({hero: "receipt", preview: `New purchase: ${desc}`, body})};
+}
+
+// Welcome email on new signup (v1 auth trigger).
+exports.onUserCreate = functionsV1
+  .runWith({secrets: ["RESEND_API_KEY"]})
+  .auth.user().onCreate(async (user) => {
+    if (!user.email) return;
+    const {subject, html, from} = emailWelcome();
+    await sendEmail({to: user.email, subject, html, from});
+  });
+
+// Custom, beautiful password reset: generate the secure link server-side and
+// send it through our template instead of Firebase's plain default. Always
+// returns ok so it never reveals whether an email is registered.
+exports.requestPasswordReset = onRequest({
+  secrets: [RESEND_API_KEY], cors: true, region: "us-central1", timeoutSeconds: 20,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const email = String((req.body && req.body.email) || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) { res.status(400).json({error: "email"}); return; }
+    try {
+      const link = await admin.auth().generatePasswordResetLink(email, {url: EMAIL_SITE});
+      const {subject, html, from} = emailReset(link);
+      await sendEmail({to: email, subject, html, from});
+    } catch (e) {
+      // No such user (or other) — stay silent so we never leak account existence.
+      logger.info("requestPasswordReset noop", {reason: e.code || e.message});
+    }
+    res.json({ok: true});
+  } catch (e) {
+    logger.error("requestPasswordReset", {error: e.message});
+    res.json({ok: true});
+  }
+});
+
 async function applyCreditPurchase(session) {
   const uid = (session && (session.client_reference_id ||
     (session.metadata && session.metadata.firebaseUid))) || null;
@@ -2198,7 +2363,7 @@ exports.claimCredits = onRequest(
   });
 
 exports.stripeWebhook = onRequest(
-  {secrets: [STRIPE_SECRET_KEY], region: "us-central1", timeoutSeconds: 30},
+  {secrets: [STRIPE_SECRET_KEY, RESEND_API_KEY], region: "us-central1", timeoutSeconds: 30},
   async (req, res) => {
     try {
       const id = req.body && req.body.id;
@@ -2214,7 +2379,14 @@ exports.stripeWebhook = onRequest(
         return (await admin.database().ref(`stripeCustomers/${customerId}`).get()).val();
       };
 
-      if (event.type === "checkout.session.completed" && obj.mode === "subscription") {
+      const money = (cents) => "$" + (Number(cents || 0) / 100).toFixed(2);
+
+      if (event.type === "invoice.payment_failed") {
+        const uid = await uidFor(obj.customer, null);
+        const email = uid ? await emailForUid(uid) : (obj.customer_email || null);
+        if (email) await sendEmail({to: email, ...emailPaymentFailed()});
+        logger.info("stripe: payment failed", {uid});
+      } else if (event.type === "checkout.session.completed" && obj.mode === "subscription") {
         const uid = await uidFor(obj.customer, obj.client_reference_id);
         if (uid) {
           await billingRef(uid).update({
@@ -2225,10 +2397,19 @@ exports.stripeWebhook = onRequest(
           });
           await admin.database().ref(`stripeCustomers/${obj.customer}`).set(uid);
           logger.info("stripe: pro activated", {uid});
+          const email = await emailForUid(uid);
+          if (email) await sendEmail({to: email, ...emailProWelcome()});
+          await sendEmail({to: ADMIN_EMAIL, ...emailAdminPurchase({who: email || uid, desc: "DealHive Pro subscription", amount: money(obj.amount_total)})});
         }
       } else if (event.type === "checkout.session.completed" && obj.mode === "payment") {
         const balance = await applyCreditPurchase(obj);
         if (balance != null) logger.info("stripe: reveal credits applied", {balance});
+        const uid = await uidFor(obj.customer, obj.client_reference_id);
+        const credits = parseInt((obj.metadata && obj.metadata.credits) || "1", 10) || 1;
+        const desc = `${credits} owner contact ${credits === 1 ? "report" : "reports"}`;
+        const email = uid ? await emailForUid(uid) : (obj.customer_details && obj.customer_details.email);
+        if (email) await sendEmail({to: email, ...emailReceipt({desc, amount: money(obj.amount_total)})});
+        await sendEmail({to: ADMIN_EMAIL, ...emailAdminPurchase({who: email || uid, desc, amount: money(obj.amount_total)})});
       } else if (event.type === "customer.subscription.updated" ||
                  event.type === "customer.subscription.deleted") {
         const uid = await uidFor(obj.customer, obj.metadata && obj.metadata.firebaseUid);
@@ -2237,6 +2418,10 @@ exports.stripeWebhook = onRequest(
           // and grant Pro if any is live. Immune to event-ordering races.
           const rec = await reconcileCustomer(key, uid, obj.customer);
           logger.info("stripe: subscription reconciled", {uid, tier: rec.tier, status: rec.status});
+          if (event.type === "customer.subscription.deleted" && rec.tier !== "pro") {
+            const email = await emailForUid(uid);
+            if (email) await sendEmail({to: email, ...emailCancelled()});
+          }
         }
       }
       res.status(200).send("ok");
