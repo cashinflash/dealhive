@@ -215,34 +215,46 @@ function SectionHeader({ eyebrow, title, subtitle, dark, center = true }) {
   );
 }
 
-// Compact hero for subpages (Features, Pricing, FAQ, …).
-function PageHero({ eyebrow, title, subtitle }) {
+// Compact hero for subpages (Features, Pricing, FAQ, …). `dark` matches the
+// home page's navy hero — orange hexes, white headline, orange keyword.
+function PageHero({ eyebrow, title, subtitle, dark = false }) {
   return (
     <section className="dh-page-hero" style={{
-      padding: "64px 24px 56px",
+      padding: "68px 24px 60px",
       position: "relative", overflow: "hidden",
-      background: `radial-gradient(ellipse at 50% 0%, ${C.orangeSubtle} 0%, transparent 60%), ${C.bg}`,
+      background: dark
+        ? `radial-gradient(ellipse at 18% 0%, ${C.navySoft} 0%, transparent 55%), linear-gradient(165deg, ${C.navyDeep} 0%, ${C.navy} 100%)`
+        : `radial-gradient(ellipse at 50% 0%, ${C.orangeSubtle} 0%, transparent 60%), ${C.bg}`,
       textAlign: "center",
     }}>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-        <Hex size={220} color={C.orangeLight} opacity={0.5} blur={34} float={1}
-          style={{ top: -70, right: "4%" }}/>
-        <Hex size={96} color={C.orangeBorder} opacity={0.35} outline float={2}
-          style={{ top: "22%", left: "-28px" }}/>
-        <Hex size={48} color={C.orange} opacity={0.15} float={3}
-          style={{ bottom: "8%", right: "16%" }}/>
+        {dark ? (
+          <>
+            <Hex size={250} color={C.orange} opacity={0.14} blur={40} float={1} style={{ top: -80, right: "5%" }}/>
+            <Hex size={104} color={C.orange} opacity={0.2} outline float={2} style={{ top: "24%", left: "-30px" }}/>
+            <Hex size={50} color={C.orangeBorder} opacity={0.26} float={3} style={{ bottom: "10%", right: "16%" }}/>
+          </>
+        ) : (
+          <>
+            <Hex size={220} color={C.orangeLight} opacity={0.5} blur={34} float={1} style={{ top: -70, right: "4%" }}/>
+            <Hex size={96} color={C.orangeBorder} opacity={0.35} outline float={2} style={{ top: "22%", left: "-28px" }}/>
+            <Hex size={48} color={C.orange} opacity={0.15} float={3} style={{ bottom: "8%", right: "16%" }}/>
+          </>
+        )}
       </div>
       <div style={{ maxWidth: 760, margin: "0 auto", position: "relative", zIndex: 1 }}>
-        {eyebrow && <div style={{ marginBottom: 16 }}><Eyebrow>{eyebrow}</Eyebrow></div>}
+        {eyebrow && <div style={{ marginBottom: 16 }}>
+          <Eyebrow tone={dark ? { a: C.orange, d: C.orangeBorder } : undefined}>{eyebrow}</Eyebrow>
+        </div>}
         <h1 style={{
-          fontSize: "clamp(32px, 5vw, 52px)", fontWeight: 700, fontFamily: F,
-          letterSpacing: "-0.035em", lineHeight: 1.05, margin: "0 0 16px", color: C.text,
+          fontSize: "clamp(32px, 5vw, 52px)", fontWeight: 800, fontFamily: F,
+          letterSpacing: "-0.035em", lineHeight: 1.05, margin: "0 0 16px", color: dark ? "#fff" : C.text,
         }}>
           {title}
         </h1>
         {subtitle && (
           <p style={{
-            fontSize: "clamp(15px, 1.7vw, 18px)", color: C.textSub, fontFamily: F,
+            fontSize: "clamp(15px, 1.7vw, 18px)", color: dark ? "#c3ccd8" : C.textSub, fontFamily: F,
             margin: 0, lineHeight: 1.6,
           }}>
             {subtitle}
@@ -855,7 +867,7 @@ function NumbersStrip() {
 }
 
 // -- Pricing ------------------------------------------------------------------
-function Pricing({ onSignUp }) {
+function Pricing({ onSignUp, heading = true }) {
   const [yearly, setYearly] = useState(true);
   const free = {
     name: "Free",
@@ -897,32 +909,44 @@ function Pricing({ onSignUp }) {
 
   return (
     <Section id="pricing" tint hexes={HEX_SETS.tint}>
-      <SectionHeader
-        eyebrow="Pricing"
-        title="One simple plan. Cancel anytime."
-        subtitle="Try it free. Upgrade when you're ready to see the full feed."
-      />
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+      {heading && (
+        <SectionHeader
+          eyebrow="Pricing"
+          title="One simple plan. Cancel anytime."
+          subtitle="Try it free. Upgrade when you're ready to see the full feed."
+        />
+      )}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12,
+        flexWrap: "wrap", marginBottom: 30 }}>
         <div style={{
-          display: "inline-flex", padding: 4, background: "#fff",
+          display: "inline-flex", padding: 5, background: "#fff",
           border: "1px solid " + C.border, borderRadius: 9999,
-          boxShadow: "0 1px 2px 0 rgba(15,23,42,.05)",
+          boxShadow: "0 1px 3px 0 rgba(15,23,42,.06)",
         }}>
-          {[["monthly", "Pay Monthly"], ["yearly", "Pay Yearly · save 33%"]].map(([id, label]) => {
+          {[["monthly", "Monthly"], ["yearly", "Yearly"]].map(([id, label]) => {
             const active = (id === "yearly") === yearly;
             return (
               <button key={id} onClick={() => setYearly(id === "yearly")} style={{
-                padding: "9px 18px", borderRadius: 9999, border: "none", cursor: "pointer",
-                background: active ? C.orange : "transparent",
+                padding: "10px 24px", borderRadius: 9999, border: "none", cursor: "pointer",
+                background: active ? `linear-gradient(135deg, ${C.orange}, ${C.orangeDark})` : "transparent",
                 color: active ? "#fff" : C.textSub,
-                fontSize: 13.5, fontWeight: 700, fontFamily: F, letterSpacing: "-0.005em",
-                transition: "background .15s, color .15s",
+                fontSize: 14, fontWeight: 700, fontFamily: F, letterSpacing: "-0.01em",
+                boxShadow: active ? "0 6px 14px -4px rgba(232,115,28,.45)" : "none",
+                transition: "background .15s, color .15s, box-shadow .15s",
               }}>
                 {label}
               </button>
             );
           })}
         </div>
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          background: C.orangeSubtle, color: C.orangeDark, border: "1px solid " + C.orangeBorder,
+          borderRadius: 9999, padding: "7px 13px", fontSize: 12.5, fontWeight: 800,
+          fontFamily: F, letterSpacing: "-0.005em",
+        }}>
+          Save 33% yearly
+        </span>
       </div>
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
@@ -1441,11 +1465,13 @@ function PricingPage({ onSignUp }) {
   return (
     <>
       <PageHero
+        dark
         eyebrow="Pricing"
-        title="Less than one bad showing costs you."
+        title={<>Less than one bad showing{" "}
+          <span style={{ color: C.orange, whiteSpace: "nowrap" }}>costs you.</span></>}
         subtitle="Start free, no credit card. Upgrade when you want the full feed. Cancel anytime."
       />
-      <Pricing onSignUp={onSignUp}/>
+      <Pricing onSignUp={onSignUp} heading={false}/>
       <FAQ items={pricingFaq}/>
       <FinalCTA onSignUp={onSignUp} title="Your next deal might already be in the feed."/>
     </>
