@@ -2079,62 +2079,79 @@ exports.createCheckoutSession = onRequest(
 
       // One Stripe customer per account, reused across checkouts so the
       // subscription, invoices, and portal all hang off a single record.
-      let customerId = (await billingRef(user.uid).child("customerId").get()).val();
-      if (!customerId) {
+      const makeCustomer = async () => {
         const customer = await stripeReq(key, "POST", "/v1/customers", {
           email: user.email || "",
           "metadata[firebaseUid]": user.uid,
         });
-        customerId = customer.id;
-        await billingRef(user.uid).update({customerId});
-        await admin.database().ref(`stripeCustomers/${customerId}`).set(user.uid);
-      }
+        await billingRef(user.uid).update({customerId: customer.id});
+        await admin.database().ref(`stripeCustomers/${customer.id}`).set(user.uid);
+        return customer.id;
+      };
+      let customerId = (await billingRef(user.uid).child("customerId").get()).val();
+      if (!customerId) customerId = await makeCustomer();
 
       const plan = (req.body && req.body.plan) || "monthly";
-      let session;
-      if (plan === "credits10" || plan === "reveal1" || plan === "reveal5") {
-        // One-time Reveal credit purchase. Amounts are pinned here — the client
-        // only ever names the plan, never a price. The 10-pack ($0.99/credit) is
-        // a Pro perk (extra reveals past their monthly allotment); free accounts
-        // buy a single report at $2.99 or a 5-pack at $9.99 ($2/report).
+      // One-time Reveal credit purchase. Amounts are pinned here — the client
+      // only ever names the plan, never a price. The 10-pack ($0.99/credit) is
+      // a Pro perk (extra reveals past their monthly allotment); free accounts
+      // buy a single report at $2.99 or a 5-pack at $9.99 ($2/report).
+      const isCredits = plan === "credits10" || plan === "reveal1" || plan === "reveal5";
+      let pack = null;
+      if (isCredits) {
         const isProBuyer = user.email === "harut@ymail.com" ||
           (await billingRef(user.uid).child("tier").get()).val() === "pro";
-        const pack = (plan === "credits10" && isProBuyer)
+        pack = (plan === "credits10" && isProBuyer)
           ? {name: "DealHive Reveal Credits (10 pack)", amount: "990", credits: "10"}
           : plan === "reveal5"
             ? {name: "DealHive Owner Contact Reports (5 pack)", amount: "999", credits: "5"}
             : {name: "DealHive Owner Contact Report", amount: "299", credits: "1"};
-        session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
-          "mode": "payment",
-          "customer": customerId,
-          "line_items[0][price_data][currency]": "usd",
-          "line_items[0][price_data][product_data][name]": pack.name,
-          "line_items[0][price_data][unit_amount]": pack.amount,
-          "line_items[0][quantity]": "1",
-          "client_reference_id": user.uid,
-          "metadata[firebaseUid]": user.uid,
-          "metadata[credits]": pack.credits,
-          "allow_promotion_codes": "true",
-          "success_url": `${APP_ORIGIN}/?billing=credits&session_id={CHECKOUT_SESSION_ID}`,
-          "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
-        });
-      } else {
-        session = await stripeReq(key, "POST", "/v1/checkout/sessions", {
-          "mode": "subscription",
-          "customer": customerId,
-          "line_items[0][price]": plan === "yearly" ? STRIPE_PRICE_ID_YEARLY : STRIPE_PRICE_ID,
-          "line_items[0][quantity]": "1",
-          "client_reference_id": user.uid,
-          "subscription_data[metadata][firebaseUid]": user.uid,
-          "allow_promotion_codes": "true",
-          "success_url": `${APP_ORIGIN}/?billing=success`,
-          "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
-        });
+      }
+      const buildParams = (cid) => isCredits ? {
+        "mode": "payment",
+        "customer": cid,
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][product_data][name]": pack.name,
+        "line_items[0][price_data][unit_amount]": pack.amount,
+        "line_items[0][quantity]": "1",
+        "client_reference_id": user.uid,
+        "metadata[firebaseUid]": user.uid,
+        "metadata[credits]": pack.credits,
+        "allow_promotion_codes": "true",
+        "success_url": `${APP_ORIGIN}/?billing=credits&session_id={CHECKOUT_SESSION_ID}`,
+        "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
+      } : {
+        "mode": "subscription",
+        "customer": cid,
+        "line_items[0][price]": plan === "yearly" ? STRIPE_PRICE_ID_YEARLY : STRIPE_PRICE_ID,
+        "line_items[0][quantity]": "1",
+        "client_reference_id": user.uid,
+        "subscription_data[metadata][firebaseUid]": user.uid,
+        "allow_promotion_codes": "true",
+        "success_url": `${APP_ORIGIN}/?billing=success`,
+        "cancel_url": `${APP_ORIGIN}/?billing=cancelled`,
+      };
+
+      let session;
+      try {
+        session = await stripeReq(key, "POST", "/v1/checkout/sessions", buildParams(customerId));
+      } catch (e1) {
+        // A customer created under a different key/mode (e.g. a test→live
+        // switch) reads back as "No such customer". Recreate it once and retry
+        // so a stale record can't permanently block checkout.
+        if (/customer/i.test(e1.message || "")) {
+          customerId = await makeCustomer();
+          session = await stripeReq(key, "POST", "/v1/checkout/sessions", buildParams(customerId));
+        } else {
+          throw e1;
+        }
       }
       res.json({url: session.url});
     } catch (e) {
       logger.error("createCheckoutSession", {error: e.message});
-      res.status(500).json({error: "Could not start checkout. Try again in a moment."});
+      // Surface the real Stripe reason (temporarily) so a launch-blocking
+      // checkout failure can be diagnosed from the client instead of guessed.
+      res.status(500).json({error: "Could not start checkout. Try again in a moment.", detail: e.message});
     }
   });
 
