@@ -1793,7 +1793,11 @@ exports.commercialDetail = onRequest({
       }
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
-      if (got.description && got.description.length > 300) break;
+      // First answer with any description wins. The id variants have never
+      // carried more text than the URL form of the same listing, and the
+      // second source now supplies the full write-up when this one is short,
+      // so extra sequential lookups here only add seconds, not words.
+      if (got.description) break;
     }
     if (got.description) got.description = cleanListingText(got.description);
     // Short answer from the primary source: ask the second provider for the
