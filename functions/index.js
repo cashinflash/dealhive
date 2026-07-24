@@ -1287,17 +1287,20 @@ exports.homeDetail = onRequest({
     if (zpid) attempts.push(`/byzpid?zpid=${encodeURIComponent(zpid)}`,
                             `/byid?id=${encodeURIComponent(zpid)}`);
     let got = {description: null, photos: []};
+    let sawOk = false;
     for (const path of attempts) {
       const j = await tryGet(path);
       if (!j) continue;
+      sawOk = true;
       const g = extractZillowDetail(j);
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
       if (got.description && got.description.length > 200) break;
     }
+    if (got.description) got.description = cleanListingText(got.description);
     const record = {v: 1, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
-    await cacheRef.set(record);
+    if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
     res.json({found: record.found, description: record.description, photos: record.photos, cached: false});
@@ -1322,6 +1325,15 @@ function decodeEntities(s) {
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
+}
+// Listing copy sometimes arrives as HTML. Turn breaks into newlines, drop the
+// rest of the tags, then decode entities, so every screen gets plain prose.
+function cleanListingText(s) {
+  return decodeEntities(String(s || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h\d)>/gi, "\n")
+    .replace(/<[^>]+>/g, ""))
+    .replace(/\n{3,}/g, "\n\n").trim();
 }
 function mapLoopnetListing(r) {
   if (!r || typeof r !== "object") return null;
@@ -1586,22 +1598,28 @@ exports.commercialDetail = onRequest({
     // The docs don't say whether /details/byid wants the listing id or the
     // property id, so try both, then the URL. First answer with a real
     // description wins; a photos-only answer is kept as a fallback.
+    // The URL is the least ambiguous identifier, so it leads; the two id
+    // forms follow. If nothing even answers, we skip caching so a transient
+    // upstream failure can't blank a listing for an hour.
     const attempts = [];
+    if (url) attempts.push(`/details/byurl?url=${encodeURIComponent(url)}`);
     if (id)  attempts.push(`/details/byid?id=${encodeURIComponent(id)}`);
     if (pid && pid !== id) attempts.push(`/details/byid?id=${encodeURIComponent(pid)}`);
-    if (url) attempts.push(`/details/byurl?url=${encodeURIComponent(url)}`);
     let got = {description: null, photos: []};
+    let sawOk = false;
     for (const path of attempts) {
       const j = await tryGet(path);
       if (!j) continue;
+      sawOk = true;
       const g = extractLoopnetDetail(j);
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
       if (got.description && got.description.length > 300) break;
     }
+    if (got.description) got.description = cleanListingText(got.description);
     const record = {v: 2, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
-    await cacheRef.set(record);
+    if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
     res.json({found: record.found, description: record.description, photos: record.photos, cached: false});
@@ -1621,7 +1639,10 @@ exports.commercialDetail = onRequest({
 const REALESTATEAPI_KEY = defineSecret("REALESTATEAPI_KEY");
 const REAPI_BASE = "https://api.realestateapi.com";
 const REAPI_TYPE = {SFR: "Single Family", MFR: "Multi-Family", CONDO: "Condo",
-  TOWNHOUSE: "Townhouse", MOBILE: "Single Family", LAND: "Other", OTHER: "Other"};
+  TOWNHOUSE: "Townhouse", MOBILE: "Single Family", LAND: "Land", OTHER: "Other",
+  COMMERCIAL: "Commercial", OFFICE: "Office", RETAIL: "Retail",
+  INDUSTRIAL: "Industrial", WAREHOUSE: "Warehouse", MIXED_USE: "Mixed Use",
+  MIXEDUSE: "Mixed Use", APARTMENT: "Apartments"};
 
 // Normalize a PropertyDetail `data` object into the fields the analyzer and the
 // owner reveal consume. suggestedRent is the area rent estimate; when it's
