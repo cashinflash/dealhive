@@ -1609,15 +1609,15 @@ const LOOPNET2_GET_PATHS = ["/sale/details", "/sale/detail", "/sale/listing-deta
 async function loopnet2SaleDetails(lid, key, trace) {
   const cfgRef = admin.database().ref("config/loopnet2SalePath");
   const stored = String((await cfgRef.get()).val() || "");
-  const attempts = [];
-  if (stored) attempts.push(stored.includes(" ") ? stored.split(" ") : ["POST", stored]);
-  for (const p of LOOPNET2_PATHS) attempts.push(["POST", p]);
-  for (const p of LOOPNET2_GET_PATHS) attempts.push(["GET", p]);
   const call = async (method, path, body) => {
     try {
-      const url = method === "GET"
-        ? `https://${LOOPNET2_HOST}${path}?listingId=${encodeURIComponent(lid)}`
-        : `https://${LOOPNET2_HOST}${path}`;
+      // Spec-derived routes can carry an {id} token; it takes the listing id
+      // in the path, so no query parameter is added on top of it.
+      const hasTok = path.includes("{");
+      const concrete = path.replace(/\{[^}]+\}/g, encodeURIComponent(lid));
+      const url = method === "GET" && !hasTok
+        ? `https://${LOOPNET2_HOST}${concrete}?listingId=${encodeURIComponent(lid)}`
+        : `https://${LOOPNET2_HOST}${concrete}`;
       const r = await fetch(url, {
         method,
         headers: {"Content-Type": "application/json",
@@ -1628,19 +1628,25 @@ async function loopnet2SaleDetails(lid, key, trace) {
       return {status: r.status, j};
     } catch { return {status: 0, j: null}; }
   };
-  const seen = new Set();
-  let misses = 0;
-  for (const [method, path] of attempts) {
+  let firstMiss = "";
+  // One full request + verdict for a method/path pair: the result object on
+  // success, "empty" (route fine, id unknown), "miss" (404), null (hard stop).
+  const attempt = async (method, path) => {
     const sig = `${method} ${path}`;
-    if (seen.has(sig)) continue;
-    seen.add(sig);
     let got = await call(method, path, {listingId: Number(lid)});
     // The right route with the wrong body shape answers 400/422; retry the id
     // as a string before concluding anything about the route.
     if (method === "POST" && (got.status === 400 || got.status === 422)) {
       got = await call(method, path, {listingId: String(lid)});
     }
-    if (got.status === 404) { misses++; continue; }
+    if (got.status === 404) {
+      // The rejection wording names the rejecting side: the RapidAPI gateway
+      // echoes the path back, an upstream framework says "Not Found".
+      if (!firstMiss && got.j) {
+        firstMiss = String(got.j.message || got.j.detail || "").slice(0, 90);
+      }
+      return "miss";
+    }
     if (got.status === 403) { trace.push(`p2 ${sig} 403 not-subscribed`); return null; }
     if (got.status === 429) { trace.push(`p2 ${sig} 429 quota`); return null; }
     if (got.status !== 200 || !got.j) { trace.push(`p2 ${sig} HTTP ${got.status}`); return null; }
@@ -1661,8 +1667,39 @@ async function loopnet2SaleDetails(lid, key, trace) {
       .filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 30);
     trace.push(`p2 ${sig} ok desc=${description ? description.length : 0} photos=${photos.length}`);
     return {description, photos};
+  };
+  const attempts = [];
+  if (stored) attempts.push(stored.includes(" ") ? stored.split(" ") : ["POST", stored]);
+  for (const p of LOOPNET2_PATHS) attempts.push(["POST", p]);
+  for (const p of LOOPNET2_GET_PATHS) attempts.push(["GET", p]);
+  const seen = new Set();
+  let misses = 0;
+  for (const [method, path] of attempts) {
+    const sig = `${method} ${path}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    const r = await attempt(method, path);
+    if (r === "miss") { misses++; continue; }
+    return r;
   }
-  trace.push(`p2 no-route (${misses} spellings tried)`);
+  // Every spelling missed. Last resort: ask the backend to describe itself.
+  // FastAPI-style services publish their whole route table at /openapi.json
+  // unless the author hid it; one hit configures the route without guessing.
+  for (const specPath of ["/openapi.json", "/docs/openapi.json", "/swagger.json"]) {
+    const got = await call("GET", specPath, null);
+    if (got.status !== 200 || !got.j || typeof got.j.paths !== "object" || !got.j.paths) continue;
+    const keys = Object.keys(got.j.paths);
+    const pick = keys.find((k) => /sale/i.test(k) && /detail/i.test(k)) ||
+                 keys.find((k) => /detail/i.test(k)) ||
+                 keys.find((k) => /sale/i.test(k));
+    trace.push(`p2 spec ${keys.length} routes${pick ? "" : ", none match"}`);
+    if (!pick) break;
+    const ops = got.j.paths[pick] || {};
+    const r = await attempt(ops.post ? "POST" : "GET", pick);
+    if (r !== "miss") return r;
+    break;
+  }
+  trace.push(`p2 no-route (${misses} spellings tried${firstMiss ? `; ${firstMiss}` : ""})`);
   return null;
 }
 exports.commercialDetail = onRequest({
