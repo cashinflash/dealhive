@@ -11134,17 +11134,22 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
+// The unit mixes that cover nearly every building; Custom handles the rest.
+const MF_UNIT_TYPES = ["Studio", "1BR / 1BA", "2BR / 1BA", "2BR / 2BA",
+  "3BR / 1BA", "3BR / 2BA", "4BR / 2BA"];
+
 // Income-property (multifamily / commercial) calculator. Rent roll → NOI → cap
 // rate / DSCR, valued on NOI ÷ market cap. Rendered in place of the residential
 // Calculator when a deal's assetClass is "multifamily"; the residential engine
 // is never touched.
-function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
+function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLookup, rcAuth, tier = "free", onUpgrade}) {
   const u = (f, v) => set({...p, [f]: v});
   const m = calcMF(p);
   // Operating expenses can be typed monthly or yearly; the engine always
   // stores annual, so switching the view never changes the math.
   const [expPer, setExpPer] = useState("yr");
   const [resPer, setResPer] = useState("mo");
+  const [compsOpen, setCompsOpen] = useState(false);
   const perVal = v => expPer === "mo" ? Math.round((v || 0) / 12) : (v || 0);
   const perSet = f => v => u(f, expPer === "mo" ? Math.round((+v || 0) * 12) : (+v || 0));
   // Insurance starts from the state's average rate so the field is never a
@@ -11261,8 +11266,23 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
             <div key={un.id} style={{display:"grid", gridTemplateColumns:"1fr 58px 100px 30px", gap:8,
               alignItems:"center", padding:"9px 12px", background:"#fff",
               borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
-              <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
-                placeholder="2BR / 1BA" style={cell}/>
+              {(un.custom || (un.label && !MF_UNIT_TYPES.includes(un.label))) ? (
+                <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
+                  onBlur={e=>{ if (!e.target.value.trim()) patchUnit(un.id, {custom:false, label:""}); }}
+                  placeholder="Describe the unit" style={cell}/>
+              ) : (
+                <select value={MF_UNIT_TYPES.includes(un.label) ? un.label : ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === "__custom") patchUnit(un.id, {custom:true, label:""});
+                    else patchUnit(un.id, {custom:false, label:v});
+                  }}
+                  style={{...cell, color: un.label ? C.text : C.textMuted, cursor:"pointer"}}>
+                  <option value="" disabled>Unit type</option>
+                  {MF_UNIT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  <option value="__custom">Custom</option>
+                </select>
+              )}
               <input type="number" inputMode="numeric" value={un.count || ""} onChange={e=>patchUnit(un.id, {count:+e.target.value})}
                 style={{...cell, textAlign:"center"}}/>
               <div style={{position:"relative"}}>
@@ -11278,18 +11298,29 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
               </button>
             </div>
           ))}
-          <div style={{display:"flex", gap:14, padding:"10px 12px", background:C.bgSubtle,
+          <div style={{display:"flex", gap:12, flexWrap:"wrap", alignItems:"center",
+            justifyContent:"space-between", padding:"10px 12px", background:C.bgSubtle,
             borderTop:"1px solid "+C.border}}>
-            <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
-              background:"none", border:"none", padding:0, color:C.greenDark,
-              fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-              <I.plus size={13} stroke={2.6}/> Add unit type
-            </button>
-            <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
-              background:"none", border:"none", padding:0, color:C.textSub,
-              fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-              <I.plus size={13} stroke={2.6}/> Add commercial space
-            </button>
+            <div style={{display:"flex", gap:14, flexWrap:"wrap"}}>
+              <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
+                background:"none", border:"none", padding:0, color:C.greenDark,
+                fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+                <I.plus size={13} stroke={2.6}/> Add unit type
+              </button>
+              <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
+                background:"none", border:"none", padding:0, color:C.textSub,
+                fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+                <I.plus size={13} stroke={2.6}/> Add commercial space
+              </button>
+            </div>
+            {apiLookup && (
+              <button onClick={()=>setCompsOpen(true)} style={{display:"inline-flex", alignItems:"center",
+                gap:6, padding:"6px 13px", borderRadius:9999, background:"#fff",
+                border:"1px solid "+C.greenBorder, color:C.greenDark,
+                fontSize:12, fontWeight:700, fontFamily:F, cursor:"pointer", boxShadow:C.sh1}}>
+                <I.search size={12} stroke={2.6}/> Market Rents
+              </button>
+            )}
           </div>
         </div>
 
@@ -11408,11 +11439,9 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
           </div>
         }>
         <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 12}}>
-          <InputField label={`Property Taxes / ${expPer}`} val={perVal(p.mfExpTaxes)} set={perSet("mfExpTaxes")} pre="$"
-            note="Auto-filled from tax records when available." mobile={mobile}/>
+          <InputField label={`Property Taxes / ${expPer}`} val={perVal(p.mfExpTaxes)} set={perSet("mfExpTaxes")} pre="$" mobile={mobile}/>
           <div>
-            <InputField label={`Insurance / ${expPer}`} val={perVal(p.mfExpInsurance)} set={perSet("mfExpInsurance")} pre="$"
-              note="Estimated from state averages until you have a quote." mobile={mobile}/>
+            <InputField label={`Insurance / ${expPer}`} val={perVal(p.mfExpInsurance)} set={perSet("mfExpInsurance")} pre="$" mobile={mobile}/>
             <a href="https://www.steadily.com" target="_blank" rel="noreferrer"
               style={{display:"inline-flex", alignItems:"center", gap:6, margin:"-6px 0 14px",
                 fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
@@ -11420,8 +11449,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
             </a>
           </div>
         </div>
-        <InputField label={`Utilities / ${expPer}`} val={perVal(p.mfExpUtilities)} set={perSet("mfExpUtilities")} pre="$"
-          note="Common area plus any owner-paid utilities." mobile={mobile}/>
+        <InputField label={`Utilities / ${expPer}`} val={perVal(p.mfExpUtilities)} set={perSet("mfExpUtilities")} pre="$" mobile={mobile}/>
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
           <InputField label="Management" val={p.mfExpMgmtPct} set={v=>u("mfExpMgmtPct",v)} suf="%" mobile={mobile}/>
           <InputField label="Maintenance" val={p.mfExpMaintPct} set={v=>u("mfExpMaintPct",v)} suf="%" mobile={mobile}/>
@@ -11589,6 +11617,11 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
           );
         })()}
       </SectionBlock>
+
+      {compsOpen && (
+        <RentCompsSheet p={p} apiLookup={apiLookup} rcAuth={rcAuth}
+          tier={tier} onUpgrade={onUpgrade} onClose={()=>setCompsOpen(false)} mobile={mobile}/>
+      )}
     </div>
   );
 }
@@ -12443,7 +12476,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {open === 3 && (
         <>
           {(d.assetClass === "multifamily" && d.chosenStrategy) ? (
-            <MultifamilyCalculator p={d} set={setD} mobile={mobile} startCollapsed={savedReopen} />
+            <MultifamilyCalculator p={d} set={setD} mobile={mobile} startCollapsed={savedReopen}
+              apiLookup={apiLookup} rcAuth={rcAuth} tier={tier} onUpgrade={onUpgrade} />
           ) : (
             <Calculator p={d} set={setD} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} onUpgrade={onUpgrade}
               startCollapsed={savedReopen}
