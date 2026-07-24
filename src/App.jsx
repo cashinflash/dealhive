@@ -6019,6 +6019,9 @@ const proFormaToFeedDeal = pf => ({
   source: pf.listingSource || "My analysis",
   sourcedAt: new Date().toISOString().slice(0, 10),
   // Multifamily / commercial underwriting persists with the saved deal.
+  loopnetId:            pf.loopnetId || null,
+  loopnetPropertyId:    pf.loopnetPropertyId || null,
+  loopnetUrl:           pf.loopnetUrl || null,
   assetClass:           pf.assetClass || "residential",
   units:                Array.isArray(pf.units) ? pf.units : [],
   cspaces:              Array.isArray(pf.cspaces) ? pf.cspaces : [],
@@ -6125,6 +6128,9 @@ const dealToProForma = (deal) => {
     ],
     // Multifamily / commercial underwriting carries through unchanged, so a
     // saved income deal reopens straight into the multifamily calculator.
+    loopnetId:            deal.loopnetId || (/^ln\w+$/.test(String(deal.id || "")) ? String(deal.id).slice(2) : null),
+    loopnetPropertyId:    deal.loopnetPropertyId || null,
+    loopnetUrl:           deal.loopnetUrl || null,
     assetClass:           deal.assetClass || "residential",
     units:                Array.isArray(deal.units) ? deal.units : [],
     cspaces:              Array.isArray(deal.cspaces) ? deal.cspaces : [],
@@ -10129,7 +10135,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile}) {
         const r = await fetch(`${FN_BASE}/commercialDetail`, {
           method: "POST",
           headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
-          body: JSON.stringify({id: l.id, url: l.url}),
+          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url}),
         });
         const j = await r.json().catch(() => null);
         if (alive && r.ok && j && j.found) setDetail(j);
@@ -10414,6 +10420,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     photos: Array.isArray(l.photos) && l.photos.length ? l.photos : (l.photo ? [l.photo] : []),
     photo: l.photo || null,
     description: l.description || null, source: "LoopNet",
+    loopnetId: l.id || null, loopnetPropertyId: l.propertyId || null, loopnetUrl: l.url || null,
     assetClass: "multifamily",
   });
 
@@ -11137,6 +11144,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
   // Operating expenses can be typed monthly or yearly; the engine always
   // stores annual, so switching the view never changes the math.
   const [expPer, setExpPer] = useState("yr");
+  const [resPer, setResPer] = useState("mo");
   const perVal = v => expPer === "mo" ? Math.round((v || 0) / 12) : (v || 0);
   const perSet = f => v => u(f, expPer === "mo" ? Math.round((+v || 0) * 12) : (+v || 0));
   // Insurance starts from the state's average rate so the field is never a
@@ -11386,20 +11394,17 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
       <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
         collapsible defaultOpen={!startCollapsed}
         right={
-          <div onClick={e => e.stopPropagation()} style={{display:"flex", alignItems:"center", gap:8}}>
-            <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F}}>{pct(m.expRatio)} of EGI</span>
-            <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
-              border:"1px solid "+C.border}}>
-              {[["mo","Monthly"],["yr","Yearly"]].map(([id,label]) => {
-                const active = expPer === id;
-                return (
-                  <button key={id} onClick={()=>setExpPer(id)}
-                    style={{padding:"4px 11px", borderRadius:9999, border:"none", cursor:"pointer",
-                      background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
-                      fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
-                );
-              })}
-            </div>
+          <div onClick={e => e.stopPropagation()} style={{display:"flex", padding:3,
+            background:C.bgSubtle, borderRadius:9999, border:"1px solid "+C.border}}>
+            {[["mo","Monthly"],["yr","Yearly"]].map(([id,label]) => {
+              const active = expPer === id;
+              return (
+                <button key={id} onClick={()=>setExpPer(id)}
+                  style={{padding:"4px 11px", borderRadius:9999, border:"none", cursor:"pointer",
+                    background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                    fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+              );
+            })}
           </div>
         }>
         <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 12}}>
@@ -11436,11 +11441,14 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
               <span style={{fontSize:13, fontWeight:700, color:"#059669", fontFamily:F, fontVariantNumeric:"tabular-nums"}}>-{$(expPer === "mo" ? m.recovered / 12 : m.recovered)}</span>
             </div>
           )}
-          <div style={{display:"flex", justifyContent:"space-between", padding:"11px 14px",
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"11px 14px",
             background:C.bgSubtle, borderTop: m.recovered > 0 ? "1px solid "+C.border : "none"}}>
             <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F}}>Total Operating Expenses</span>
-            <span style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-              {$(expPer === "mo" ? m.opex / 12 : m.opex)}<span style={{fontWeight:600, fontSize:11.5, color:C.textMuted}}>/{expPer}</span>
+            <span style={{textAlign:"right"}}>
+              <span style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                {$(expPer === "mo" ? m.opex / 12 : m.opex)}<span style={{fontWeight:600, fontSize:11.5, color:C.textMuted}}>/{expPer}</span>
+              </span>
+              <span style={{display:"block", fontSize:10.5, color:C.textMuted, fontFamily:F}}>{pct(m.expRatio)} of gross income</span>
             </span>
           </div>
         </div>
@@ -11448,12 +11456,33 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
 
       {/* Results — the investor's read, top to bottom: what it costs to close,
           what it earns, what the bank sees, how it performs, what it's worth. */}
-      <SectionBlock title="Results" color={C.green} icon={I.chart}>
+      <SectionBlock title="Results" color={C.green} icon={I.chart}
+        right={
+          <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
+            border:"1px solid "+C.border}}>
+            {[["mo","Monthly"],["yr","Yearly"]].map(([id,label]) => {
+              const active = resPer === id;
+              return (
+                <button key={id} onClick={()=>setResPer(id)}
+                  style={{padding:"4px 11px", borderRadius:9999, border:"none", cursor:"pointer",
+                    background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                    fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+              );
+            })}
+          </div>
+        }>
         {(() => {
           const label = {fontSize:10.5, fontWeight:800, color:C.textSub, fontFamily:F,
             letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"};
           const box = {border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
             boxShadow:C.sh1, marginBottom:16};
+          // Every recurring figure obeys the Monthly/Yearly toggle; the other
+          // period rides underneath so nothing is ever more than a glance away.
+          const mo = resPer === "mo";
+          const per = (yr, {neg} = {}) => ({
+            main: (neg ? "-" : "") + $(Math.abs(mo ? yr / 12 : yr)) + (mo ? "/mo" : "/yr"),
+            sub:  (neg ? "-" : "") + $(Math.abs(mo ? yr : yr / 12)) + (mo ? "/yr" : "/mo"),
+          });
           const row = (k, v, {bold, color, sub, top} = {}) => (
             <div key={k} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
               gap:10, padding:"10px 14px", background: bold ? C.bgSubtle : "#fff",
@@ -11468,6 +11497,14 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
               </span>
             </div>
           );
+          const gGross = per(m.gprYr);
+          const gVac   = per(m.vacLoss, {neg: true});
+          const gOpex  = per(m.opex, {neg: true});
+          const gNoi   = per(m.noi);
+          const gDs    = per(m.dsYr);
+          const totalExpYr = m.opex + m.dsYr;
+          const gTotalExp = per(totalExpYr, {neg: true});
+          const gCf    = per(m.cfYr);
           return (
             <>
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 16}}>
@@ -11485,10 +11522,10 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
                 <div>
                   <div style={label}>Income</div>
                   <div style={box}>
-                    {row("Gross Income", $mo(m.rentMo + (+p.mfOtherIncome || 0)), {top: false, sub: $(m.gprYr) + "/yr"})}
-                    {row("Vacancy", "-" + $(m.vacLoss / 12) + "/mo")}
-                    {row("Operating Expenses", "-" + $(m.opex / 12) + "/mo", {sub: "-" + $(m.opex) + "/yr"})}
-                    {row("Net Operating Income", $(m.noi) + "/yr", {bold: true, color: cfC(m.noi), sub: $mo(m.noi / 12)})}
+                    {row("Gross Income", gGross.main, {top: false, sub: gGross.sub})}
+                    {row("Vacancy", gVac.main)}
+                    {row("Operating Expenses", gOpex.main, {sub: gOpex.sub})}
+                    {row("Net Operating Income", gNoi.main, {bold: true, color: cfC(m.noi), sub: gNoi.sub})}
                   </div>
                 </div>
               </div>
@@ -11498,18 +11535,36 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false}) {
                   <div style={label}>Financing</div>
                   <div style={box}>
                     {row("Loan Amount", $(m.loanAmt), {top: false, sub: `${p.mfRate || 0}% over ${p.mfAmortYears || 30} years`})}
-                    {row("Mortgage Payment", $mo(m.dsMo), {sub: $(m.dsYr) + "/yr"})}
+                    {row("Mortgage Payment", gDs.main, {sub: gDs.sub})}
                     {row("DSCR", dscrText, {bold: true, color: dscrColor,
                       sub: m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want 1.25+" : "healthy coverage"})}
                   </div>
                 </>
               )}
 
-              <div style={{display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:1, background:C.border,
+              <div style={label}>The Bottom Line</div>
+              <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
                 border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1, marginBottom:16}}>
-                <Tile label="Cash Flow / mo" value={$mo(m.cfMo)} color={cfC(m.cfMo)} hero/>
-                <Tile label="Cap Rate" value={pct(m.capOnPrice)} hero/>
-                <Tile label="Cash-on-Cash" value={m.cashIn > 0 ? pct(m.coc) : "N/A"} color={cfC(m.coc)} hero/>
+                {[
+                  ["Gross Rent", gGross.main, C.text, gGross.sub],
+                  ["Total Expenses", gTotalExp.main, C.text,
+                    isCash ? "operating expenses" : "operating plus mortgage"],
+                  ["Cash Flow", gCf.main, cfC(m.cfYr), gCf.sub],
+                  ["Cap Rate", pct(m.capOnPrice), C.text, "on your price"],
+                ].map(([l, v, color, sub]) => (
+                  <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+                    padding:"14px 12px 15px", textAlign:"center"}}>
+                    <div style={{fontSize:10, color:C.textSub, fontWeight:800, fontFamily:F,
+                      letterSpacing:".06em", textTransform:"uppercase", whiteSpace:"nowrap",
+                      overflow:"hidden", textOverflow:"ellipsis"}}>{l}</div>
+                    <div style={{fontSize:19, fontWeight:800, color, fontFamily:F,
+                      fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{v}</div>
+                    <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F,
+                      fontVariantNumeric:"tabular-nums", marginTop:2, whiteSpace:"nowrap",
+                      overflow:"hidden", textOverflow:"ellipsis"}}>{sub}</div>
+                  </div>
+                ))}
               </div>
 
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "220px 1fr", gap:12, alignItems:"end"}}>
@@ -11805,6 +11860,43 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
     pullProperty(loc);
     reveal(2); // picking an address moves us to the property-review step
   };
+
+  // LoopNet's search feed truncates listing descriptions mid-sentence. Any
+  // LoopNet deal that lands here with a short or cut-off description fetches
+  // the full listing itself, whichever door it came through: Underwrite on the
+  // card, the listing view, or a saved deal reopened weeks later. The fuller
+  // copy (and any extra photos) is folded into the deal, so saving keeps it.
+  const enrichedKeyRef = useRef("");
+  useEffect(() => {
+    const lnId = d.loopnetId || (/^ln\w+$/.test(String(d.id || "")) ? String(d.id).slice(2) : null);
+    if (!lnId || !rcAuth || !rcAuth.token) return;
+    const short = !d.description || d.description.length < 600 || /(…|\.\.\.)\s*$/.test(d.description);
+    if (!short || enrichedKeyRef.current === lnId) return;
+    enrichedKeyRef.current = lnId;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${FN_BASE}/commercialDetail`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", Authorization: `Bearer ${rcAuth.token}`},
+          body: JSON.stringify({id: lnId, propertyId: d.loopnetPropertyId || null, url: d.loopnetUrl || null}),
+        });
+        const j = await r.json().catch(() => null);
+        if (!alive || !r.ok || !j) return;
+        setD(prev => {
+          const next = {...prev};
+          if (j.description && j.description.length > String(prev.description || "").length) {
+            next.description = j.description;
+          }
+          if (Array.isArray(j.photos) && j.photos.length > (Array.isArray(prev.photos) ? prev.photos.length : 0)) {
+            next.photos = j.photos;
+          }
+          return next;
+        });
+      } catch { /* the search snippet stays until the next try */ }
+    })();
+    return () => { alive = false; };
+  }, [d.id, d.loopnetId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Safety net: a full address without specs (manual typing, prefilled saves)
   // pulls after a short pause.
   useEffect(() => {

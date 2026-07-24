@@ -1252,6 +1252,7 @@ function mapLoopnetListing(r) {
   }
   return {
     id: String(r.id || r.propertyId || ""),
+    propertyId: r.propertyId != null ? String(r.propertyId) : null,
     url: r.url || null,
     address: r.address || "",
     city: r.city || "", state: r.state || "", zip: r.zipCode || "",
@@ -1460,8 +1461,9 @@ exports.commercialDetail = onRequest({
     if (!user) { res.status(401).json({error: "auth"}); return; }
     const body = req.body || {};
     const id  = String(body.id || "").replace(/[^\w-]/g, "").slice(0, 40);
+    const pid = String(body.propertyId || "").replace(/[^\w-]/g, "").slice(0, 40);
     const url = String(body.url || "").slice(0, 300);
-    if (!id && !url) { res.status(400).json({error: "id"}); return; }
+    if (!id && !pid && !url) { res.status(400).json({error: "id"}); return; }
 
     const cacheRef = admin.database().ref(`commercialDetailCache/${id || listingCacheKey(url, 1)}`);
     const cached = (await cacheRef.get()).val();
@@ -1484,13 +1486,22 @@ exports.commercialDetail = onRequest({
         return await r.json().catch(() => null);
       } catch { return null; }
     };
-    let out = null;
-    if (id)  out = await tryGet(`/details/byid?id=${encodeURIComponent(id)}`);
-    if ((!out || !extractLoopnetDetail(out).description) && url) {
-      const byUrl = await tryGet(`/details/byurl?url=${encodeURIComponent(url)}`);
-      if (byUrl) out = byUrl;
+    // The docs don't say whether /details/byid wants the listing id or the
+    // property id, so try both, then the URL. First answer with a real
+    // description wins; a photos-only answer is kept as a fallback.
+    const attempts = [];
+    if (id)  attempts.push(`/details/byid?id=${encodeURIComponent(id)}`);
+    if (pid && pid !== id) attempts.push(`/details/byid?id=${encodeURIComponent(pid)}`);
+    if (url) attempts.push(`/details/byurl?url=${encodeURIComponent(url)}`);
+    let got = {description: null, photos: []};
+    for (const path of attempts) {
+      const j = await tryGet(path);
+      if (!j) continue;
+      const g = extractLoopnetDetail(j);
+      if (g.description && g.description.length > (got.description || "").length) got = g;
+      else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
+      if (got.description && got.description.length > 300) break;
     }
-    const got = out ? extractLoopnetDetail(out) : {description: null, photos: []};
     const record = {v: 2, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
     await cacheRef.set(record);
