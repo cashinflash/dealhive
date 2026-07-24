@@ -1580,7 +1580,9 @@ exports.commercialDetail = onRequest({
     // misses only an hour, so a hiccup can't blank a listing for days.
     const ttl = cached && cached.found ? LOOPNET_DETAIL_TTL_MS : 3600 * 1000;
     // body.fresh (admin diagnostics) bypasses the cache for a live trace.
-    if (!body.fresh && cached && cached.v === 2 && cached.ts && (Date.now() - cached.ts) < ttl) {
+    // v3 invalidates everything cached before the URL-first fetch order, which
+    // had frozen short junk descriptions in for a week at a time.
+    if (!body.fresh && cached && cached.v === 3 && cached.ts && (Date.now() - cached.ts) < ttl) {
       res.json({found: cached.found, description: cached.description || null,
         photos: cached.photos || [], cached: true});
       return;
@@ -1611,6 +1613,7 @@ exports.commercialDetail = onRequest({
     if (pid && pid !== id) attempts.push(`/details/byid?id=${encodeURIComponent(pid)}`);
     let got = {description: null, photos: []};
     let sawOk = false;
+    let sample = "";
     const trace = [];
     for (const path of attempts) {
       const j = await tryGet(path);
@@ -1620,19 +1623,20 @@ exports.commercialDetail = onRequest({
       const g = extractLoopnetDetail(j);
       const keys = (typeof j === "object" && !Array.isArray(j)) ? Object.keys(j).slice(0, 10).join(",") : typeof j;
       trace.push(`${path.split("?")[0]} ok keys=[${keys}] desc=${g.description ? g.description.length : 0} photos=${g.photos.length}`);
+      if (!sample) { try { sample = JSON.stringify(j).slice(0, 300); } catch { /* skip */ } }
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
       if (got.description && got.description.length > 300) break;
     }
     if (got.description) got.description = cleanListingText(got.description);
     logger.info("commercialDetail trace", {id, pid, trace});
-    const record = {v: 2, ts: Date.now(), found: !!(got.description || got.photos.length),
+    const record = {v: 3, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
     if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
     res.json({found: record.found, description: record.description, photos: record.photos,
-      cached: false, trace: trace.join(" | ").slice(0, 500)});
+      cached: false, trace: (trace.join(" | ") + (sample ? ` | sample=${sample}` : "")).slice(0, 800)});
   } catch (e) {
     logger.error("commercialDetail", {error: e.message});
     res.status(500).json({error: "detail failed"});
