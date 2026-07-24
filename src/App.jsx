@@ -10559,13 +10559,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
                 {deEnt(description)}{looksTruncated(description) ? "…" : ""}
               </div>
             )}
-            {description && looksTruncated(description) && l.url && (
-              <a href={l.url} target="_blank" rel="noreferrer"
-                style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:9,
-                  fontSize:12.5, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
-                <I.externalLink size={12} stroke={2.4}/> Read the full description on LoopNet
-              </a>
-            )}
+
             {isAdmin && detail && detail.trace && (
               <div style={{marginTop:10, fontSize:10.5, color:C.textMuted, fontFamily:"monospace",
                 background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
@@ -12585,22 +12579,13 @@ function ListingStory({text, mobile, sourceUrl = null}) {
           WebkitBoxOrient:"vertical", overflow:"hidden"})}}>
         {deEnt(text)}{cut ? "…" : ""}
       </div>
-      <div style={{display:"flex", gap:14, alignItems:"center"}}>
-        {long && (
-          <button onClick={()=>setExpanded(e=>!e)}
-            style={{background:"none", border:"none", padding:"6px 0 0", cursor:"pointer",
-              color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F}}>
-            {expanded ? "Show less" : "Read more"}
-          </button>
-        )}
-        {cut && sourceUrl && (
-          <a href={sourceUrl} target="_blank" rel="noreferrer"
-            style={{display:"inline-flex", alignItems:"center", gap:5, padding:"6px 0 0",
-              fontSize:12.5, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
-            <I.externalLink size={11} stroke={2.4}/> Full description on LoopNet
-          </a>
-        )}
-      </div>
+      {long && (
+        <button onClick={()=>setExpanded(e=>!e)}
+          style={{background:"none", border:"none", padding:"6px 0 0", cursor:"pointer",
+            color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F}}>
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
     </div>
   );
 }
