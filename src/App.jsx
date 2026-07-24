@@ -10676,7 +10676,9 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
 
   const runSearch = async (q, mk, md) => {
     const term = String(q ?? query).trim();
-    const mkt  = mk || market;
+    // "multifamily" was its own market before it moved under Commercial where
+    // it belongs; recents saved back then still replay correctly.
+    const mkt  = (mk || market) === "multifamily" ? "commercial" : (mk || market);
     const mode = md || cmode;
     if (term.length < 2 || loading) return;
     setLoading(true); setError(null); setSubmitted(term); setVisN(36);
@@ -10774,9 +10776,9 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     loopnetId: l.id || null, loopnetPropertyId: l.propertyId || null, loopnetUrl: l.url || null,
     // Apartments underwrite on the rent roll; everything else commercial. An
     // exact "12,500 SF" size seeds the first suite so the roster starts real.
-    assetClass: /apartment/i.test(l.propertyType || "") ? "multifamily" : "commercial",
+    assetClass: /apartment|multi.?family/i.test(l.propertyType || "") ? "multifamily" : "commercial",
     cspaces: (() => {
-      if (/apartment/i.test(l.propertyType || "")) return [];
+      if (/apartment|multi.?family/i.test(l.propertyType || "")) return [];
       const mm = /^([\d,]+)\s*SF\b/i.exec(String(l.sizeLabel || ""));
       const sq = mm ? parseInt(mm[1].replace(/,/g, ""), 10) || 0 : 0;
       return sq > 0 ? [{id: "c" + l.id, label: l.propertyType || "Suite 1", sqft: sq, rate: 0, lease: "nnn"}] : [];
@@ -10822,18 +10824,20 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const classified = (resMarket === "homes" ? (results || []) : [])
     .filter(isResidential)
     .map(d => ({d, c: classifyDeal(d)}));
-  // Commercial results, filtered by the active type chip.
+  // Commercial results, filtered by the active type chip. Multifamily lives
+  // here too: 5+ unit apartment buildings are commercial real estate.
   const C_TYPES = {
-    office:     /office|medical|loft|creative|coworking/i,
-    industrial: /warehouse|manufactur|industrial|distribution|flex|storage/i,
-    retail:     /storefront|retail|restaurant|center|store|bank|freestanding/i,
+    multifamily: /apartment|multi.?family/i,
+    office:      /office|medical|loft|creative|coworking/i,
+    retail:      /storefront|retail|restaurant|store|bank|freestanding/i,
+    industrial:  /warehouse|manufactur|industrial|distribution|flex|storage/i,
+    shopping:    /shopping|center|mall|strip/i,
   };
+  const C_TYPE_LABELS = {multifamily: "multifamily", office: "office",
+    retail: "retail", industrial: "industrial", shopping: "shopping center"};
   const commercialAll = resMarket === "homes" ? [] : (results || []);
-  const commercialShown = commercialAll.filter(l => {
-    if (resMarket === "multifamily") return /apartment/i.test(l.propertyType || "");
-    if (subtype === "all") return true;
-    return (C_TYPES[subtype] || /./).test(l.propertyType || "");
-  });
+  const commercialShown = commercialAll.filter(l =>
+    subtype === "all" || (C_TYPES[subtype] || /./).test(l.propertyType || ""));
   const counts = {
     all:     classified.length,
     buyhold: classified.filter(({c})=>c.tags.includes("buyhold")).length,
@@ -10918,7 +10922,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.q}</span>
               <span style={{fontSize:10.5, fontWeight:700, color:C.textSub, background:C.bgSubtle,
                 border:"1px solid "+C.border, borderRadius:9999, padding:"3px 9px", flexShrink:0,
-                textTransform:"capitalize"}}>{r.market === "homes" ? "Homes" : r.market === "multifamily" ? "Multifamily" : "Commercial"}</span>
+                textTransform:"capitalize"}}>{r.market === "homes" ? "Residential" : "Commercial"}</span>
             </button>
           ))}
         </div>
@@ -10945,12 +10949,14 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     </div>
   );
 
-  // What to search: houses, apartment buildings, or the rest of commercial.
+  // What to search: residential (houses via the homes feed) or commercial
+  // income property (LoopNet), where office, retail, industrial, multifamily
+  // and the rest live under one roof behind the type chips.
   const marketChips = (
     <div className="dh-chip-row" style={{display:"flex", gap:8, overflowX:"auto", padding:2,
       justifyContent: heroMode ? "center" : "flex-start",
       flexWrap: heroMode ? "wrap" : "nowrap", marginBottom: heroMode ? 18 : 12}}>
-      {[["homes","Homes",I.home],["multifamily","Multifamily",I.building],["commercial","Commercial",I.tag]].map(([id,label,Ic]) => {
+      {[["homes","Residential",I.home],["commercial","Commercial",I.building]].map(([id,label,Ic]) => {
         const active = market === id;
         return (
           <button key={id} onClick={()=>switchMarket(id)}
@@ -11046,14 +11052,21 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             gap:12, flexWrap:"wrap", marginBottom:14}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
-                {(cTotal || commercialShown.length).toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{(cTotal || commercialShown.length)===1?"":"s"} in {prettyLoc(submitted)}
+                {(() => {
+                  // The full LoopNet total only describes the unfiltered set; a
+                  // type chip counts what's actually loaded and says so while
+                  // more pages remain.
+                  const n = subtype === "all" ? (cTotal || commercialShown.length) : commercialShown.length;
+                  const noun = subtype === "all" ? "commercial" : C_TYPE_LABELS[subtype] || subtype;
+                  return `${n.toLocaleString()} ${noun} listing${n === 1 ? "" : "s"}${subtype !== "all" && cHasMore ? " so far" : ""} in ${prettyLoc(submitted)}`;
+                })()}
               </div>
             </div>
             <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
             {viewToggle}
-            {resMarket === "commercial" && (
+            {resMarket !== "homes" && (
               <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
-                {[["all","All types"],["office","Office"],["industrial","Industrial"],["retail","Retail"]].map(([id,label]) => {
+                {[["all","All types"],["multifamily","Multifamily"],["office","Office"],["retail","Retail"],["industrial","Industrial"],["shopping","Shopping Centers"]].map(([id,label]) => {
                   const active = subtype === id;
                   return (
                     <button key={id} onClick={()=>setSubtype(id)}
@@ -11075,8 +11088,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           ) : commercialShown.length === 0 ? (
             <EmptyState
               icon={<I.building size={20}/>}
-              title={`No ${resMarket === "multifamily" ? "multifamily" : subtype === "all" ? "commercial" : subtype} listings for “${prettyLoc(submitted)}” right now`}
-              body="Try the other listing mode, another type, or a nearby market. Commercial inventory moves in waves."
+              title={`No ${subtype === "all" ? "commercial" : C_TYPE_LABELS[subtype] || subtype} listings for “${prettyLoc(submitted)}” right now`}
+              body="Try another type, a nearby market, or load more results. Commercial inventory moves in waves."
             />
           ) : (
             <>
