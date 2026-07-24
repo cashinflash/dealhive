@@ -1582,13 +1582,13 @@ function extractLoopnetDetail(j) {
 // read, so the first live call sweeps the likely paths and the winner is
 // remembered in config/loopnet2SalePath for every call after.
 const LOOPNET2_HOST = "loopnet-api.p.rapidapi.com";
-// Route spellings to sweep, most likely first. The provider hasn't published
-// the path anywhere readable, so discovery is brute force: a wrong spelling is
-// a fast, quota-free 404 from the gateway, and the winner (with its method) is
-// remembered in config/loopnet2SalePath so the sweep runs until it succeeds at
-// most once per request, then never again. A short GET pass closes the sweep
-// in case the endpoint is registered GET-style despite the POST label.
+// The first entry is the documented route, straight from the provider's own
+// curl sample. The spellings after it are backstops in case the provider ever
+// restructures: a wrong spelling is a fast, quota-free 404 from the gateway,
+// and whatever answers (with its method) is remembered in
+// config/loopnet2SalePath so any sweep runs at most once, then never again.
 const LOOPNET2_PATHS = [
+  "/loopnet/property/SaleDetails",
   "/sale/details", "/sale/detail", "/sale/details/",
   "/sale/listing-details", "/sale/listingDetails", "/sale/listing/details",
   "/sale/property-details", "/sale/propertyDetails", "/sale/property/details",
@@ -1633,11 +1633,11 @@ async function loopnet2SaleDetails(lid, key, trace) {
   // success, "empty" (route fine, id unknown), "miss" (404), null (hard stop).
   const attempt = async (method, path) => {
     const sig = `${method} ${path}`;
-    let got = await call(method, path, {listingId: Number(lid)});
-    // The right route with the wrong body shape answers 400/422; retry the id
-    // as a string before concluding anything about the route.
+    // The documented body carries the id as a string; a 400/422 answer means
+    // the route is right and the body shape isn't, so retry numeric.
+    let got = await call(method, path, {listingId: String(lid)});
     if (method === "POST" && (got.status === 400 || got.status === 422)) {
-      got = await call(method, path, {listingId: String(lid)});
+      got = await call(method, path, {listingId: Number(lid)});
     }
     if (got.status === 404) {
       // The rejection wording names the rejecting side: the RapidAPI gateway
@@ -1654,17 +1654,24 @@ async function loopnet2SaleDetails(lid, key, trace) {
     const d = Array.isArray(got.j.data) ? got.j.data[0] :
       (got.j.data && typeof got.j.data === "object" ? got.j.data : null);
     if (!d) { trace.push(`p2 ${sig} ok empty`); return "empty"; }
-    // The full text has been seen under `summary`; sibling fields are checked
-    // too and the longest wins. Arrays of paragraphs join before competing.
+    // The full text lives under `summary` (`Summary` on some responses — the
+    // field casing varies), with siblings checked too; the longest wins and
+    // arrays of paragraphs join before competing.
     const bare = (s) => String(s).replace(/<[^>]+>/g, "").trim();
-    const texts = ["summary", "description", "about", "aboutAddress", "aboutLocation"]
-      .map((k) => Array.isArray(d[k]) ? d[k].filter((x) => typeof x === "string").join("\n\n") : d[k])
+    const KEYS = new Set(["summary", "description", "about", "aboutaddress", "aboutlocation"]);
+    const texts = Object.entries(d)
+      .filter(([k]) => KEYS.has(String(k).toLowerCase()))
+      .map(([, v]) => Array.isArray(v) ? v.filter((x) => typeof x === "string").join("\n\n") : v)
       .filter((x) => typeof x === "string" && x.trim());
     const bestRaw = texts.reduce((a, b) => (bare(b).length > bare(a).length ? b : a), "");
     const description = bestRaw ? cleanListingText(bestRaw) : null;
-    const photos = (Array.isArray(d.images) ? d.images : [])
+    // Image URLs may carry a {s} size slot; 110 is the size the primary
+    // source serves, so the gallery stays uniform.
+    const rawImgs = Array.isArray(d.images) ? d.images : (Array.isArray(d.Images) ? d.Images : []);
+    const photos = rawImgs
       .map((im) => (im && typeof im === "object" ? im.url : im))
-      .filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 30);
+      .filter((u) => typeof u === "string" && /^https?:\/\//.test(u))
+      .map((u) => u.replace("{s}", "110")).slice(0, 30);
     trace.push(`p2 ${sig} ok desc=${description ? description.length : 0} photos=${photos.length}`);
     return {description, photos};
   };
