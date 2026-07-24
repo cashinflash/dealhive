@@ -1226,6 +1226,15 @@ exports.searchListings = onRequest({
 // sale listings; the exact "for sale" parameter name is resolved once in
 // production and remembered in config/commercialSale.
 const LOOPNET_HOST = "loopnet-api3.p.rapidapi.com";
+// LoopNet copy arrives with HTML entities baked in ("owner&#39;s unit").
+// Decode them once at the source so no screen ever shows raw codes.
+function decodeEntities(s) {
+  return String(s || "")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
+}
 function mapLoopnetListing(r) {
   if (!r || typeof r !== "object") return null;
   // A single absolute dollar figure is a real asking price ("$1,020,000",
@@ -1263,7 +1272,7 @@ function mapLoopnetListing(r) {
     spaces: r.spaces || null,
     sizeLabel: r.sizeLabel || r.availableSpace || null,
     buildingInfo: r.buildingInfo || null,
-    description: r.description ? String(r.description) : null,
+    description: r.description ? decodeEntities(r.description) : null,
     searchType: r.searchType || null,
     photo: r.photo || null,
     brokers: Array.isArray(r.brokers)
@@ -1449,7 +1458,7 @@ function extractLoopnetDetail(j) {
   // The fullest text wins, whatever shape it arrived in.
   const description = [keyMatched, longestProse, joinedArray]
     .reduce((a, b) => (b.length > a.length ? b : a), "");
-  return {description: description || null, photos};
+  return {description: description ? decodeEntities(description) : null, photos};
 }
 exports.commercialDetail = onRequest({
   secrets: [RAPIDAPI_KEY],
