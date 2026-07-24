@@ -1572,6 +1572,64 @@ function extractLoopnetDetail(j) {
     .reduce((a, b) => (strip(b).length > strip(a).length ? b : a), "");
   return {description: description ? decodeEntities(description) : null, photos};
 }
+// Second LoopNet source, on description duty only. The primary API serves
+// search, photos, facts and most descriptions, but for a share of listings it
+// only ever captured the short SEO teaser. This provider's Sale Details
+// endpoint carries the agent's full write-up (in `summary`), keyed by the
+// listing id — the digits at the end of a loopnet.com listing URL. It is
+// called exclusively when the primary text runs short, so its quota is spent
+// only where it adds words. The exact route isn't published anywhere we can
+// read, so the first live call sweeps the likely paths and the winner is
+// remembered in config/loopnet2SalePath for every call after.
+const LOOPNET2_HOST = "loopnet-api.p.rapidapi.com";
+const LOOPNET2_PATHS = ["/sale/details", "/sale/detail", "/loopnet/sale/details",
+  "/v1/sale/details", "/api/sale/details", "/sale-details", "/details/sale"];
+async function loopnet2SaleDetails(lid, key, trace) {
+  const cfgRef = admin.database().ref("config/loopnet2SalePath");
+  const stored = (await cfgRef.get()).val();
+  const paths = [...new Set([stored, ...LOOPNET2_PATHS].filter(Boolean))];
+  const call = async (path, body) => {
+    try {
+      const r = await fetch(`https://${LOOPNET2_HOST}${path}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json",
+          "X-RapidAPI-Key": key, "X-RapidAPI-Host": LOOPNET2_HOST},
+        body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => null);
+      return {status: r.status, j};
+    } catch { return {status: 0, j: null}; }
+  };
+  for (const path of paths) {
+    let got = await call(path, {listingId: Number(lid)});
+    // The right route with the wrong body shape answers 400/422; retry the id
+    // as a string before concluding anything about the route.
+    if (got.status === 400 || got.status === 422) got = await call(path, {listingId: String(lid)});
+    if (got.status === 404) { trace.push(`p2${path} 404`); continue; }
+    if (got.status === 403) { trace.push(`p2${path} 403 not-subscribed`); return null; }
+    if (got.status === 429) { trace.push(`p2${path} 429 quota`); return null; }
+    if (got.status !== 200 || !got.j) { trace.push(`p2${path} HTTP ${got.status}`); return null; }
+    if (path !== stored) cfgRef.set(path).catch(() => { /* rediscovered next call */ });
+    const d = Array.isArray(got.j.data) ? got.j.data[0] :
+      (got.j.data && typeof got.j.data === "object" ? got.j.data : null);
+    if (!d) { trace.push(`p2${path} ok empty`); return null; }
+    // The full text has been seen under `summary`; sibling fields are checked
+    // too and the longest wins. Arrays of paragraphs join before competing.
+    const bare = (s) => String(s).replace(/<[^>]+>/g, "").trim();
+    const texts = ["summary", "description", "about", "aboutAddress", "aboutLocation"]
+      .map((k) => Array.isArray(d[k]) ? d[k].filter((x) => typeof x === "string").join("\n\n") : d[k])
+      .filter((x) => typeof x === "string" && x.trim());
+    const bestRaw = texts.reduce((a, b) => (bare(b).length > bare(a).length ? b : a), "");
+    const description = bestRaw ? cleanListingText(bestRaw) : null;
+    const photos = (Array.isArray(d.images) ? d.images : [])
+      .map((im) => (im && typeof im === "object" ? im.url : im))
+      .filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 30);
+    trace.push(`p2${path} ok desc=${description ? description.length : 0} photos=${photos.length}`);
+    return {description, photos};
+  }
+  trace.push("p2 no-route");
+  return null;
+}
 exports.commercialDetail = onRequest({
   secrets: [RAPIDAPI_KEY],
   cors: true, region: "us-central1", timeoutSeconds: 30,
@@ -1588,13 +1646,14 @@ exports.commercialDetail = onRequest({
 
     const cacheRef = admin.database().ref(`commercialDetailCache/${id || listingCacheKey(url, 1)}`);
     const cached = (await cacheRef.get()).val();
-    // v2 invalidates entries from the first extractor. Hits cache a week;
-    // misses only an hour, so a hiccup can't blank a listing for days.
-    const ttl = cached && cached.found ? LOOPNET_DETAIL_TTL_MS : 3600 * 1000;
+    // Full descriptions cache a week; misses and still-short descriptions only
+    // an hour, so a listing the fallback couldn't fill yet (quota, hiccup)
+    // retries on its own instead of freezing short for days.
+    const ttl = cached && cached.found && !cached.short ? LOOPNET_DETAIL_TTL_MS : 3600 * 1000;
     // body.fresh (admin diagnostics) bypasses the cache for a live trace.
-    // v3 invalidates everything cached before the URL-first fetch order, which
-    // had frozen short junk descriptions in for a week at a time.
-    if (!body.fresh && cached && cached.v === 4 && cached.ts && (Date.now() - cached.ts) < ttl) {
+    // v5 invalidates everything cached before the second-source description
+    // fallback, so listings stuck with the short teaser re-fetch and heal.
+    if (!body.fresh && cached && cached.v === 5 && cached.ts && (Date.now() - cached.ts) < ttl) {
       res.json({found: cached.found, description: cached.description || null,
         photos: cached.photos || [], cached: true});
       return;
@@ -1658,9 +1717,30 @@ exports.commercialDetail = onRequest({
       if (got.description && got.description.length > 300) break;
     }
     if (got.description) got.description = cleanListingText(got.description);
+    // Short answer from the primary source: ask the second provider for the
+    // full write-up. Search, photos and facts stay exactly where they were;
+    // only the description is allowed to upgrade (photos fill in solely when
+    // the primary returned none at all). The listing id is the number at the
+    // end of the LoopNet URL, with the raw ids as backups.
+    if (!got.description || got.description.length < 600) {
+      const lidFromUrl = (String(url).match(/\/(\d{5,})\/?(?:[?#]|$)/) || [])[1] || "";
+      const lids = [...new Set([lidFromUrl, id, pid]
+        .filter((x) => /^\d{5,}$/.test(String(x || ""))))];
+      for (const lid of lids) {
+        const p2 = await loopnet2SaleDetails(lid, key, trace);
+        if (!p2) continue;
+        sawOk = true;
+        if (p2.description && p2.description.length > (got.description || "").length) {
+          got.description = p2.description;
+        }
+        if (!got.photos.length && p2.photos.length) got.photos = p2.photos;
+        break;
+      }
+    }
     logger.info("commercialDetail trace", {id, pid, trace});
-    const record = {v: 4, ts: Date.now(), found: !!(got.description || got.photos.length),
-      description: got.description, photos: got.photos.slice(0, 30)};
+    const record = {v: 5, ts: Date.now(), found: !!(got.description || got.photos.length),
+      description: got.description, photos: got.photos.slice(0, 30),
+      short: !got.description || got.description.length < 600};
     if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
