@@ -587,6 +587,12 @@ const $mo = n  => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs
 const pct = n  => (isNaN(n)?0:(n||0)).toFixed(2) + "%";
 const cfC = v  => v>0 ? "#059669" : v<0 ? "#dc2626" : "#71717a";
 // Listing copy can arrive with HTML entities baked in; decode before display.
+// A description that stops without terminal punctuation was cut upstream;
+// mark it honestly so the LoopNet link beside it makes sense.
+const looksTruncated = (s) => {
+  const t = String(s || "").trim();
+  return t.length > 0 && t.length < 400 && !/[.!?…"')\]]$/.test(t);
+};
 const deEnt = (s) => String(s || "")
   .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
   .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
@@ -10550,8 +10556,15 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
             {description && (
               <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-                {deEnt(description)}
+                {deEnt(description)}{looksTruncated(description) ? "…" : ""}
               </div>
+            )}
+            {description && looksTruncated(description) && l.url && (
+              <a href={l.url} target="_blank" rel="noreferrer"
+                style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:9,
+                  fontSize:12.5, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
+                <I.externalLink size={12} stroke={2.4}/> Read the full description on LoopNet
+              </a>
             )}
             {isAdmin && detail && detail.trace && (
               <div style={{marginTop:10, fontSize:10.5, color:C.textMuted, fontFamily:"monospace",
@@ -12555,9 +12568,10 @@ function AnalyzerSteps({current, mobile}) {
 // The listing's own story, riding along at the calculator step so occupancy
 // and condition details stay in view while underwriting. Clamped to three
 // lines with a Read more toggle when it runs long.
-function ListingStory({text, mobile}) {
+function ListingStory({text, mobile, sourceUrl = null}) {
   const [expanded, setExpanded] = useState(false);
   const long = String(text).length > 220;
+  const cut = looksTruncated(text);
   return (
     <div style={{background:C.card, border:"1px solid "+C.border, borderRadius:C.r4, boxShadow:C.sh1,
       padding: mobile ? "13px 14px" : "14px 16px", marginBottom:14}}>
@@ -12569,15 +12583,24 @@ function ListingStory({text, mobile}) {
       <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap",
         ...(expanded || !long ? {} : {display:"-webkit-box", WebkitLineClamp:3,
           WebkitBoxOrient:"vertical", overflow:"hidden"})}}>
-        {deEnt(text)}
+        {deEnt(text)}{cut ? "…" : ""}
       </div>
-      {long && (
-        <button onClick={()=>setExpanded(e=>!e)}
-          style={{background:"none", border:"none", padding:"6px 0 0", cursor:"pointer",
-            color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F}}>
-          {expanded ? "Show less" : "Read more"}
-        </button>
-      )}
+      <div style={{display:"flex", gap:14, alignItems:"center"}}>
+        {long && (
+          <button onClick={()=>setExpanded(e=>!e)}
+            style={{background:"none", border:"none", padding:"6px 0 0", cursor:"pointer",
+              color:C.greenDark, fontSize:12.5, fontWeight:700, fontFamily:F}}>
+            {expanded ? "Show less" : "Read more"}
+          </button>
+        )}
+        {cut && sourceUrl && (
+          <a href={sourceUrl} target="_blank" rel="noreferrer"
+            style={{display:"inline-flex", alignItems:"center", gap:5, padding:"6px 0 0",
+              fontSize:12.5, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
+            <I.externalLink size={11} stroke={2.4}/> Full description on LoopNet
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -13086,7 +13109,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       {/* The listing's own story rides along on every step (Pro accounts), so
           occupancy and condition details never leave the screen. */}
       {d.description && tier === "pro" && (
-        <ListingStory text={d.description} mobile={mobile}/>
+        <ListingStory text={d.description} mobile={mobile}
+          sourceUrl={d.loopnetUrl || d.zillowUrl || null}/>
       )}
 
       {/* STEP 1 — Address (photo + address fields) */}
