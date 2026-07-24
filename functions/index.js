@@ -1579,7 +1579,8 @@ exports.commercialDetail = onRequest({
     // v2 invalidates entries from the first extractor. Hits cache a week;
     // misses only an hour, so a hiccup can't blank a listing for days.
     const ttl = cached && cached.found ? LOOPNET_DETAIL_TTL_MS : 3600 * 1000;
-    if (cached && cached.v === 2 && cached.ts && (Date.now() - cached.ts) < ttl) {
+    // body.fresh (admin diagnostics) bypasses the cache for a live trace.
+    if (!body.fresh && cached && cached.v === 2 && cached.ts && (Date.now() - cached.ts) < ttl) {
       res.json({found: cached.found, description: cached.description || null,
         photos: cached.photos || [], cached: true});
       return;
@@ -1591,8 +1592,11 @@ exports.commercialDetail = onRequest({
     const tryGet = async (path) => {
       try {
         const r = await fetch(`https://${LOOPNET_HOST}${path}`, {headers});
-        if (!r.ok) return null;
-        return await r.json().catch(() => null);
+        if (!r.ok) return {___status: r.status};
+        let j = await r.json().catch(() => null);
+        // Some gateways double-encode: a JSON string containing JSON.
+        if (typeof j === "string") { try { j = JSON.parse(j); } catch { /* keep */ } }
+        return j;
       } catch { return null; }
     };
     // The docs don't say whether /details/byid wants the listing id or the
@@ -1607,22 +1611,28 @@ exports.commercialDetail = onRequest({
     if (pid && pid !== id) attempts.push(`/details/byid?id=${encodeURIComponent(pid)}`);
     let got = {description: null, photos: []};
     let sawOk = false;
+    const trace = [];
     for (const path of attempts) {
       const j = await tryGet(path);
-      if (!j) continue;
+      if (!j) { trace.push(`${path.split("?")[0]} no-response`); continue; }
+      if (j.___status) { trace.push(`${path.split("?")[0]} HTTP ${j.___status}`); continue; }
       sawOk = true;
       const g = extractLoopnetDetail(j);
+      const keys = (typeof j === "object" && !Array.isArray(j)) ? Object.keys(j).slice(0, 10).join(",") : typeof j;
+      trace.push(`${path.split("?")[0]} ok keys=[${keys}] desc=${g.description ? g.description.length : 0} photos=${g.photos.length}`);
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
       if (got.description && got.description.length > 300) break;
     }
     if (got.description) got.description = cleanListingText(got.description);
+    logger.info("commercialDetail trace", {id, pid, trace});
     const record = {v: 2, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
     if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
-    res.json({found: record.found, description: record.description, photos: record.photos, cached: false});
+    res.json({found: record.found, description: record.description, photos: record.photos,
+      cached: false, trace: trace.join(" | ").slice(0, 500)});
   } catch (e) {
     logger.error("commercialDetail", {error: e.message});
     res.status(500).json({error: "detail failed"});
