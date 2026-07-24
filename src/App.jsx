@@ -10425,7 +10425,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
         const r = await fetch(`${FN_BASE}/commercialDetail`, {
           method: "POST",
           headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
-          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url, fresh: isAdmin}),
+          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url}),
         });
         const j = await r.json().catch(() => null);
         if (alive && r.ok && j && (j.found || j.trace)) setDetail(j);
