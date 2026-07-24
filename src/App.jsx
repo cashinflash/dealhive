@@ -10352,12 +10352,20 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
             ))}
           </div>
         )}
-        <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, marginTop:10,
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{l.address}</div>
-        <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
-          {[l.city, l.state].filter(Boolean).join(", ")}{l.zip ? ` ${l.zip}` : ""}
-          {info ? ` · ${info}` : ""}
+        <div style={{fontSize:13.5, fontFamily:F, marginTop:10,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+          <span style={{fontWeight:700, color:C.text}}>{l.address}</span>
+          {(l.city || l.state || l.zip) && (
+            <span style={{fontWeight:500, color:C.textSub}}>
+              {(l.address ? ", " : "") + [l.city, l.state].filter(Boolean).join(", ")}
+              {l.zip ? ` ${l.zip}` : ""}
+            </span>
+          )}
         </div>
+        {info && (
+          <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{info}</div>
+        )}
         {broker && (broker.name || broker.company) && (
           <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6,
             overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
