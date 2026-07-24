@@ -11540,10 +11540,14 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
           // Every recurring figure obeys the Monthly/Yearly toggle; the other
           // period rides underneath so nothing is ever more than a glance away.
           const mo = resPer === "mo";
-          const per = (yr, {neg} = {}) => ({
-            main: (neg ? "-" : "") + $(Math.abs(mo ? yr / 12 : yr)) + (mo ? "/mo" : "/yr"),
-            sub:  (neg ? "-" : "") + $(Math.abs(mo ? yr : yr / 12)) + (mo ? "/yr" : "/mo"),
-          });
+          const per = (yr, {neg} = {}) => {
+            const sign = (neg || yr < 0) ? "-" : "";
+            const a = Math.abs(yr);
+            return {
+              main: sign + $(mo ? a / 12 : a) + (mo ? "/mo" : "/yr"),
+              sub:  sign + $(mo ? a : a / 12) + (mo ? "/yr" : "/mo"),
+            };
+          };
           const row = (k, v, {bold, color, sub, top} = {}) => (
             <div key={k} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
               gap:10, padding:"10px 14px", background: bold ? C.bgSubtle : "#fff",
@@ -11698,7 +11702,7 @@ function MFReportSheet({deal, onClose, mobile}) {
         {row("Effective Gross Income", $(m.egi) + "/yr", {bold: true})}
         {row("Operating Expenses", "-" + $(m.opex) + "/yr", {indent: true})}
         {m.recovered > 0 && row("Recovered from NNN tenants", "+" + $(m.recovered) + "/yr", {indent: true, color:"#059669"})}
-        {row("Net Operating Income", $(m.noi) + "/yr", {bold: true, color: cfC(m.noi)})}
+        {row("Net Operating Income", (m.noi < 0 ? "-" : "") + $(Math.abs(m.noi)) + "/yr", {bold: true, color: cfC(m.noi)})}
         {!isCash && row("Debt Service", "-" + $(m.dsYr) + "/yr", {indent: true})}
         {row("Cash Flow", $mo(m.cfMo), {bold: true, color: cfC(m.cfMo)})}
       </div>
