@@ -656,8 +656,67 @@ const newDeal = () => ({
   mfDownPct:25, mfRate:7, mfAmortYears:30,
   mfExpTaxes:0, mfExpInsurance:0, mfExpUtilities:0,
   mfExpMgmtPct:8, mfExpMaintPct:8, mfExpReservesPerUnit:250, mfExpOther:0,
-  mfExpRecovered:0          // $/yr reimbursed by NNN tenants (taxes, insurance, CAM)
+  mfExpRecovered:0,         // $/yr reimbursed by NNN tenants (taxes, insurance, CAM)
+  // Commercial (office, retail, industrial) underwriting — suites live in
+  // `cspaces` above; these drive the calcCO engine.
+  coVacancyPct:7, coOtherIncome:0,
+  coExpTaxes:0, coExpInsurance:0, coExpCam:0,
+  coExpMgmtPct:4, coExpReservesPSF:0.25, coExpOther:0,
+  coDownPct:25, coRate:7.25, coAmortYears:25
 });
+
+// Commercial income engine (office, retail, industrial). Suites lease at
+// $/SF/yr; NNN tenants repay their pro-rata share of taxes, insurance, and
+// CAM automatically (scaled by occupancy, since vacant space repays nothing).
+// Value judged on NOI, DSCR, price per SF, and rent per SF.
+function calcCO(p) {
+  const n = v => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const suites = Array.isArray(p.cspaces) ? p.cspaces : [];
+  const totalSqft = suites.reduce((s, c) => s + n(c.sqft), 0);
+  const rentYr    = suites.reduce((s, c) => s + n(c.sqft) * n(c.rate), 0);
+  const nnnSqft   = suites.reduce((s, c) => s + ((c.lease || "nnn") === "nnn" ? n(c.sqft) : 0), 0);
+  const gprYr   = rentYr + n(p.coOtherIncome) * 12;
+  const vac     = clamp(n(p.coVacancyPct), 0, 100) / 100;
+  const vacLoss = gprYr * vac;
+  const egi     = gprYr - vacLoss;
+  const mgmt     = egi * (clamp(n(p.coExpMgmtPct), 0, 100) / 100);
+  const reserves = totalSqft * n(p.coExpReservesPSF);
+  const passThru = n(p.coExpTaxes) + n(p.coExpInsurance) + n(p.coExpCam);
+  const opexGross = passThru + mgmt + reserves + n(p.coExpOther);
+  const recovered = totalSqft > 0 ? passThru * (nnnSqft / totalSqft) * (1 - vac) : 0;
+  const opex = Math.max(opexGross - recovered, 0);
+  const noi  = egi - opex;
+
+  const price   = n(p.purchasePrice);
+  const rehab   = n(p.repairCosts);
+  const closing = p.closingCosts != null ? n(p.closingCosts)
+    : Math.round(price * (n(p.purchaseCostsPct || 3) / 100));
+
+  const isCash  = (p.chosenStrategy || "finance") === "cash";
+  const downPct = clamp(n(p.coDownPct), 0, 100) / 100;
+  const loanAmt = isCash ? 0 : Math.round(price * (1 - downPct));
+  const dsMo    = isCash ? 0 : monthlyPI(loanAmt, n(p.coRate), n(p.coAmortYears || 25));
+  const dsYr    = dsMo * 12;
+  const cfYr    = noi - dsYr;
+  const dscr    = dsYr > 0 ? noi / dsYr : (noi > 0 ? Infinity : 0);
+  const debtYield = loanAmt > 0 ? (noi / loanAmt) * 100 : 0;
+  const downAmt = isCash ? price : Math.round(price * downPct);
+  const cashIn  = downAmt + rehab + closing;
+  const coc     = cashIn > 0 ? (cfYr / cashIn) * 100 : 0;
+
+  const capOnPrice = price > 0 ? (noi / price) * 100 : 0;
+  const pricePerSF = totalSqft > 0 ? price / totalSqft : 0;
+  const ratePerSF  = totalSqft > 0 ? rentYr / totalSqft : 0;
+  const expRatio   = egi > 0 ? (opex / egi) * 100 : 0;
+
+  return {
+    totalSqft, nnnSqft, rentYr, gprYr, vacLoss, egi,
+    mgmt, reserves, passThru, opexGross, recovered, opex, noi, expRatio,
+    isCash, loanAmt, dsMo, dsYr, cfYr, cfMo: cfYr / 12, dscr, debtYield,
+    downAmt, closing, rehab, cashIn, coc, capOnPrice, pricePerSF, ratePerSF, price,
+  };
+}
 
 // Income-approach engine for multifamily / commercial. Deliberately separate
 // from the residential calc() so it can never regress those numbers. Value is
@@ -1028,11 +1087,18 @@ const applyReapi = (prev, rp, rates) => {
   const detectedMF = recUnits >= 5 || /apartment/i.test(rp.type || "");
   const seedUnits  = (Array.isArray(prev.units) && prev.units.length) ? prev.units
     : (recUnits >= 2 ? [{id: "u" + Date.now(), label: "1BR / 1BA", count: recUnits, rent: rp.rent || 0}] : (prev.units || []));
+  const seedSpaces = (prev.assetClass === "commercial" &&
+    !(Array.isArray(prev.cspaces) && prev.cspaces.length) && (rp.sqftBuilding || rp.sqft))
+    ? [{id: "c" + Date.now(), label: prev.type || "Suite 1",
+        sqft: rp.sqftBuilding || rp.sqft, rate: 0, lease: "nnn"}]
+    : prev.cspaces;
   return {
     ...prev,
     assetClass: detectedMF ? "multifamily" : (prev.assetClass || "residential"),
     units:      seedUnits,
+    cspaces:    seedSpaces,
     mfExpTaxes: prev.mfExpTaxes || annual || 0,
+    coExpTaxes: prev.coExpTaxes || annual || 0,
     beds:      rp.beds      || prev.beds,
     baths:     rp.baths     || prev.baths,
     sqft,
@@ -6028,7 +6094,20 @@ const proFormaToFeedDeal = pf => ({
   loopnetId:            pf.loopnetId || null,
   loopnetPropertyId:    pf.loopnetPropertyId || null,
   loopnetUrl:           pf.loopnetUrl || null,
+  zpid:                 pf.zpid || null,
+  zillowUrl:            pf.zillowUrl || null,
   assetClass:           pf.assetClass || "residential",
+  coVacancyPct:         pf.coVacancyPct ?? 7,
+  coOtherIncome:        pf.coOtherIncome || 0,
+  coExpTaxes:           pf.coExpTaxes || 0,
+  coExpInsurance:       pf.coExpInsurance || 0,
+  coExpCam:             pf.coExpCam || 0,
+  coExpMgmtPct:         pf.coExpMgmtPct ?? 4,
+  coExpReservesPSF:     pf.coExpReservesPSF ?? 0.25,
+  coExpOther:           pf.coExpOther || 0,
+  coDownPct:            pf.coDownPct ?? 25,
+  coRate:               pf.coRate ?? 7.25,
+  coAmortYears:         pf.coAmortYears ?? 25,
   units:                Array.isArray(pf.units) ? pf.units : [],
   cspaces:              Array.isArray(pf.cspaces) ? pf.cspaces : [],
   mfExpRecovered:       pf.mfExpRecovered || 0,
@@ -6137,7 +6216,20 @@ const dealToProForma = (deal) => {
     loopnetId:            deal.loopnetId || (/^ln\w+$/.test(String(deal.id || "")) ? String(deal.id).slice(2) : null),
     loopnetPropertyId:    deal.loopnetPropertyId || null,
     loopnetUrl:           deal.loopnetUrl || null,
+    zpid:                 deal.zpid || null,
+    zillowUrl:            deal.zillowUrl || deal.sourceUrl || null,
     assetClass:           deal.assetClass || "residential",
+    coVacancyPct:         deal.coVacancyPct ?? 7,
+    coOtherIncome:        deal.coOtherIncome || 0,
+    coExpTaxes:           deal.coExpTaxes || 0,
+    coExpInsurance:       deal.coExpInsurance || 0,
+    coExpCam:             deal.coExpCam || 0,
+    coExpMgmtPct:         deal.coExpMgmtPct ?? 4,
+    coExpReservesPSF:     deal.coExpReservesPSF ?? 0.25,
+    coExpOther:           deal.coExpOther || 0,
+    coDownPct:            deal.coDownPct ?? 25,
+    coRate:               deal.coRate ?? 7.25,
+    coAmortYears:         deal.coAmortYears ?? 25,
     units:                Array.isArray(deal.units) ? deal.units : [],
     cspaces:              Array.isArray(deal.cspaces) ? deal.cspaces : [],
     mfExpRecovered:       deal.mfExpRecovered || 0,
@@ -6328,6 +6420,29 @@ function StrategySegments({value, onChange, counts}) {
 // snapshot (displayed verbatim); feed deals fall back to the classifier.
 const dealHeroMetrics = (deal, savedScenario, savedFinancing) => {
   const c = classifyDeal(deal);
+  // Commercial: cap rate, DSCR, and out-of-pocket, on the calcCO engine.
+  if (deal.assetClass === "commercial") {
+    const co = calcCO({
+      ...deal,
+      purchasePrice: deal.purchasePrice || deal.price || 0,
+      repairCosts:   deal.repairCosts   || deal.repair || 0,
+      chosenStrategy: deal.chosenStrategy || (deal.financing === "cash" ? "cash" : "finance"),
+    });
+    const shortType = /office|medical/i.test(deal.type || "") ? "Office"
+      : /warehouse|industrial|manufactur|distribution|flex/i.test(deal.type || "") ? "Industrial"
+      : /retail|storefront|restaurant|center|store/i.test(deal.type || "") ? "Retail"
+      : "Commercial";
+    const strat = {label: shortType, bg: C.blueSubtle, color: C.blueDark, border: C.blueBorder, dot: C.blue};
+    return {
+      c, isBrrrr: false, primary: "commercial", strat, cashMode: co.isCash, methods: {},
+      heroNumber: {label: "Cash flow", value: $mo(co.cfMo), color: cfC(co.cfMo)},
+      secondaryMetrics: [
+        ["Cap rate", pct(co.capOnPrice)],
+        ["DSCR", co.isCash ? "All cash" : (isFinite(co.dscr) ? co.dscr.toFixed(2) + "x" : "∞"), null, true],
+        ["Out of Pocket", $(co.cashIn)],
+      ],
+    };
+  }
   // Income properties are underwritten on cap rate / NOI, so their card and
   // deal view show those numbers instead of the residential hold/flip math.
   if (deal.assetClass === "multifamily") {
@@ -6871,6 +6986,31 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
   const photos = Array.isArray(deal.photos) && deal.photos.length > 0
     ? deal.photos : (deal.photo ? [deal.photo] : []);
   const rcDeal = {...deal, address: deal.streetAddress || deal.address};
+  // Finder listings arrive without the agent's write-up; pull it from the
+  // listing detail (cached server-side) the same way commercial deals do.
+  const [zDetail, setZDetail] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const zpid = deal.zpid || null;
+        const zUrl = deal.sourceUrl || deal.zillowUrl || null;
+        const hasFull = deal.description && deal.description.length >= 200;
+        if (hasFull || (!zpid && !zUrl) || !rcAuth || !rcAuth.token) return;
+        const r = await fetch(`${FN_BASE}/homeDetail`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", Authorization: `Bearer ${rcAuth.token}`},
+          body: JSON.stringify({zpid, url: zUrl}),
+        });
+        const j = await r.json().catch(() => null);
+        if (alive && r.ok && j && j.found) setZDetail(j);
+      } catch { /* the listing stands on its own */ }
+    })();
+    return () => { alive = false; };
+  }, [deal.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fullDesc = (zDetail && zDetail.description &&
+    zDetail.description.length > String(deal.description || "").length)
+    ? zDetail.description : (deal.description || null);
 
   // Escape closes; the gallery (when open) wins the keystroke.
   useEffect(() => {
@@ -7106,7 +7246,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
         )}
 
         {/* Description — Pro only */}
-        {deal.description && (
+        {fullDesc && (
           <div style={{padding:sectionPad, borderBottom:"1px solid "+C.border}}>
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>
@@ -7114,7 +7254,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
             </div>
             {isPro ? (
               <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-                {deal.description}
+                {deEnt(fullDesc)}
               </div>
             ) : (
               <div style={{fontSize:13, color:C.textSub, fontFamily:F, lineHeight:1.6,
@@ -7188,7 +7328,7 @@ function DealDetailModal({deal, isPro, onClose, onAnalyze, onSave, onUpgrade, mo
         {/* Bottom actions — analyze up top, then the research shortcuts */}
         <div style={{padding:sectionPad}}>
           {isPro && (
-            <button onClick={() => { onAnalyze(deal); onClose(); }}
+            <button onClick={() => { onAnalyze(fullDesc ? {...deal, description: fullDesc} : deal); onClose(); }}
               {...btnStyle("primary","lg", {width:"100%", justifyContent:"center", marginBottom:12})}>
               <I.search size={14}/> Analyze deal
             </button>
@@ -9666,7 +9806,7 @@ function DealViewPage({deal, isPro, onClose, onAnalyze, onRemove, onUpgrade, api
           <Group title="Analysis">
             <Row Ic={I.chart} label="Deal Calculator"
               onClick={()=>{ onClose(); onAnalyze(deal); }}/>
-            {deal.assetClass === "multifamily" ? (
+            {(deal.assetClass === "multifamily" || deal.assetClass === "commercial") ? (
               <Row Ic={I.trendingUp} label="Income & Returns"
                 onClick={()=>setSheet("mfreport")} last/>
             ) : (
@@ -10456,7 +10596,15 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     photo: l.photo || null,
     description: l.description || null, source: "LoopNet",
     loopnetId: l.id || null, loopnetPropertyId: l.propertyId || null, loopnetUrl: l.url || null,
-    assetClass: "multifamily",
+    // Apartments underwrite on the rent roll; everything else commercial. An
+    // exact "12,500 SF" size seeds the first suite so the roster starts real.
+    assetClass: /apartment/i.test(l.propertyType || "") ? "multifamily" : "commercial",
+    cspaces: (() => {
+      if (/apartment/i.test(l.propertyType || "")) return [];
+      const mm = /^([\d,]+)\s*SF\b/i.exec(String(l.sizeLabel || ""));
+      const sq = mm ? parseInt(mm[1].replace(/,/g, ""), 10) || 0 : 0;
+      return sq > 0 ? [{id: "c" + l.id, label: l.propertyType || "Suite 1", sqft: sq, rate: 0, lease: "nnn"}] : [];
+    })(),
   });
 
   // Google Places autocomplete on the search bar — city / ZIP / address, just
@@ -11170,6 +11318,363 @@ function DealsPage({tier, onUpgrade, onAnalyzeDeal, onSaveDeal, mobile, token, l
 }
 
 // -- Deal Analyzer -------------------------------------------------------------
+// Commercial calculator (office, retail, industrial, mixed use). Suites lease
+// at $/SF/yr with NNN, modified gross, or gross terms; NNN suites repay their
+// pro-rata share of taxes, insurance, and CAM automatically. Same guided feel
+// as the rest of the analyzer, judged on the numbers commercial buyers and
+// lenders actually use.
+function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
+  const u = (f, v) => set({...p, [f]: v});
+  const m = calcCO(p);
+  const [expPer, setExpPer] = useState("yr");
+  const [resPer, setResPer] = useState("mo");
+  const perVal = v => expPer === "mo" ? Math.round((v || 0) / 12) : (v || 0);
+  const perSet = f => v => u(f, expPer === "mo" ? Math.round((+v || 0) * 12) : (+v || 0));
+  const suites = Array.isArray(p.cspaces) ? p.cspaces : [];
+  const setSuites = next => set({...p, cspaces: next});
+  const addSuite = () => setSuites([...suites, {id: "c" + Date.now() + "-" + suites.length,
+    label: "", sqft: 0, rate: 0, lease: "nnn"}]);
+  const patchSuite = (id, patch) => setSuites(suites.map(x => x.id === id ? {...x, ...patch} : x));
+  const removeSuite = id => setSuites(suites.filter(x => x.id !== id));
+  const isCash = (p.chosenStrategy || "finance") === "cash";
+  useEffect(() => { if (!suites.length) addSuite(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Insurance starts from the state's average rate; Steadily turns it exact.
+  useEffect(() => {
+    if ((p.coExpInsurance || 0) > 0 || !(p.purchasePrice > 0)) return;
+    const rate = INSURANCE_RATES[(p.state || "").toUpperCase()] || DEFAULT_INS_RATE;
+    u("coExpInsurance", Math.round(p.purchasePrice * rate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.purchasePrice]);
+
+  const cell = {...iS(mobile), padding: mobile ? "9px 10px" : "9px 11px"};
+  const microLabel = {fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F,
+    letterSpacing:".06em", textTransform:"uppercase", display:"block", marginBottom:5};
+  const dscrColor = isCash ? C.textSub : m.dscr >= 1.25 ? "#059669" : m.dscr >= 1 ? C.amberDark : "#dc2626";
+  const dscrText  = isCash ? "All cash" : !isFinite(m.dscr) ? "∞" : m.dscr.toFixed(2) + "x";
+  const perToggle = (val, setVal) => (
+    <div onClick={e => e.stopPropagation()} style={{display:"flex", padding:3,
+      background:C.bgSubtle, borderRadius:9999, border:"1px solid "+C.border}}>
+      {[["mo","Mo"],["yr","Yr"]].map(([id,label]) => {
+        const active = val === id;
+        return (
+          <button key={id} onClick={()=>setVal(id)}
+            style={{padding:"4px 11px", borderRadius:9999, border:"none", cursor:"pointer",
+              background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+              fontSize:11, fontWeight:700, fontFamily:F, transition:"background .15s"}}>{label}</button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Purchase method */}
+      <div style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
+        textTransform:"uppercase", marginBottom:8}}>Purchase Method</div>
+      <div style={{display:"flex", padding:4, background:C.bgSubtle, borderRadius:C.r2,
+        border:"1px solid "+C.border, marginBottom:18}}>
+        {[["cash","Cash",C.cashPos],["finance","Finance",C.green]].map(([id,label,accent]) => {
+          const active = (p.chosenStrategy||"finance")===id;
+          return (
+            <button key={id} onClick={()=>u("chosenStrategy",id)}
+              style={{flex:1, padding:"8px 14px", borderRadius:C.r1, border:"none",
+                background: active ? accent : "transparent", color: active ? "#fff" : C.textSub,
+                fontWeight: active?700:500, fontSize:13, cursor:"pointer", fontFamily:F,
+                boxShadow: active ? "0 2px 6px -1px rgba(9,9,11,.25)" : "none",
+                transition:"background .15s, color .15s"}}>{label}</button>
+          );
+        })}
+      </div>
+
+      {/* Purchase & financing */}
+      <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}
+        collapsible defaultOpen={!startCollapsed}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: mobile ? 0 : 12}}>
+          <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
+          <InputField label="Rehab / TI Budget" val={p.repairCosts} set={v=>u("repairCosts",v)} pre="$" mobile={mobile}/>
+          <InputField label="Closing Costs" val={p.closingCosts != null ? p.closingCosts : m.closing} set={v=>u("closingCosts",v)} pre="$" mobile={mobile}/>
+        </div>
+        {!isCash && (
+          <>
+            <InputField label="Down Payment" val={p.coDownPct} set={v=>u("coDownPct",v)} suf="%"
+              note={`${$(m.downAmt)} down, ${$(m.loanAmt)} loan`} mobile={mobile}/>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+              <InputField label="Interest Rate" val={p.coRate} set={v=>u("coRate",v)} suf="%" mobile={mobile}/>
+              <InputField label="Amortization" val={p.coAmortYears} set={v=>u("coAmortYears",v)} suf="yrs" mobile={mobile}/>
+            </div>
+          </>
+        )}
+        {isCash && (
+          <div style={{display:"flex", alignItems:"center", gap:12, background:C.greenSubtle,
+            border:"1px solid "+C.greenBorder, borderRadius:C.r3, padding:"13px 15px"}}>
+            <span style={{width:36, height:36, borderRadius:10, flexShrink:0, display:"flex",
+              alignItems:"center", justifyContent:"center", color:"#fff",
+              background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`}}>
+              <I.dollar size={17} stroke={2.2}/>
+            </span>
+            <div>
+              <div style={{fontSize:13.5, fontWeight:800, color:C.greenDark, fontFamily:F, letterSpacing:"-0.01em"}}>
+                Buying in all cash
+              </div>
+              <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, lineHeight:1.5, marginTop:1}}>
+                No loan payments. Every dollar of net operating income is yours.
+              </div>
+            </div>
+          </div>
+        )}
+      </SectionBlock>
+
+      {/* Suites & leases */}
+      <SectionBlock title="Suites & Leases" color={C.green} icon={I.building}
+        collapsible defaultOpen={!startCollapsed}
+        right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+          fontVariantNumeric:"tabular-nums"}}>{m.totalSqft ? m.totalSqft.toLocaleString() + " sqft" : "No suites yet"} · {$mo(m.rentYr/12)}</span>}>
+        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1}}>
+          {suites.map((cs, i) => (
+            <div key={cs.id} style={{padding:"12px", background:"#fff",
+              borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
+              <div style={{display:"flex", gap:8, alignItems:"flex-end", marginBottom:10}}>
+                <div style={{flex:1, minWidth:0}}>
+                  <span style={microLabel}>Suite</span>
+                  <input value={cs.label} onChange={e=>patchSuite(cs.id, {label:e.target.value})}
+                    placeholder={`Suite ${i + 1}`} style={{...cell, width:"100%"}}/>
+                </div>
+                <button onClick={()=>removeSuite(cs.id)} aria-label="Remove suite"
+                  style={{width:28, height:28, borderRadius:"50%", border:"none", background:C.bgSubtle,
+                    color:C.textMuted, cursor:"pointer", display:"flex", alignItems:"center",
+                    justifyContent:"center", padding:0, flexShrink:0, marginBottom:5}}>
+                  <I.x size={12} stroke={2.4}/>
+                </button>
+              </div>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                <div>
+                  <span style={microLabel}>Size</span>
+                  <div style={{position:"relative"}}>
+                    <input type="number" inputMode="numeric" value={cs.sqft || ""} onChange={e=>patchSuite(cs.id, {sqft:+e.target.value})}
+                      placeholder="0" style={{...cell, width:"100%", paddingRight:40}}/>
+                    <span style={{position:"absolute", right:11, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:11, fontFamily:F, pointerEvents:"none"}}>sqft</span>
+                  </div>
+                </div>
+                <div>
+                  <span style={microLabel}>Rent rate</span>
+                  <div style={{position:"relative"}}>
+                    <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                    <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchSuite(cs.id, {rate:+e.target.value})}
+                      placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:48}}/>
+                    <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:10, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+                gap:10, marginTop:10}}>
+                <div style={{display:"flex", flex:1, padding:3, background:C.bgSubtle,
+                  borderRadius:9999, border:"1px solid "+C.border, maxWidth:230}}>
+                  {[["nnn","NNN"],["mg","Mod Gross"],["gross","Gross"]].map(([id,label]) => {
+                    const active = (cs.lease||"nnn")===id;
+                    return (
+                      <button key={id} onClick={()=>patchSuite(cs.id, {lease:id})}
+                        style={{flex:1, padding:"6px 0", borderRadius:9999, border:"none", cursor:"pointer",
+                          background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+                          fontSize:10.5, fontWeight:700, fontFamily:F, transition:"background .15s",
+                          boxShadow: active ? "0 2px 5px -1px rgba(9,9,11,.25)" : "none"}}>{label}</button>
+                    );
+                  })}
+                </div>
+                <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums"}}>
+                  {$mo((+cs.sqft || 0) * (+cs.rate || 0) / 12)}
+                </span>
+              </div>
+            </div>
+          ))}
+          <div style={{padding:"10px 12px", background:C.bgSubtle, borderTop:"1px solid "+C.border}}>
+            <button onClick={addSuite} style={{width:"100%", display:"flex", alignItems:"center",
+              justifyContent:"center", gap:6, padding:"10px 8px", borderRadius:C.r2, cursor:"pointer",
+              fontFamily:F, fontSize:12.5, fontWeight:700, background:C.greenSubtle,
+              border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+              <I.plus size={13} stroke={2.6}/> Add suite
+            </button>
+          </div>
+        </div>
+
+        <div style={{marginTop:16, display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+          <InputField label="Other income / mo" val={p.coOtherIncome} set={v=>u("coOtherIncome",v)} pre="$" mobile={mobile}/>
+          <InputField label="Vacancy" val={p.coVacancyPct} set={v=>u("coVacancyPct",v)} suf="%" mobile={mobile}/>
+        </div>
+        <div style={{marginTop:4, border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", boxShadow:C.sh1}}>
+          {[["Gross Potential Income", $(m.gprYr), false],
+            ["Vacancy Loss", "-" + $(m.vacLoss), false],
+            ["Effective Gross Income", $(m.egi), true]].map(([l, v, hero], i) => (
+            <div key={l} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"11px 14px", background: hero ? C.greenSubtle : "#fff",
+              borderTop: i === 0 ? "none" : "1px solid " + C.border}}>
+              <span style={{fontSize:12.5, fontWeight: hero ? 800 : 600,
+                color: hero ? C.greenDark : C.textSub, fontFamily:F}}>{l}</span>
+              <span style={{fontSize:13.5, fontWeight:800, color: hero ? C.greenDark : C.text,
+                fontFamily:F, fontVariantNumeric:"tabular-nums"}}>{v}<span style={{fontWeight:600, fontSize:11.5, color: hero ? C.greenDark : C.textMuted}}>/yr</span></span>
+            </div>
+          ))}
+        </div>
+      </SectionBlock>
+
+      {/* Operating expenses */}
+      <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
+        collapsible defaultOpen={!startCollapsed}
+        right={perToggle(expPer, setExpPer)}>
+        <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 12}}>
+          <InputField label={`Property Taxes / ${expPer}`} val={perVal(p.coExpTaxes)} set={perSet("coExpTaxes")} pre="$" mobile={mobile}/>
+          <div>
+            <InputField label={`Insurance / ${expPer}`} val={perVal(p.coExpInsurance)} set={perSet("coExpInsurance")} pre="$" mobile={mobile}/>
+            <a href="https://www.steadily.com" target="_blank" rel="noreferrer"
+              style={{display:"inline-flex", alignItems:"center", gap:6, margin:"-6px 0 14px",
+                fontSize:12, fontWeight:700, color:C.greenDark, fontFamily:F, textDecoration:"none"}}>
+              <I.externalLink size={12} stroke={2.4}/> Get an exact instant quote from Steadily
+            </a>
+          </div>
+        </div>
+        <InputField label={`CAM & Utilities / ${expPer}`} val={perVal(p.coExpCam)} set={perSet("coExpCam")} pre="$" mobile={mobile}/>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+          <InputField label="Management" val={p.coExpMgmtPct} set={v=>u("coExpMgmtPct",v)} suf="%" mobile={mobile}/>
+          <InputField label="Reserves / SF / yr" val={p.coExpReservesPSF} set={v=>u("coExpReservesPSF",v)} pre="$" mobile={mobile}/>
+        </div>
+        <InputField label={`Other / ${expPer}`} val={perVal(p.coExpOther)} set={perSet("coExpOther")} pre="$" mobile={mobile}/>
+        <div style={{border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden", marginTop:2}}>
+          {m.recovered > 0 && (
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"10px 14px", background:"#fff"}}>
+              <span style={{textAlign:"left"}}>
+                <span style={{fontSize:12.5, fontWeight:600, color:C.textSub, fontFamily:F, display:"block"}}>Repaid by NNN tenants</span>
+                <span style={{fontSize:10.5, color:C.textMuted, fontFamily:F}}>their share of taxes, insurance, and CAM</span>
+              </span>
+              <span style={{fontSize:13, fontWeight:700, color:"#059669", fontFamily:F, fontVariantNumeric:"tabular-nums"}}>-{$(expPer === "mo" ? m.recovered / 12 : m.recovered)}</span>
+            </div>
+          )}
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"11px 14px",
+            background:C.bgSubtle, borderTop: m.recovered > 0 ? "1px solid "+C.border : "none"}}>
+            <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F}}>Total Operating Expenses</span>
+            <span style={{textAlign:"right"}}>
+              <span style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                {$(expPer === "mo" ? m.opex / 12 : m.opex)}<span style={{fontWeight:600, fontSize:11.5, color:C.textMuted}}>/{expPer}</span>
+              </span>
+              <span style={{display:"block", fontSize:10.5, color:C.textMuted, fontFamily:F}}>{pct(m.expRatio)} of gross income</span>
+            </span>
+          </div>
+        </div>
+      </SectionBlock>
+
+      {/* Results */}
+      <SectionBlock title="Results" color={C.green} icon={I.chart}
+        right={perToggle(resPer, setResPer)}>
+        {(() => {
+          const box = {border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
+            boxShadow:C.sh1, marginBottom:16};
+          const mo = resPer === "mo";
+          const per = (yr, {neg} = {}) => {
+            const sign = (neg || yr < 0) ? "-" : "";
+            const a = Math.abs(yr);
+            return {
+              main: sign + $(mo ? a / 12 : a) + (mo ? "/mo" : "/yr"),
+              sub:  sign + $(mo ? a : a / 12) + (mo ? "/yr" : "/mo"),
+            };
+          };
+          const row = (k, v, {bold, color, sub, top} = {}) => (
+            <div key={k} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              gap:10, padding:"10px 14px", background: bold ? C.bgSubtle : "#fff",
+              borderTop: top === false ? "none" : "1px solid "+C.border}}>
+              <span style={{fontSize:13, fontWeight: bold ? 800 : 650, fontFamily:F,
+                color:C.text}}>{k}</span>
+              <span style={{textAlign:"right"}}>
+                <span style={{fontSize:13.5, fontWeight:800, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", color: color || C.text}}>{v}</span>
+                {sub && <span style={{display:"block", fontSize:10.5, color:C.textMuted, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums", marginTop:1}}>{sub}</span>}
+              </span>
+            </div>
+          );
+          const gGross = per(m.gprYr);
+          const gVac   = per(m.vacLoss, {neg: true});
+          const gOpex  = per(m.opex, {neg: true});
+          const gNoi   = per(m.noi);
+          const gDs    = per(m.dsYr);
+          const gTotalExp = per(m.opex + m.dsYr, {neg: true});
+          const gCf    = per(m.cfYr);
+          return (
+            <>
+              <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 16}}>
+                <div>
+                  <ResLabel Ic={I.tag} text="Cash To Close"/>
+                  <div style={box}>
+                    {isCash
+                      ? row("Purchase Price", $(m.price), {top: false})
+                      : row("Down Payment", $(m.downAmt), {top: false, sub: `${p.coDownPct || 0}% down`})}
+                    {row("Rehab / TI Budget", $(m.rehab))}
+                    {row("Closing Costs", $(m.closing))}
+                    {row("Total Out of Pocket", $(m.cashIn), {bold: true})}
+                  </div>
+                </div>
+                <div>
+                  <ResLabel Ic={I.dollar} text="Income"/>
+                  <div style={box}>
+                    {row("Gross Income", gGross.main, {top: false, sub: gGross.sub})}
+                    {row("Vacancy", gVac.main)}
+                    {row("Operating Expenses", gOpex.main, {sub: gOpex.sub})}
+                    {row("Net Operating Income", gNoi.main, {bold: true, color: cfC(m.noi), sub: gNoi.sub})}
+                  </div>
+                </div>
+              </div>
+
+              {!isCash && (
+                <>
+                  <ResLabel Ic={I.building} text="Financing"/>
+                  <div style={box}>
+                    {row("Loan Amount", $(m.loanAmt), {top: false, sub: `${p.coRate || 0}% over ${p.coAmortYears || 25} years`})}
+                    {row("Mortgage Payment", gDs.main, {sub: gDs.sub})}
+                    {row("DSCR", dscrText, {bold: true, color: dscrColor,
+                      sub: m.dscr < 1.25 && isFinite(m.dscr) ? "lenders want 1.25+" : "healthy coverage"})}
+                  </div>
+                </>
+              )}
+
+              <ResLabel Ic={I.chart} text="The Bottom Line"/>
+              <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
+                border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
+                {[
+                  ["Out of Pocket", $(m.cashIn), C.text,
+                    isCash ? "price, rehab, closing" : "down, rehab, closing"],
+                  ["Total Expenses", gTotalExp.main, C.text,
+                    isCash ? "operating expenses" : "operating plus mortgage"],
+                  ["Cash Flow", gCf.main, cfC(m.cfYr), gCf.sub],
+                  ["Cap Rate", pct(m.capOnPrice), C.text, "on your price"],
+                  ["Price / SF", m.totalSqft > 0 ? $(m.pricePerSF) : "N/A", C.text,
+                    m.totalSqft > 0 ? m.totalSqft.toLocaleString() + " sqft" : "add suite sizes"],
+                  ["Avg Rent / SF", m.totalSqft > 0 ? "$" + m.ratePerSF.toFixed(2) + "/yr" : "N/A", C.text,
+                    "across the roster"],
+                ].map(([l, v, color, sub]) => (
+                  <div key={l} style={{background:"linear-gradient(180deg, #fff 0%, #fcfcfd 100%)",
+                    padding:"14px 12px 15px", textAlign:"center"}}>
+                    <div style={{fontSize:10, color:C.textSub, fontWeight:800, fontFamily:F,
+                      letterSpacing:".06em", textTransform:"uppercase", whiteSpace:"nowrap",
+                      overflow:"hidden", textOverflow:"ellipsis"}}>{l}</div>
+                    <div style={{fontSize:19, fontWeight:800, color, fontFamily:F,
+                      fontVariantNumeric:"tabular-nums", letterSpacing:"-0.02em", marginTop:4,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{v}</div>
+                    <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F,
+                      fontVariantNumeric:"tabular-nums", marginTop:2, whiteSpace:"nowrap",
+                      overflow:"hidden", textOverflow:"ellipsis"}}>{sub}</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          );
+        })()}
+      </SectionBlock>
+    </div>
+  );
+}
+
 // The unit mixes that cover nearly every building; Custom handles the rest.
 const MF_UNIT_TYPES = ["Studio", "1BR / 1BA", "2BR / 1BA", "2BR / 2BA",
   "3BR / 1BA", "3BR / 2BA", "4BR / 2BA"];
@@ -11533,8 +12038,6 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
           </div>
         }>
         {(() => {
-          const label = {fontSize:10.5, fontWeight:800, color:C.textSub, fontFamily:F,
-            letterSpacing:".07em", textTransform:"uppercase", margin:"0 2px 7px"};
           const box = {border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
             boxShadow:C.sh1, marginBottom:16};
           // Every recurring figure obeys the Monthly/Yearly toggle; the other
@@ -11552,8 +12055,8 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
             <div key={k} style={{display:"flex", justifyContent:"space-between", alignItems:"center",
               gap:10, padding:"10px 14px", background: bold ? C.bgSubtle : "#fff",
               borderTop: top === false ? "none" : "1px solid "+C.border}}>
-              <span style={{fontSize:12.5, fontWeight: bold ? 800 : 600, fontFamily:F,
-                color: bold ? C.text : C.textSub}}>{k}</span>
+              <span style={{fontSize:13, fontWeight: bold ? 800 : 650, fontFamily:F,
+                color:C.text}}>{k}</span>
               <span style={{textAlign:"right"}}>
                 <span style={{fontSize:13.5, fontWeight:800, fontFamily:F,
                   fontVariantNumeric:"tabular-nums", color: color || C.text}}>{v}</span>
@@ -11574,7 +12077,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
             <>
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 16}}>
                 <div>
-                  <div style={label}>Cash To Close</div>
+                  <ResLabel Ic={I.tag} text="Cash To Close"/>
                   <div style={box}>
                     {isCash
                       ? row("Purchase Price", $(m.price), {top: false})
@@ -11585,7 +12088,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                   </div>
                 </div>
                 <div>
-                  <div style={label}>Income</div>
+                  <ResLabel Ic={I.dollar} text="Income"/>
                   <div style={box}>
                     {row("Gross Income", gGross.main, {top: false, sub: gGross.sub})}
                     {row("Vacancy", gVac.main)}
@@ -11597,7 +12100,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
 
               {!isCash && (
                 <>
-                  <div style={label}>Financing</div>
+                  <ResLabel Ic={I.building} text="Financing"/>
                   <div style={box}>
                     {row("Loan Amount", $(m.loanAmt), {top: false, sub: `${p.mfRate || 0}% over ${p.mfAmortYears || 30} years`})}
                     {row("Mortgage Payment", gDs.main, {sub: gDs.sub})}
@@ -11607,11 +12110,12 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                 </>
               )}
 
-              <div style={label}>The Bottom Line</div>
+              <ResLabel Ic={I.chart} text="The Bottom Line"/>
               <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
                 border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1, marginBottom:16}}>
                 {[
-                  ["Gross Rent", gGross.main, C.text, gGross.sub],
+                  ["Out of Pocket", $(m.cashIn), C.text,
+                    isCash ? "price, rehab, closing" : "down, rehab, closing"],
                   ["Total Expenses", gTotalExp.main, C.text,
                     isCash ? "operating expenses" : "operating plus mortgage"],
                   ["Cash Flow", gCf.main, cfC(m.cfYr), gCf.sub],
@@ -11649,7 +12153,9 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
 // statement from gross rents down to cash flow, the valuation at the market
 // cap, and every return metric a lender or partner would ask about.
 function MFReportSheet({deal, onClose, mobile}) {
-  const m = calcMF({...deal,
+  const isCO = deal.assetClass === "commercial";
+  const engine = isCO ? calcCO : calcMF;
+  const m = engine({...deal,
     purchasePrice: deal.purchasePrice || deal.price || 0,
     repairCosts:   deal.repairCosts   || deal.repair || 0,
     chosenStrategy: deal.chosenStrategy || (deal.financing === "cash" ? "cash" : "finance")});
@@ -11715,8 +12221,12 @@ function MFReportSheet({deal, onClose, mobile}) {
         {tile("Cash-on-Cash", m.cashIn > 0 ? pct(m.coc) : "N/A", cfC(m.coc))}
         {tile("DSCR", dscrText, isCash ? C.textSub : m.dscr >= 1.25 ? "#059669" : m.dscr >= 1 ? C.amberDark : "#dc2626")}
         {tile("Debt Yield", m.loanAmt > 0 ? pct(m.debtYield) : "N/A")}
-        {tile("Price / Unit", m.totalUnits > 0 ? $(m.pricePerUnit) : "N/A")}
-        {tile("GRM", m.grm > 0 ? m.grm.toFixed(1) : "N/A")}
+        {isCO
+          ? tile("Price / SF", m.totalSqft > 0 ? $(m.pricePerSF) : "N/A")
+          : tile("Price / Unit", m.totalUnits > 0 ? $(m.pricePerUnit) : "N/A")}
+        {isCO
+          ? tile("Avg Rent / SF", m.totalSqft > 0 ? "$" + m.ratePerSF.toFixed(2) + "/yr" : "N/A")
+          : tile("GRM", m.grm > 0 ? m.grm.toFixed(1) : "N/A")}
       </div>
 
       <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F, letterSpacing:".06em",
@@ -11795,6 +12305,22 @@ function ListingStory({text, mobile}) {
           {expanded ? "Show less" : "Read more"}
         </button>
       )}
+    </div>
+  );
+}
+
+// Group header inside the Results sections: a small icon chip plus a dark
+// uppercase label, so the eye lands on the section before the numbers.
+function ResLabel({Ic, text}) {
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:8, margin:"2px 2px 9px"}}>
+      <span style={{width:24, height:24, borderRadius:7, flexShrink:0, background:C.greenSubtle,
+        border:"1px solid "+C.greenBorder, color:C.greenDark,
+        display:"flex", alignItems:"center", justifyContent:"center"}}>
+        <Ic size={13} stroke={2.4}/>
+      </span>
+      <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F,
+        letterSpacing:".05em", textTransform:"uppercase"}}>{text}</span>
     </div>
   );
 }
@@ -11920,18 +12446,25 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   // copy (and any extra photos) is folded into the deal, so saving keeps it.
   const enrichedKeyRef = useRef("");
   useEffect(() => {
+    if (!rcAuth || !rcAuth.token) return;
     const lnId = d.loopnetId || (/^ln\w+$/.test(String(d.id || "")) ? String(d.id).slice(2) : null);
-    if (!lnId || !rcAuth || !rcAuth.token) return;
+    const zpid = d.zpid || (/^z\d+$/.test(String(d.id || "")) ? String(d.id).slice(1) : null);
+    const zUrl = d.zillowUrl || null;
+    const provider = lnId ? "ln" : (zpid || zUrl) ? "z" : null;
+    if (!provider) return;
+    const keyId = provider + ":" + (lnId || zpid || zUrl);
     const short = !d.description || d.description.length < 600 || /(…|\.\.\.)\s*$/.test(d.description);
-    if (!short || enrichedKeyRef.current === lnId) return;
-    enrichedKeyRef.current = lnId;
+    if (!short || enrichedKeyRef.current === keyId) return;
+    enrichedKeyRef.current = keyId;
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`${FN_BASE}/commercialDetail`, {
+        const r = await fetch(`${FN_BASE}/${provider === "ln" ? "commercialDetail" : "homeDetail"}`, {
           method: "POST",
           headers: {"Content-Type": "application/json", Authorization: `Bearer ${rcAuth.token}`},
-          body: JSON.stringify({id: lnId, propertyId: d.loopnetPropertyId || null, url: d.loopnetUrl || null}),
+          body: JSON.stringify(provider === "ln"
+            ? {id: lnId, propertyId: d.loopnetPropertyId || null, url: d.loopnetUrl || null}
+            : {zpid, url: zUrl}),
         });
         const j = await r.json().catch(() => null);
         if (!alive || !r.ok || !j) return;
@@ -11948,7 +12481,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       } catch { /* the search snippet stays until the next try */ }
     })();
     return () => { alive = false; };
-  }, [d.id, d.loopnetId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [d.id, d.loopnetId, d.zpid]); // eslint-disable-line react-hooks/exhaustive-deps
   // Safety net: a full address without specs (manual typing, prefilled saves)
   // pulls after a short pause.
   useEffect(() => {
@@ -12273,10 +12806,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           <I.arrowLeft size={14}/> {backLabel || "Back to deals"}
         </button>
       )}
-      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer"
-        action={curStep === 4
-          ? <button onClick={()=>{setD(seedDeal());setErr("");setOpen(1);setMaxReached(1);}} {...btnStyle("secondary","md")}><I.x size={13}/> Clear</button>
-          : undefined} />
+      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer" />
 
       <AnalyzerSteps current={curStep} mobile={mobile} />
 
@@ -12349,7 +12879,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           textTransform:"uppercase", marginBottom:9}}>Underwriting model</div>
         <div style={{display:"flex", gap:0, padding:4, background:C.bgSubtle, borderRadius:C.r2, border:"1px solid "+C.border}}>
           {[["residential","Residential","Single family to 4 units"],
-            ["multifamily","Multifamily","5+ units and commercial"]].map(([id,label,sub]) => {
+            ["multifamily","Multifamily","5+ unit apartments"],
+            ["commercial","Commercial","Office, retail, industrial"]].map(([id,label,sub]) => {
             const active = (d.assetClass||"residential")===id;
             return (
               <button key={id} onClick={()=>u("assetClass",id)}
@@ -12494,7 +13025,9 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           full body; Notes ride along at the very end so they never show early. */}
       {open === 3 && (
         <>
-          {(d.assetClass === "multifamily" && d.chosenStrategy) ? (
+          {(d.assetClass === "commercial" && d.chosenStrategy) ? (
+            <CommercialCalculator p={d} set={setD} mobile={mobile} startCollapsed={savedReopen} />
+          ) : (d.assetClass === "multifamily" && d.chosenStrategy) ? (
             <MultifamilyCalculator p={d} set={setD} mobile={mobile} startCollapsed={savedReopen}
               apiLookup={apiLookup} rcAuth={rcAuth} tier={tier} onUpgrade={onUpgrade} />
           ) : (
@@ -12509,7 +13042,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             <>
               {/* Residential rolls up in DealSummaryBlock; multifamily shows its
                   own Value & Returns block inside the calculator above. */}
-              {d.assetClass !== "multifamily" && <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>}
+              {d.assetClass !== "multifamily" && d.assetClass !== "commercial" && <DealSummaryBlock p={d} m={m} exit={exitStrategy}/>}
 
               {/* Deal Notes — only at the final step, never earlier */}
               <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
@@ -12527,7 +13060,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
               )}
               <button onClick={saveDeal}
                 {...btnStyle("primary","lg", {width:"100%", marginBottom:24})}>
-                <I.star size={15}/> {d.assetClass === "multifamily" ? "Save Multifamily Deal"
+                <I.star size={15}/> {d.assetClass === "commercial" ? "Save Commercial Deal"
+                  : d.assetClass === "multifamily" ? "Save Multifamily Deal"
                   : <>Save as {exitStrategy === "brrrr" ? "BRRRR"
                     : exitStrategy === "flip" ? "Fix & Flip"
                     : d.alreadyOwned || (d.chosenStrategy||"finance") === "finance" ? "Rental" : "Buy & Hold"}</>}

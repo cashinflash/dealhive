@@ -1219,6 +1219,94 @@ exports.searchListings = onRequest({
   }
 });
 
+// Full home-listing detail (description + any extra photos) for one Zillow
+// listing from the finder. The search feed carries photos but no description;
+// the detail endpoint has the agent's write-up. Same tolerant-extraction and
+// caching approach as the LoopNet details: exact response shape undocumented,
+// so we walk the JSON for what we need and remember hits for a week.
+const HOME_DETAIL_TTL_MS = 7 * 24 * 3600 * 1000;
+function extractZillowDetail(j) {
+  const photos = [];
+  const seen = new Set();
+  let keyMatched = "", longestProse = "";
+  const isProse = (s) => typeof s === "string" && s.length > 60 && /\s/.test(s) &&
+    !/^https?:/.test(s) && !/\{|\}|<\/?[a-z]+>/i.test(s.slice(0, 40));
+  const walk = (v, key) => {
+    if (v == null) return;
+    if (typeof v === "string") {
+      if (/^https?:\/\//.test(v) && /zillowstatic|photos\./i.test(v) && /\.(jpg|jpeg|png|webp)/i.test(v)) {
+        if (!seen.has(v) && photos.length < 40) { seen.add(v); photos.push(v); }
+        return;
+      }
+      if (/descript|remarks|overview/i.test(key || "") && v.length > keyMatched.length) keyMatched = v;
+      if (isProse(v) && v.length > longestProse.length) longestProse = v;
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, key)); return; }
+    if (typeof v === "object") { for (const [k, val] of Object.entries(v)) walk(val, k); }
+  };
+  walk(j, "");
+  const description = keyMatched.length >= longestProse.length ? keyMatched : longestProse;
+  return {description: description ? decodeEntities(description) : null, photos};
+}
+exports.homeDetail = onRequest({
+  secrets: [RAPIDAPI_KEY],
+  cors: true, region: "us-central1", timeoutSeconds: 30,
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    const body = req.body || {};
+    const zpid = String(body.zpid || "").replace(/[^\w-]/g, "").slice(0, 24);
+    const url  = String(body.url || "").slice(0, 300);
+    if (!zpid && !url) { res.status(400).json({error: "zpid"}); return; }
+
+    const cacheRef = admin.database().ref(`homeDetailCache/${zpid || listingCacheKey(url, 1)}`);
+    const cached = (await cacheRef.get()).val();
+    const ttl = cached && cached.found ? HOME_DETAIL_TTL_MS : 3600 * 1000;
+    if (cached && cached.v === 1 && cached.ts && (Date.now() - cached.ts) < ttl) {
+      res.json({found: cached.found, description: cached.description || null,
+        photos: cached.photos || [], cached: true});
+      return;
+    }
+
+    const key = RAPIDAPI_KEY.value();
+    if (!key || key === "unset" || !LISTING_PROVIDER.host) { res.status(503).json({error: "staged"}); return; }
+    const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LISTING_PROVIDER.host};
+    const tryGet = async (path) => {
+      try {
+        const r = await fetch(`https://${LISTING_PROVIDER.host}${path}`, {headers});
+        if (!r.ok) return null;
+        return await r.json().catch(() => null);
+      } catch { return null; }
+    };
+    // Which identifier the detail endpoint wants is undocumented; try each.
+    const attempts = [];
+    if (url)  attempts.push(`/byurl?url=${encodeURIComponent(url)}`);
+    if (zpid) attempts.push(`/byzpid?zpid=${encodeURIComponent(zpid)}`,
+                            `/byid?id=${encodeURIComponent(zpid)}`);
+    let got = {description: null, photos: []};
+    for (const path of attempts) {
+      const j = await tryGet(path);
+      if (!j) continue;
+      const g = extractZillowDetail(j);
+      if (g.description && g.description.length > (got.description || "").length) got = g;
+      else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
+      if (got.description && got.description.length > 200) break;
+    }
+    const record = {v: 1, ts: Date.now(), found: !!(got.description || got.photos.length),
+      description: got.description, photos: got.photos.slice(0, 30)};
+    await cacheRef.set(record);
+    await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
+      .transaction((v) => numOr0(v) + 1);
+    res.json({found: record.found, description: record.description, photos: record.photos, cached: false});
+  } catch (e) {
+    logger.error("homeDetail", {error: e.message});
+    res.status(500).json({error: "detail failed"});
+  }
+});
+
 // == Commercial listing search (LoopNet via RapidAPI) ===========================
 // Same shape as searchListings: shared member meter (one search pool across
 // homes and commercial), the same global backstop, and a shared result cache.
