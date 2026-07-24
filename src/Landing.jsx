@@ -1329,7 +1329,7 @@ const MockBadge = ({ children, bg = C.cashPos }) => (
 
 function StrategyMock({ id }) {
   if (id === "rental") return (
-    <AppFrame label="DealHive · Deal Analyzer">
+    <AppFrame label="DealHive · Underwriting">
       <MockHeader color="#047857" label="Summary"/>
       <MockRow l="Purchase Method" v="Cash"/>
       <MockRow l="Exit Strategy" v="Buy & Hold"/>
@@ -1341,7 +1341,7 @@ function StrategyMock({ id }) {
     </AppFrame>
   );
   if (id === "brrrr") return (
-    <AppFrame label="DealHive · Deal Analyzer">
+    <AppFrame label="DealHive · Underwriting">
       <MockHeader color="#7c3aed" label="BRRRR Estimate"/>
       <MockRow l="Cash Out Amount" v="$113,600"/>
       <MockRow l="Refi Interest Rate" v="7.5%"/>
@@ -1353,7 +1353,7 @@ function StrategyMock({ id }) {
     </AppFrame>
   );
   if (id === "flip") return (
-    <AppFrame label="DealHive · Deal Analyzer">
+    <AppFrame label="DealHive · Underwriting">
       <MockHeader color="#d97706" label="Fix & Flip"/>
       <MockRow l="Sale Price (ARV)" v="$189,000"/>
       <MockRow l="Holding Costs (6 mo)" v="$4,320"/>
@@ -2152,7 +2152,7 @@ function HiwDevices() {
             display: "flex", flexDirection: "column", fontFamily: F}}>
             <img src="/logo-white.png" alt="DealHive" width={520} height={125}
               style={{width: "80%", height: "auto", display: "block", marginBottom: "12%"}}/>
-            {["Dashboard", "Deals", "Deal Analyzer", "Settings"].map((l, i) => (
+            {["Dashboard", "Underwriting", "Deals", "Settings"].map((l, i) => (
               <div key={l} style={{color: i === 0 ? "#fff" : "#8b96a5",
                 background: i === 0 ? "rgba(255,255,255,.08)" : "transparent",
                 borderRadius: 6, padding: "5% 7%", marginBottom: "3%",

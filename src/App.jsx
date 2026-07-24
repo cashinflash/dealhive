@@ -13108,7 +13108,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           <I.arrowLeft size={14}/> {backLabel || "Back to deals"}
         </button>
       )}
-      <PageHeader title="Deal Analyzer" subtitle="Analyze any deal before you make an offer" />
+      <PageHeader title="Underwriting" subtitle="Underwrite any deal before you make an offer" />
 
       <AnalyzerSteps current={curStep} mobile={mobile} />
 
@@ -14270,7 +14270,7 @@ const NAV_ITEMS = [
   {id:"dashboard",  Icon:I.home,           label:"Dashboard"},
   {id:"properties", Icon:I.building,       label:"Properties", adminOnly:true},
   {id:"projects",   Icon:I.clipboardCheck, label:"Projects",   adminOnly:true},
-  {id:"deal",       Icon:I.search,         label:"Deal Analyzer"},
+  {id:"deal",       Icon:I.chart,          label:"Underwriting"},
   {id:"comps",      Icon:I.chart,          label:"Comps",      adminOnly:true},
   {id:"deals",      Icon:I.star,           label:"Deals",
     children:[{id:"saved", Icon:I.bee, label:"Saved Deals", adminOnly:true}]},
@@ -14437,7 +14437,7 @@ function MobileHeader({page, onBack, toast, onAddProperty, isAdmin=false, onMenu
   useEffect(() => { setMenuOpen(false); }, [page]);
   const titles = {
     dashboard:"Dashboard", saved:"Saved Deals", properties:"Properties", projects:"Projects",
-    deals:"Deals", deal:"Deal Analyzer", comps:"Comps", users:"Users",
+    deals:"Deals", deal:"Underwriting", comps:"Comps", users:"Users",
     settings:"Settings", property:"Property"
   };
   return (
@@ -14693,7 +14693,7 @@ function Toast({msg}) {
 function DesktopTopBar({page, propAddress, toast, onAddProperty}) {
   const titles = {
     dashboard:"Dashboard", saved:"Saved Deals", properties:"Properties", projects:"Projects",
-    deals:"Deals", deal:"Deal Analyzer", comps:"Comps",
+    deals:"Deals", deal:"Underwriting", comps:"Comps",
     settings:"Settings", property:propAddress||"Property"
   };
   return (
