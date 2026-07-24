@@ -1582,37 +1582,72 @@ function extractLoopnetDetail(j) {
 // read, so the first live call sweeps the likely paths and the winner is
 // remembered in config/loopnet2SalePath for every call after.
 const LOOPNET2_HOST = "loopnet-api.p.rapidapi.com";
-const LOOPNET2_PATHS = ["/sale/details", "/sale/detail", "/loopnet/sale/details",
-  "/v1/sale/details", "/api/sale/details", "/sale-details", "/details/sale"];
+// Route spellings to sweep, most likely first. The provider hasn't published
+// the path anywhere readable, so discovery is brute force: a wrong spelling is
+// a fast, quota-free 404 from the gateway, and the winner (with its method) is
+// remembered in config/loopnet2SalePath so the sweep runs until it succeeds at
+// most once per request, then never again. A short GET pass closes the sweep
+// in case the endpoint is registered GET-style despite the POST label.
+const LOOPNET2_PATHS = [
+  "/sale/details", "/sale/detail", "/sale/details/",
+  "/sale/listing-details", "/sale/listingDetails", "/sale/listing/details",
+  "/sale/property-details", "/sale/propertyDetails", "/sale/property/details",
+  "/sale/get-details", "/sale/getDetails", "/sale/getListingDetails",
+  "/sale/fetch-details", "/sale/fetchDetails", "/sale/details-by-id", "/sale/detailsById",
+  "/saleDetails", "/saledetails", "/sale_details", "/sale-details",
+  "/Sale/Details", "/sale/Details",
+  "/details", "/listing/details", "/listings/details", "/property/details",
+  "/loopnet/sale/details", "/loopnet/sale-details",
+  "/v1/sale/details", "/api/sale/details", "/api/v1/sale/details", "/v2/sale/details",
+  "/details/sale",
+];
+const LOOPNET2_GET_PATHS = ["/sale/details", "/sale/detail", "/sale/listing-details",
+  "/sale/property-details", "/sale/getDetails", "/sale-details", "/saleDetails", "/details"];
+// Returns {description, photos} when the listing answers, the string "empty"
+// when the route works but this id is unknown (worth trying another id), and
+// null when nothing can answer this request (no route, no subscription, quota).
 async function loopnet2SaleDetails(lid, key, trace) {
   const cfgRef = admin.database().ref("config/loopnet2SalePath");
-  const stored = (await cfgRef.get()).val();
-  const paths = [...new Set([stored, ...LOOPNET2_PATHS].filter(Boolean))];
-  const call = async (path, body) => {
+  const stored = String((await cfgRef.get()).val() || "");
+  const attempts = [];
+  if (stored) attempts.push(stored.includes(" ") ? stored.split(" ") : ["POST", stored]);
+  for (const p of LOOPNET2_PATHS) attempts.push(["POST", p]);
+  for (const p of LOOPNET2_GET_PATHS) attempts.push(["GET", p]);
+  const call = async (method, path, body) => {
     try {
-      const r = await fetch(`https://${LOOPNET2_HOST}${path}`, {
-        method: "POST",
+      const url = method === "GET"
+        ? `https://${LOOPNET2_HOST}${path}?listingId=${encodeURIComponent(lid)}`
+        : `https://${LOOPNET2_HOST}${path}`;
+      const r = await fetch(url, {
+        method,
         headers: {"Content-Type": "application/json",
           "X-RapidAPI-Key": key, "X-RapidAPI-Host": LOOPNET2_HOST},
-        body: JSON.stringify(body),
+        body: method === "GET" ? undefined : JSON.stringify(body),
       });
       const j = await r.json().catch(() => null);
       return {status: r.status, j};
     } catch { return {status: 0, j: null}; }
   };
-  for (const path of paths) {
-    let got = await call(path, {listingId: Number(lid)});
+  const seen = new Set();
+  let misses = 0;
+  for (const [method, path] of attempts) {
+    const sig = `${method} ${path}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    let got = await call(method, path, {listingId: Number(lid)});
     // The right route with the wrong body shape answers 400/422; retry the id
     // as a string before concluding anything about the route.
-    if (got.status === 400 || got.status === 422) got = await call(path, {listingId: String(lid)});
-    if (got.status === 404) { trace.push(`p2${path} 404`); continue; }
-    if (got.status === 403) { trace.push(`p2${path} 403 not-subscribed`); return null; }
-    if (got.status === 429) { trace.push(`p2${path} 429 quota`); return null; }
-    if (got.status !== 200 || !got.j) { trace.push(`p2${path} HTTP ${got.status}`); return null; }
-    if (path !== stored) cfgRef.set(path).catch(() => { /* rediscovered next call */ });
+    if (method === "POST" && (got.status === 400 || got.status === 422)) {
+      got = await call(method, path, {listingId: String(lid)});
+    }
+    if (got.status === 404) { misses++; continue; }
+    if (got.status === 403) { trace.push(`p2 ${sig} 403 not-subscribed`); return null; }
+    if (got.status === 429) { trace.push(`p2 ${sig} 429 quota`); return null; }
+    if (got.status !== 200 || !got.j) { trace.push(`p2 ${sig} HTTP ${got.status}`); return null; }
+    if (sig !== stored) cfgRef.set(sig).catch(() => { /* rediscovered next call */ });
     const d = Array.isArray(got.j.data) ? got.j.data[0] :
       (got.j.data && typeof got.j.data === "object" ? got.j.data : null);
-    if (!d) { trace.push(`p2${path} ok empty`); return null; }
+    if (!d) { trace.push(`p2 ${sig} ok empty`); return "empty"; }
     // The full text has been seen under `summary`; sibling fields are checked
     // too and the longest wins. Arrays of paragraphs join before competing.
     const bare = (s) => String(s).replace(/<[^>]+>/g, "").trim();
@@ -1624,10 +1659,10 @@ async function loopnet2SaleDetails(lid, key, trace) {
     const photos = (Array.isArray(d.images) ? d.images : [])
       .map((im) => (im && typeof im === "object" ? im.url : im))
       .filter((u) => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 30);
-    trace.push(`p2${path} ok desc=${description ? description.length : 0} photos=${photos.length}`);
+    trace.push(`p2 ${sig} ok desc=${description ? description.length : 0} photos=${photos.length}`);
     return {description, photos};
   }
-  trace.push("p2 no-route");
+  trace.push(`p2 no-route (${misses} spellings tried)`);
   return null;
 }
 exports.commercialDetail = onRequest({
@@ -1728,7 +1763,10 @@ exports.commercialDetail = onRequest({
         .filter((x) => /^\d{5,}$/.test(String(x || ""))))];
       for (const lid of lids) {
         const p2 = await loopnet2SaleDetails(lid, key, trace);
-        if (!p2) continue;
+        // null means nothing can answer this request (no route, subscription,
+        // quota): another id can't change that, so stop instead of re-sweeping.
+        if (p2 === null) break;
+        if (p2 === "empty") continue;
         sawOk = true;
         if (p2.description && p2.description.length > (got.description || "").length) {
           got.description = p2.description;
