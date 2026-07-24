@@ -256,6 +256,26 @@ const clearAuth = () => { try { localStorage.removeItem("dh_auth"); } catch {} }
 // "N of 5 searches left" pill paints instantly on revisit instead of waiting on
 // a (possibly cold) server ping. The ping still refreshes it a moment later.
 const smeterMonth = () => { try { return new Date().toISOString().slice(0, 7); } catch { return ""; } };
+// Recent Deal Finder searches, per account. Tapping the bar brings them back,
+// the way the big portals do.
+const loadRecentSearches = () => {
+  try {
+    const a = loadAuth(); if (!a || !a.localId) return [];
+    const r = JSON.parse(localStorage.getItem(`dh_recent_searches_${a.localId}`) || "[]");
+    return Array.isArray(r) ? r.slice(0, 8) : [];
+  } catch { return []; }
+};
+const saveRecentSearch = (q, market) => {
+  try {
+    const a = loadAuth(); if (!a || !a.localId || !q) return [];
+    const key = `dh_recent_searches_${a.localId}`;
+    const cur = loadRecentSearches().filter(r =>
+      !(r.q.toLowerCase() === q.toLowerCase() && r.market === market));
+    const next = [{q, market, ts: Date.now()}, ...cur].slice(0, 8);
+    localStorage.setItem(key, JSON.stringify(next));
+    return next;
+  } catch { return []; }
+};
 const loadSearchMeter = () => {
   try {
     const a = loadAuth(); if (!a || !a.localId) return null;
@@ -674,7 +694,7 @@ function calcCO(p) {
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const suites = Array.isArray(p.cspaces) ? p.cspaces : [];
   const totalSqft = suites.reduce((s, c) => s + n(c.sqft), 0);
-  const rentYr    = suites.reduce((s, c) => s + n(c.sqft) * n(c.rate), 0);
+  const rentYr    = suites.reduce((s, c) => s + spaceRentYr(c), 0);
   const nnnSqft   = suites.reduce((s, c) => s + ((c.lease || "nnn") === "nnn" ? n(c.sqft) : 0), 0);
   const gprYr   = rentYr + n(p.coOtherIncome) * 12;
   const vac     = clamp(n(p.coVacancyPct), 0, 100) / 100;
@@ -729,7 +749,7 @@ function calcMF(p) {
   const totalUnits  = units.reduce((s, u) => s + n(u.count), 0);
   const unitRentMo  = units.reduce((s, u) => s + n(u.count) * n(u.rent), 0);
   // Commercial space rent: sqft × $/SF/yr, entered as an annual rate.
-  const cRentYr     = cspaces.reduce((s, c) => s + n(c.sqft) * n(c.rate), 0);
+  const cRentYr     = cspaces.reduce((s, c) => s + spaceRentYr(c), 0);
   const rentMo      = unitRentMo + cRentYr / 12;
   const grossRentYr = rentMo * 12;                              // rent only (for GRM)
   const gprYr       = grossRentYr + n(p.mfOtherIncome) * 12;    // gross potential income
@@ -1097,14 +1117,17 @@ const applyReapi = (prev, rp, rates) => {
     assetClass: detectedMF ? "multifamily" : (prev.assetClass || "residential"),
     units:      seedUnits,
     cspaces:    seedSpaces,
-    mfExpTaxes: prev.mfExpTaxes || annual || 0,
-    coExpTaxes: prev.coExpTaxes || annual || 0,
+    mfExpTaxes: (prev.mfExpTaxes && !prev.mfExpTaxesAuto) ? prev.mfExpTaxes : (annual || prev.mfExpTaxes || 0),
+    mfExpTaxesAuto: annual ? false : prev.mfExpTaxesAuto,
+    coExpTaxes: (prev.coExpTaxes && !prev.coExpTaxesAuto) ? prev.coExpTaxes : (annual || prev.coExpTaxes || 0),
+    coExpTaxesAuto: annual ? false : prev.coExpTaxesAuto,
     beds:      rp.beds      || prev.beds,
     baths:     rp.baths     || prev.baths,
     sqft,
     lotSize:   rp.lotSize   || prev.lotSize || 0,
     yearBuilt: rp.yearBuilt || prev.yearBuilt,
-    type:      rp.type      || prev.type,
+    type:      ((prev.assetClass === "commercial" || prev.assetClass === "multifamily") && prev.type)
+      ? prev.type : (rp.type || prev.type),
     lat:       rp.lat       || prev.lat,
     lng:       rp.lng       || prev.lng,
     taxValue:  taxVal       || prev.taxValue,
@@ -10507,6 +10530,12 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const cmode = "sale";                                  // investors buy; lease inventory stays out of the way
   const [resMarket, setResMarket] = useState("homes");
   const [cSel, setCSel]           = useState(null);      // open commercial listing
+  const [recents, setRecents]     = useState(loadRecentSearches);
+  const [recentsOpen, setRecentsOpen] = useState(false);
+  const [cTotal, setCTotal]       = useState(0);         // LoopNet's full match count
+  const [cPage, setCPage]         = useState(1);
+  const [cHasMore, setCHasMore]   = useState(false);
+  const [cLoadingMore, setCLoadingMore] = useState(false);
   const inputRef = useRef(null);
   const acRef = useRef(null);         // Google Places Autocomplete instance
   const runSearchRef = useRef(null);  // always points at the latest runSearch
@@ -10551,6 +10580,10 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         setResults(Array.isArray(j.items) ? j.items : []);
         setCount(j.count || (j.items||[]).length);
         setResMarket(mkt);
+        setCTotal(commercial ? (j.count || (j.items||[]).length) : 0);
+        setCPage(1);
+        setCHasMore(commercial ? !!j.nextPage : false);
+        setRecents(saveRecentSearch(term, mkt));
       } else if (j.error === "limit") {
         setResults(null);
         setError({kind:"limit",
@@ -10585,6 +10618,34 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     setMarket(mk);
     if (submitted) runSearch(submitted, mk);
   };
+  // Pull the next LoopNet page and append it, so "everything on LoopNet"
+  // really means everything, one metered page at a time.
+  const loadMoreCommercial = async () => {
+    if (cLoadingMore || !cHasMore || resMarket === "homes") return;
+    setCLoadingMore(true);
+    try {
+      const r = await fetch(`${FN_BASE}/searchCommercial`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json", Authorization:`Bearer ${token}`},
+        body: JSON.stringify({query: submitted, page: cPage + 1, mode: cmode}),
+      });
+      const j = await r.json().catch(()=>({}));
+      if (j.meter) { setMeter(j.meter); saveSearchMeter(j.meter); }
+      if (r.ok && Array.isArray(j.items)) {
+        setResults(prev => {
+          const seen = new Set((prev || []).map(x => x.id));
+          return [...(prev || []), ...j.items.filter(x => !seen.has(x.id))];
+        });
+        setCPage(pg2 => pg2 + 1);
+        setCHasMore(!!j.nextPage);
+        setVisN(n => n + 36);
+      } else {
+        setCHasMore(false);
+      }
+    } catch { /* the loaded pages stand */ }
+    setCLoadingMore(false);
+  };
+
   // A LoopNet listing walks into the analyzer as an income deal: address,
   // photos, and the listing description carried over, purchase price prefilled
   // from the asking price whenever the listing names one.
@@ -10685,7 +10746,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   // One search bar element, styled for hero vs compact. Its Google-autocomplete
   // input lives here; the effect above re-binds it when it remounts.
   const searchBar = (
-    <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{width:"100%"}}>
+    <form onSubmit={e => { e.preventDefault(); runSearch(); }} style={{width:"100%", position:"relative"}}>
       <div style={{display:"flex", alignItems:"center", gap:8, background:C.card,
         border:"1px solid "+C.border, borderRadius:9999,
         boxShadow: heroMode
@@ -10697,6 +10758,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         </span>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Enter a city, ZIP, or address" enterKeyHint="search" autoComplete="off"
+          onFocus={() => { if (recents.length && !query.trim()) setRecentsOpen(true); }}
+          onBlur={() => setTimeout(() => setRecentsOpen(false), 160)}
           onKeyDown={e => {
             // When the Google suggestions are open, let Enter pick one (its
             // place_changed runs the search) instead of submitting typed text.
@@ -10716,6 +10779,35 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             : <><I.search size={16} stroke={2.4}/>{!mobile && " Search"}</>}
         </button>
       </div>
+      {recentsOpen && recents.length > 0 && !query.trim() && (
+        <div style={{position:"absolute", top:"100%", left:8, right:8, marginTop:8, zIndex:60,
+          background:C.card, border:"1px solid "+C.border, borderRadius:C.r3,
+          boxShadow:C.sh4, overflow:"hidden", textAlign:"left"}}>
+          <div style={{padding:"9px 14px 7px", fontSize:10.5, fontWeight:800, color:C.textMuted,
+            fontFamily:F, letterSpacing:".06em", textTransform:"uppercase",
+            borderBottom:"1px solid "+C.border}}>Recent searches</div>
+          {recents.map((r, i) => (
+            <button key={r.q + r.market} type="button"
+              onMouseDown={e => { e.preventDefault(); setRecentsOpen(false);
+                setQuery(r.q); if (r.market !== market) setMarket(r.market);
+                runSearch(r.q, r.market); }}
+              style={{display:"flex", alignItems:"center", gap:11, width:"100%", padding:"12px 14px",
+                background:"none", border:"none", cursor:"pointer", textAlign:"left", fontFamily:F,
+                borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
+              <span style={{width:28, height:28, borderRadius:8, flexShrink:0, background:C.bgSubtle,
+                border:"1px solid "+C.border, color:C.textSub, display:"inline-flex",
+                alignItems:"center", justifyContent:"center"}}>
+                <I.search size={13} stroke={2.2}/>
+              </span>
+              <span style={{flex:1, minWidth:0, fontSize:14, fontWeight:600, color:C.text,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.q}</span>
+              <span style={{fontSize:10.5, fontWeight:700, color:C.textSub, background:C.bgSubtle,
+                border:"1px solid "+C.border, borderRadius:9999, padding:"3px 9px", flexShrink:0,
+                textTransform:"capitalize"}}>{r.market === "homes" ? "Homes" : r.market === "multifamily" ? "Multifamily" : "Commercial"}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </form>
   );
 
@@ -10818,8 +10910,15 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         <>
           <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
             gap:12, flexWrap:"wrap", marginBottom:14}}>
-            <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
-              {commercialShown.length.toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{commercialShown.length===1?"":"s"} in {prettyLoc(submitted)}
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
+                {(cTotal || commercialShown.length).toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{(cTotal || commercialShown.length)===1?"":"s"} in {prettyLoc(submitted)}
+              </div>
+              {cTotal > commercialAll.length && (
+                <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
+                  {commercialAll.length.toLocaleString()} loaded so far
+                </div>
+              )}
             </div>
             {resMarket === "commercial" && (
               <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
@@ -10851,11 +10950,20 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                     onUnderwrite={underwriteCommercial} onOpen={setCSel}/>
                 ))}
               </div>
-              {commercialShown.length > visN && (
+              {(commercialShown.length > visN || cHasMore) && (
                 <div style={{display:"flex", justifyContent:"center", marginTop:20}}>
-                  <button onClick={()=>setVisN(n => n + 36)} {...btnStyle("secondary","lg")}>
-                    Show more listings
-                  </button>
+                  {commercialShown.length > visN ? (
+                    <button onClick={()=>setVisN(n => n + 36)} {...btnStyle("secondary","lg")}>
+                      Show more listings
+                    </button>
+                  ) : (
+                    <button onClick={loadMoreCommercial} disabled={cLoadingMore}
+                      {...btnStyle("secondary","lg", {opacity: cLoadingMore ? .6 : 1})}>
+                      {cLoadingMore
+                        ? <span className="dh-spin" style={{display:"inline-flex"}}><I.cycle size={15} stroke={2.4}/></span>
+                        : <>Load more from LoopNet</>}
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -11345,6 +11453,12 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
     u("coExpInsurance", Math.round(p.purchasePrice * rate));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.purchasePrice]);
+  useEffect(() => {
+    if ((p.coExpTaxes || 0) > 0 || !(p.purchasePrice > 0)) return;
+    const rate = STATE_TAX_RATES[(p.state || "").toUpperCase()] || DEFAULT_TAX_RATE;
+    set({...p, coExpTaxes: Math.round(p.purchasePrice * rate), coExpTaxesAuto: true});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.purchasePrice]);
 
   const cell = {...iS(mobile), padding: mobile ? "9px 10px" : "9px 11px"};
   const microLabel = {fontSize:10, color:C.textMuted, fontWeight:800, fontFamily:F,
@@ -11457,14 +11571,20 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
                   </div>
                 </div>
                 <div>
-                  <span style={microLabel}>Rent rate</span>
+                  <span style={microLabel}>Rent</span>
                   <div style={{position:"relative"}}>
                     <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
                       color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
                     <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchSuite(cs.id, {rate:+e.target.value})}
-                      placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:48}}/>
-                    <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
-                      color:C.textMuted, fontSize:10, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
+                      placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:74}}/>
+                    <select value={cs.rateUnit || "sfyr"} onChange={e=>patchSuite(cs.id, {rateUnit:e.target.value})}
+                      style={{position:"absolute", right:4, top:"50%", transform:"translateY(-50%)",
+                        border:"none", background:"transparent", color:C.textMuted, fontSize:10.5,
+                        fontWeight:700, fontFamily:F, cursor:"pointer", padding:"2px 0", maxWidth:70}}>
+                      <option value="sfyr">/SF/yr</option>
+                      <option value="sfmo">/SF/mo</option>
+                      <option value="flat">/mo flat</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -11485,7 +11605,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
                 </div>
                 <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F,
                   fontVariantNumeric:"tabular-nums"}}>
-                  {$mo((+cs.sqft || 0) * (+cs.rate || 0) / 12)}
+                  {$mo(spaceRentYr(cs) / 12)}
                 </span>
               </div>
             </div>
@@ -11675,6 +11795,14 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
   );
 }
 
+// A commercial space's annual rent, whatever way the rate was quoted:
+// dollars per SF per year, per SF per month, or a flat monthly rent.
+const spaceRentYr = (c) => {
+  const sq = +c.sqft || 0, r = +c.rate || 0;
+  const unit = c.rateUnit || "sfyr";
+  return unit === "flat" ? r * 12 : unit === "sfmo" ? sq * r * 12 : sq * r;
+};
+
 // The unit mixes that cover nearly every building; Custom handles the rest.
 const MF_UNIT_TYPES = ["Studio", "1BR / 1BA", "2BR / 1BA", "2BR / 2BA",
   "3BR / 1BA", "3BR / 2BA", "4BR / 2BA"];
@@ -11699,6 +11827,14 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
     if ((p.mfExpInsurance || 0) > 0 || !(p.purchasePrice > 0) ) return;
     const rate = INSURANCE_RATES[(p.state || "").toUpperCase()] || DEFAULT_INS_RATE;
     u("mfExpInsurance", Math.round(p.purchasePrice * rate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.purchasePrice]);
+  // Property taxes: county records fill this when they know the parcel; when
+  // they come up empty the state's effective rate keeps the field honest.
+  useEffect(() => {
+    if ((p.mfExpTaxes || 0) > 0 || !(p.purchasePrice > 0)) return;
+    const rate = STATE_TAX_RATES[(p.state || "").toUpperCase()] || DEFAULT_TAX_RATE;
+    set({...p, mfExpTaxes: Math.round(p.purchasePrice * rate), mfExpTaxesAuto: true});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.purchasePrice]);
   const units = Array.isArray(p.units) ? p.units : [];
@@ -11902,14 +12038,20 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                       </div>
                     </div>
                     <div>
-                      <span style={microLabel}>Rent rate</span>
+                      <span style={microLabel}>Rent</span>
                       <div style={{position:"relative"}}>
                         <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
                           color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
                         <input type="number" inputMode="decimal" value={cs.rate || ""} onChange={e=>patchCs(cs.id, {rate:+e.target.value})}
-                          placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:48}}/>
-                        <span style={{position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
-                          color:C.textMuted, fontSize:10, fontFamily:F, pointerEvents:"none"}}>/SF/yr</span>
+                          placeholder="0" style={{...cell, width:"100%", paddingLeft:22, paddingRight:74}}/>
+                        <select value={cs.rateUnit || "sfyr"} onChange={e=>patchCs(cs.id, {rateUnit:e.target.value})}
+                          style={{position:"absolute", right:4, top:"50%", transform:"translateY(-50%)",
+                            border:"none", background:"transparent", color:C.textMuted, fontSize:10.5,
+                            fontWeight:700, fontFamily:F, cursor:"pointer", padding:"2px 0", maxWidth:70}}>
+                          <option value="sfyr">/SF/yr</option>
+                          <option value="sfmo">/SF/mo</option>
+                          <option value="flat">/mo flat</option>
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -11930,7 +12072,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                     </div>
                     <span style={{fontSize:12.5, fontWeight:800, color:C.text, fontFamily:F,
                       fontVariantNumeric:"tabular-nums"}}>
-                      {$mo((+cs.sqft || 0) * (+cs.rate || 0) / 12)}
+                      {$mo(spaceRentYr(cs) / 12)}
                     </span>
                   </div>
                 </div>
@@ -12927,20 +13069,24 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
           <HexLoader/>
         </div>
       )}
-      {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (
-        <div style={{
-          display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : "repeat(6, 1fr)",
-          gap:1, background:C.border, border:"1px solid "+C.border,
-          borderRadius:C.r4, overflow:"hidden", marginBottom:18, boxShadow:C.sh2,
-        }}>
-          {[
-            ["Beds",     d.beds || "—",  I.bed],
-            ["Baths",    d.baths || "—", I.bath],
+      {(d.beds > 0 || d.baths > 0 || d.sqft > 0 || d.yearBuilt > 0) && (() => {
+          const tiles = [
+            ...(d.assetClass === "commercial" ? [] : [
+              ["Beds",  d.beds || "—",  I.bed],
+              ["Baths", d.baths || "—", I.bath],
+            ]),
             ["Sqft",     d.sqft ? d.sqft.toLocaleString() : "—", I.ruler],
             ["Lot Size", d.lotSize ? d.lotSize.toLocaleString() : "—", I.parcel],
             ["Year",     d.yearBuilt || "—", I.calendar],
             ["Type",     d.type || "—", I.home],
-          ].map(([l, v, Ic]) => (
+          ];
+          return (
+        <div style={{
+          display:"grid", gridTemplateColumns: mobile ? "repeat(2, 1fr)" : `repeat(${tiles.length}, 1fr)`,
+          gap:1, background:C.border, border:"1px solid "+C.border,
+          borderRadius:C.r4, overflow:"hidden", marginBottom:18, boxShadow:C.sh2,
+        }}>
+          {tiles.map(([l, v, Ic]) => (
             <div key={l} style={{
               background:"linear-gradient(180deg, #fff 0%, #fbfbfc 100%)",
               padding:"13px 10px", textAlign:"center",
@@ -12960,7 +13106,8 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
             </div>
           ))}
         </div>
-      )}
+          );
+        })()}
 
       {/* Listing context — deals that arrived from the deal feed carry the
           source listing's story: ask, solved target offer, and description. */}
