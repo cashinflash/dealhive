@@ -1229,8 +1229,12 @@ function extractZillowDetail(j) {
   const photos = [];
   const seen = new Set();
   let keyMatched = "", longestProse = "";
-  const isProse = (s) => typeof s === "string" && s.length > 60 && /\s/.test(s) &&
-    !/^https?:/.test(s) && !/\{|\}|<\/?[a-z]+>/i.test(s.slice(0, 40));
+  const strip = (x) => String(x).replace(/<[^>]+>/g, "");
+  const isProse = (v) => {
+    if (typeof v !== "string") return false;
+    const sv = strip(v).trim();
+    return sv.length > 60 && /\s/.test(sv) && !/^https?:/.test(sv) && !/^[\[{]/.test(sv);
+  };
   const walk = (v, key) => {
     if (v == null) return;
     if (typeof v === "string") {
@@ -1238,15 +1242,16 @@ function extractZillowDetail(j) {
         if (!seen.has(v) && photos.length < 40) { seen.add(v); photos.push(v); }
         return;
       }
-      if (/descript|remarks|overview/i.test(key || "") && v.length > keyMatched.length) keyMatched = v;
-      if (isProse(v) && v.length > longestProse.length) longestProse = v;
+      if (/descript|remarks|overview|body|content|text|marketing/i.test(key || "") &&
+        strip(v).length > strip(keyMatched).length) keyMatched = v;
+      if (isProse(v) && strip(v).length > strip(longestProse).length) longestProse = v;
       return;
     }
     if (Array.isArray(v)) { v.forEach((x) => walk(x, key)); return; }
     if (typeof v === "object") { for (const [k, val] of Object.entries(v)) walk(val, k); }
   };
   walk(j, "");
-  const description = keyMatched.length >= longestProse.length ? keyMatched : longestProse;
+  const description = strip(keyMatched).length >= strip(longestProse).length ? keyMatched : longestProse;
   return {description: description ? decodeEntities(description) : null, photos};
 }
 exports.homeDetail = onRequest({
@@ -1528,8 +1533,14 @@ function extractLoopnetDetail(j) {
   let keyMatched = "";   // longest string under a description-ish key
   let longestProse = ""; // longest prose string anywhere
   let joinedArray = "";  // paragraph arrays joined (descriptions often split)
-  const isProse = (s) => typeof s === "string" && s.length > 60 && /\s/.test(s) &&
-    !/^https?:/.test(s) && !/\{|\}|<\/?[a-z]+>/i.test(s.slice(0, 40));
+  // Candidates are judged by their length AFTER stripping tags, so a full
+  // description stored as HTML (which starts with a tag) can't slip past.
+  const strip = (x) => String(x).replace(/<[^>]+>/g, "");
+  const isProse = (v) => {
+    if (typeof v !== "string") return false;
+    const sv = strip(v).trim();
+    return sv.length > 60 && /\s/.test(sv) && !/^https?:/.test(sv) && !/^[\[{]/.test(sv);
+  };
   const walk = (v, key) => {
     if (v == null) return;
     if (typeof v === "string") {
@@ -1537,8 +1548,9 @@ function extractLoopnetDetail(j) {
         if (!seen.has(v) && photos.length < 40) { seen.add(v); photos.push(v); }
         return;
       }
-      if (/descript|overview|summary|about/i.test(key || "") && v.length > keyMatched.length) keyMatched = v;
-      if (isProse(v) && v.length > longestProse.length) longestProse = v;
+      if (/descript|overview|summary|about|body|content|text|remarks|marketing/i.test(key || "") &&
+        strip(v).length > strip(keyMatched).length) keyMatched = v;
+      if (isProse(v) && strip(v).length > strip(longestProse).length) longestProse = v;
       return;
     }
     if (Array.isArray(v)) {
@@ -1547,7 +1559,7 @@ function extractLoopnetDetail(j) {
       const prose = v.filter(isProse);
       if (prose.length >= 2 && prose.length >= v.length / 2) {
         const joined = prose.join("\n\n");
-        if (joined.length > joinedArray.length) joinedArray = joined;
+        if (strip(joined).length > strip(joinedArray).length) joinedArray = joined;
       }
       v.forEach((x) => walk(x, key));
       return;
@@ -1557,7 +1569,7 @@ function extractLoopnetDetail(j) {
   walk(j, "");
   // The fullest text wins, whatever shape it arrived in.
   const description = [keyMatched, longestProse, joinedArray]
-    .reduce((a, b) => (b.length > a.length ? b : a), "");
+    .reduce((a, b) => (strip(b).length > strip(a).length ? b : a), "");
   return {description: description ? decodeEntities(description) : null, photos};
 }
 exports.commercialDetail = onRequest({
@@ -1582,7 +1594,7 @@ exports.commercialDetail = onRequest({
     // body.fresh (admin diagnostics) bypasses the cache for a live trace.
     // v3 invalidates everything cached before the URL-first fetch order, which
     // had frozen short junk descriptions in for a week at a time.
-    if (!body.fresh && cached && cached.v === 3 && cached.ts && (Date.now() - cached.ts) < ttl) {
+    if (!body.fresh && cached && cached.v === 4 && cached.ts && (Date.now() - cached.ts) < ttl) {
       res.json({found: cached.found, description: cached.description || null,
         photos: cached.photos || [], cached: true});
       return;
@@ -1623,20 +1635,37 @@ exports.commercialDetail = onRequest({
       const g = extractLoopnetDetail(j);
       const keys = (typeof j === "object" && !Array.isArray(j)) ? Object.keys(j).slice(0, 10).join(",") : typeof j;
       trace.push(`${path.split("?")[0]} ok keys=[${keys}] desc=${g.description ? g.description.length : 0} photos=${g.photos.length}`);
-      if (!sample) { try { sample = JSON.stringify(j).slice(0, 300); } catch { /* skip */ } }
+      if (!sample) {
+        try {
+          const d = (j && typeof j === "object" && j.detail && typeof j.detail === "object") ? j.detail : j;
+          // Field map: every string property and its length, one level deep,
+          // so a screenshot names the exact field the full text hides in.
+          const fields = [];
+          for (const [k, v] of Object.entries(d)) {
+            if (typeof v === "string" && v.length > 20) fields.push(`${k}:${v.length}`);
+            else if (Array.isArray(v)) fields.push(`${k}[]:${v.length}`);
+            else if (v && typeof v === "object") {
+              for (const [k2, v2] of Object.entries(v)) {
+                if (typeof v2 === "string" && v2.length > 40) fields.push(`${k}.${k2}:${v2.length}`);
+              }
+            }
+          }
+          sample = `fields{${fields.slice(0, 24).join(",")}} raw=` + JSON.stringify(d).slice(0, 450);
+        } catch { /* skip */ }
+      }
       if (g.description && g.description.length > (got.description || "").length) got = g;
       else if (!got.photos.length && g.photos.length) got = {description: got.description, photos: g.photos};
       if (got.description && got.description.length > 300) break;
     }
     if (got.description) got.description = cleanListingText(got.description);
     logger.info("commercialDetail trace", {id, pid, trace});
-    const record = {v: 3, ts: Date.now(), found: !!(got.description || got.photos.length),
+    const record = {v: 4, ts: Date.now(), found: !!(got.description || got.photos.length),
       description: got.description, photos: got.photos.slice(0, 30)};
     if (sawOk || record.found) await cacheRef.set(record);
     await admin.database().ref(`globalSearchUsage/${new Date().toISOString().slice(0, 7)}`)
       .transaction((v) => numOr0(v) + 1);
     res.json({found: record.found, description: record.description, photos: record.photos,
-      cached: false, trace: (trace.join(" | ") + (sample ? ` | sample=${sample}` : "")).slice(0, 800)});
+      cached: false, trace: (trace.join(" | ") + (sample ? ` | ${sample}` : "")).slice(0, 1100)});
   } catch (e) {
     logger.error("commercialDetail", {error: e.message});
     res.status(500).json({error: "detail failed"});
