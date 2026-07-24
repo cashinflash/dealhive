@@ -11632,7 +11632,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
       </div>
 
       {/* Purchase & financing */}
-      <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}
+      <SectionBlock title="Purchase & Financing" color={C.blue} icon={I.tag}
         collapsible defaultOpen={!startCollapsed}>
         <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: mobile ? 0 : 12}}>
           <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
@@ -11670,7 +11670,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
       </SectionBlock>
 
       {/* Suites & leases */}
-      <SectionBlock title="Suites & Leases" color={C.green} icon={I.building}
+      <SectionBlock title="Suites & Leases" color={C.cashPos} icon={I.building}
         collapsible defaultOpen={!startCollapsed}
         right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
           fontVariantNumeric:"tabular-nums"}}>{m.totalSqft ? m.totalSqft.toLocaleString() + " sqft" : "No suites yet"} · {$mo(m.rentYr/12)}</span>}>
@@ -11772,7 +11772,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
       </SectionBlock>
 
       {/* Operating expenses */}
-      <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
+      <SectionBlock title="Operating Expenses" color={C.amber} icon={I.receipt}
         collapsible defaultOpen={!startCollapsed}
         right={perToggle(expPer, setExpPer)}>
         <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 12}}>
@@ -11817,7 +11817,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
       </SectionBlock>
 
       {/* Results */}
-      <SectionBlock title="Results" color={C.green} icon={I.chart}
+      <SectionBlock title="Results" color={C.purple} icon={I.chart}
         right={perToggle(resPer, setResPer)}>
         {(() => {
           const box = {border:"1px solid "+C.border, borderRadius:C.r3, overflow:"hidden",
@@ -11856,7 +11856,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
             <>
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 16}}>
                 <div>
-                  <ResLabel Ic={I.tag} text="Cash To Close"/>
+                  <ResLabel Ic={I.tag} text="Cash To Close" color={C.blue}/>
                   <div style={box}>
                     {isCash
                       ? row("Purchase Price", $(m.price), {top: false})
@@ -11867,7 +11867,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
                   </div>
                 </div>
                 <div>
-                  <ResLabel Ic={I.dollar} text="Income"/>
+                  <ResLabel Ic={I.dollar} text="Income" color={C.cashPos}/>
                   <div style={box}>
                     {row("Gross Income", gGross.main, {top: false, sub: gGross.sub})}
                     {row("Vacancy", gVac.main)}
@@ -11879,7 +11879,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
 
               {!isCash && (
                 <>
-                  <ResLabel Ic={I.building} text="Financing"/>
+                  <ResLabel Ic={I.building} text="Financing" color={C.amber}/>
                   <div style={box}>
                     {row("Loan Amount", $(m.loanAmt), {top: false, sub: `${p.coRate || 0}% over ${p.coAmortYears || 25} years`})}
                     {row("Mortgage Payment", gDs.main, {sub: gDs.sub})}
@@ -11889,7 +11889,7 @@ function CommercialCalculator({p, set, mobile, startCollapsed = false}) {
                 </>
               )}
 
-              <ResLabel Ic={I.chart} text="The Bottom Line"/>
+              <ResLabel Ic={I.chart} text="The Bottom Line" color={C.purple}/>
               <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
                 border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1}}>
                 {[
@@ -12017,7 +12017,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
       </div>
 
       {/* Purchase & financing — first: what you pay and how */}
-      <SectionBlock title="Purchase & Financing" color={C.green} icon={I.tag}
+      <SectionBlock title="Purchase & Financing" color={C.blue} icon={I.tag}
         collapsible defaultOpen={!startCollapsed}>
         <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr 1fr", gap: mobile ? 0 : 12}}>
           <InputField label="Purchase Price" val={p.purchasePrice} set={v=>u("purchasePrice",v)} pre="$" mobile={mobile}/>
@@ -12055,7 +12055,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
       </SectionBlock>
 
       {/* Rent Roll — the building's income, units then commercial space */}
-      <SectionBlock title="Rent Roll" color={C.green} icon={I.building}
+      <SectionBlock title="Rent Roll" color={C.cashPos} icon={I.building}
         collapsible defaultOpen={!startCollapsed}
         right={<span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
           fontVariantNumeric:"tabular-nums"}}>{m.totalUnits} unit{m.totalUnits===1?"":"s"} · {$mo(m.rentMo)}</span>}>
@@ -12233,7 +12233,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
       </SectionBlock>
 
       {/* Operating expenses — type them monthly or yearly, stored yearly */}
-      <SectionBlock title="Operating Expenses" color={C.green} icon={I.receipt}
+      <SectionBlock title="Operating Expenses" color={C.amber} icon={I.receipt}
         collapsible defaultOpen={!startCollapsed}
         right={
           <div onClick={e => e.stopPropagation()} style={{display:"flex", padding:3,
@@ -12295,7 +12295,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
 
       {/* Results — the investor's read, top to bottom: what it costs to close,
           what it earns, what the bank sees, how it performs, what it's worth. */}
-      <SectionBlock title="Results" color={C.green} icon={I.chart}
+      <SectionBlock title="Results" color={C.purple} icon={I.chart}
         right={
           <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
             border:"1px solid "+C.border}}>
@@ -12350,7 +12350,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
             <>
               <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: mobile ? 0 : 16}}>
                 <div>
-                  <ResLabel Ic={I.tag} text="Cash To Close"/>
+                  <ResLabel Ic={I.tag} text="Cash To Close" color={C.blue}/>
                   <div style={box}>
                     {isCash
                       ? row("Purchase Price", $(m.price), {top: false})
@@ -12361,7 +12361,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                   </div>
                 </div>
                 <div>
-                  <ResLabel Ic={I.dollar} text="Income"/>
+                  <ResLabel Ic={I.dollar} text="Income" color={C.cashPos}/>
                   <div style={box}>
                     {row("Gross Income", gGross.main, {top: false, sub: gGross.sub})}
                     {row("Vacancy", gVac.main)}
@@ -12373,7 +12373,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
 
               {!isCash && (
                 <>
-                  <ResLabel Ic={I.building} text="Financing"/>
+                  <ResLabel Ic={I.building} text="Financing" color={C.amber}/>
                   <div style={box}>
                     {row("Loan Amount", $(m.loanAmt), {top: false, sub: `${p.mfRate || 0}% over ${p.mfAmortYears || 30} years`})}
                     {row("Mortgage Payment", gDs.main, {sub: gDs.sub})}
@@ -12383,7 +12383,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                 </>
               )}
 
-              <ResLabel Ic={I.chart} text="The Bottom Line"/>
+              <ResLabel Ic={I.chart} text="The Bottom Line" color={C.purple}/>
               <div style={{display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:1, background:C.border,
                 border:"1px solid "+C.border, borderRadius:C.r4, overflow:"hidden", boxShadow:C.sh1, marginBottom:16}}>
                 {[
@@ -12584,11 +12584,11 @@ function ListingStory({text, mobile}) {
 
 // Group header inside the Results sections: a small icon chip plus a dark
 // uppercase label, so the eye lands on the section before the numbers.
-function ResLabel({Ic, text}) {
+function ResLabel({Ic, text, color = C.green}) {
   return (
     <div style={{display:"flex", alignItems:"center", gap:8, margin:"2px 2px 9px"}}>
-      <span style={{width:24, height:24, borderRadius:7, flexShrink:0, background:C.greenSubtle,
-        border:"1px solid "+C.greenBorder, color:C.greenDark,
+      <span style={{width:24, height:24, borderRadius:7, flexShrink:0, background:`${color}1a`,
+        border:`1px solid ${color}55`, color,
         display:"flex", alignItems:"center", justifyContent:"center"}}>
         <Ic size={13} stroke={2.4}/>
       </span>
