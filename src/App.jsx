@@ -10209,6 +10209,85 @@ const commercialInfo = (l) => {
   return /\$\s*[\d,]/.test(s) ? "" : s;
 };
 
+// Compact currency for map pins, the way the big portals label them.
+const pin$ = (n) => {
+  const v = Math.round(n || 0);
+  if (v >= 1e6) return "$" + (Math.round(v / 1e4) / 100).toFixed(2).replace(/\.?0+$/, "") + "M";
+  if (v >= 1e3) return "$" + Math.round(v / 1e3) + "K";
+  return v > 0 ? "$" + v : "Ask";
+};
+
+// The Deal Finder's map view: every listing as a tappable price pill on a
+// real map. Tap a pill and the listing opens, exactly like tapping its card.
+function FinderMap({items, mobile, onOpen}) {
+  const ref = useRef(null);
+  const key = items.map(i => i.id).join("|");
+  useEffect(() => {
+    const pts = items.filter(i => i.lat != null && i.lng != null);
+    if (!pts.length || !ref.current) return;
+    let map;
+    const init = () => {
+      if (!ref.current || map) return;
+      map = window.L.map(ref.current, {zoomControl:true, attributionControl:false,
+        scrollWheelZoom:true, dragging:true, touchZoom:true});
+      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+      const bounds = [];
+      pts.forEach(it => {
+        const icon = window.L.divIcon({className:"", iconSize:[0, 0],
+          html:`<div style="transform:translate(-50%,-100%);display:inline-block;cursor:pointer">` +
+            `<div style="background:#fff;border:1.5px solid #E8731C;color:#18181b;` +
+            `font:800 11.5px Inter,-apple-system,sans-serif;padding:4px 10px;border-radius:9999px;` +
+            `box-shadow:0 3px 9px rgba(9,9,11,.3);white-space:nowrap">${it.label}</div>` +
+            `<div style="width:9px;height:9px;background:#fff;border-right:1.5px solid #E8731C;` +
+            `border-bottom:1.5px solid #E8731C;transform:rotate(45deg);margin:-5px auto 0"></div></div>`});
+        const mk = window.L.marker([it.lat, it.lng], {icon}).addTo(map);
+        mk.on("click", () => onOpen(it.id));
+        bounds.push([it.lat, it.lng]);
+      });
+      if (bounds.length > 1) map.fitBounds(bounds, {padding:[44, 44]});
+      else map.setView(bounds[0], 13);
+    };
+    if (window.L) init();
+    else {
+      const sc = document.createElement("script");
+      sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+      sc.onload = init;
+      document.head.appendChild(sc);
+      if (!document.querySelector('link[href*="leaflet.min.css"]')) {
+        const lk = document.createElement("link");
+        lk.rel = "stylesheet";
+        lk.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+        document.head.appendChild(lk);
+      }
+    }
+    return () => { if (map) map.remove(); };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const count = items.filter(i => i.lat != null && i.lng != null).length;
+  if (!count) {
+    return (
+      <div style={{padding:"46px 20px", textAlign:"center", background:C.card,
+        border:"1px solid "+C.border, borderRadius:C.r4, boxShadow:C.sh1}}>
+        <div style={{color:C.textMuted, marginBottom:8}}><I.pin size={26}/></div>
+        <div style={{fontSize:14, fontWeight:700, color:C.text, fontFamily:F}}>No mappable listings here</div>
+        <div style={{fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:4}}>These results came without coordinates. The list view has them all.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{position:"relative"}}>
+      <div ref={ref} style={{height: mobile ? "calc(100dvh - 330px)" : 560, minHeight:380,
+        borderRadius:C.r4, overflow:"hidden", border:"1px solid "+C.border,
+        boxShadow:C.sh2, position:"relative", zIndex:0, isolation:"isolate"}}/>
+      <div style={{position:"absolute", top:12, right:12, zIndex:2, background:"rgba(255,255,255,.95)",
+        border:"1px solid "+C.border, borderRadius:9999, padding:"5px 12px",
+        fontSize:11.5, fontWeight:700, color:C.textSub, fontFamily:F, boxShadow:C.sh2,
+        WebkitBackdropFilter:"blur(4px)", backdropFilter:"blur(4px)"}}>
+        {count} on the map
+      </div>
+    </div>
+  );
+}
+
 // One LoopNet commercial listing — price, type, size, and a straight path into
 // the multifamily underwriter. Tap anywhere on the card for the full listing
 // view; lease listings underwrite too (price starts blank).
@@ -10216,7 +10295,6 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
   const ask  = commercialAsk(l);
   const info = commercialInfo(l);
   const chips = [
-    l.propertyType || "Commercial",
     l.buildingClass ? `Class ${l.buildingClass}` : null,
     l.sizeLabel || null,
   ].filter(Boolean);
@@ -10241,21 +10319,33 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
         )}
       </div>
       <div style={{padding:"13px 14px 14px", display:"flex", flexDirection:"column", flex:1}}>
-        <div style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
-          letterSpacing:".07em", textTransform:"uppercase"}}>
-          {ask > 0 ? "Asking Price" : "Price"}
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:10.5, fontWeight:700, color:C.textSub, fontFamily:F,
+              letterSpacing:".07em", textTransform:"uppercase"}}>
+              {ask > 0 ? "Asking Price" : "Price"}
+            </div>
+            <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, marginTop:2,
+              letterSpacing:"-0.02em", fontVariantNumeric:"tabular-nums"}}>
+              {ask > 0 ? $(ask) : l.priceText}
+            </div>
+          </div>
+          <span style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
+            background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+            padding:"4px 10px", flexShrink:0, marginTop:2, maxWidth:"55%",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+            {l.propertyType || "Commercial"}
+          </span>
         </div>
-        <div style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, marginTop:2,
-          letterSpacing:"-0.02em", fontVariantNumeric:"tabular-nums"}}>
-          {ask > 0 ? $(ask) : l.priceText}
-        </div>
-        <div style={{display:"flex", flexWrap:"wrap", gap:6, marginTop:8}}>
-          {chips.slice(0, 3).map(chip => (
-            <span key={chip} style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
-              background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
-              padding:"3px 9px"}}>{chip}</span>
-          ))}
-        </div>
+        {chips.length > 0 && (
+          <div style={{display:"flex", flexWrap:"wrap", gap:6, marginTop:8}}>
+            {chips.map(chip => (
+              <span key={chip} style={{fontSize:10.5, fontWeight:700, fontFamily:F, color:C.textSub,
+                background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:9999,
+                padding:"3px 9px"}}>{chip}</span>
+            ))}
+          </div>
+        )}
         <div style={{fontSize:13.5, fontWeight:700, color:C.text, fontFamily:F, marginTop:10,
           overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{l.address}</div>
         <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
@@ -10286,7 +10376,7 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
 // Full-screen listing view for a commercial property — the same premium
 // treatment the home deals get: photo up top (tap for the gallery), the
 // asking price, the facts, the story, and the actions.
-function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLookup, rcAuth}) {
+function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLookup, rcAuth, isAdmin = false}) {
   // County records fill what the listing card leaves blank: total beds and
   // baths and the building square footage. Cached per address, rides free.
   const [rec, setRec] = useState(null);
@@ -10321,10 +10411,10 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
         const r = await fetch(`${FN_BASE}/commercialDetail`, {
           method: "POST",
           headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
-          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url}),
+          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url, fresh: isAdmin}),
         });
         const j = await r.json().catch(() => null);
-        if (alive && r.ok && j && j.found) setDetail(j);
+        if (alive && r.ok && j && (j.found || j.trace)) setDetail(j);
       } catch { /* the search snippet stands on its own */ }
     })();
     return () => { alive = false; };
@@ -10454,13 +10544,22 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
           </div>
         </div>
 
-        {description && (
+        {(description || (isAdmin && detail && detail.trace)) && (
           <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
-            <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-              {deEnt(description)}
-            </div>
+            {description && (
+              <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
+                {deEnt(description)}
+              </div>
+            )}
+            {isAdmin && detail && detail.trace && (
+              <div style={{marginTop:10, fontSize:10.5, color:C.textMuted, fontFamily:"monospace",
+                background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
+                padding:"8px 10px", lineHeight:1.5, wordBreak:"break-all"}}>
+                admin · {detail.trace}
+              </div>
+            )}
           </div>
         )}
 
@@ -10536,6 +10635,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [cPage, setCPage]         = useState(1);
   const [cHasMore, setCHasMore]   = useState(false);
   const [cLoadingMore, setCLoadingMore] = useState(false);
+  const [view, setView]           = useState("list");    // list | map
   const inputRef = useRef(null);
   const acRef = useRef(null);         // Google Places Autocomplete instance
   const runSearchRef = useRef(null);  // always points at the latest runSearch
@@ -10811,6 +10911,25 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     </form>
   );
 
+  // List or map, the way the big portals switch.
+  const viewToggle = (
+    <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
+      border:"1px solid "+C.border, flexShrink:0}}>
+      {[["list","List",I.menu],["map","Map",I.pin]].map(([id,label,Ic]) => {
+        const active = view === id;
+        return (
+          <button key={id} onClick={()=>setView(id)}
+            style={{display:"inline-flex", alignItems:"center", gap:5, padding:"6px 13px",
+              borderRadius:9999, border:"none", cursor:"pointer",
+              background: active ? C.green : "transparent", color: active ? "#fff" : C.textSub,
+              fontSize:12, fontWeight:700, fontFamily:F, transition:"background .15s"}}>
+            <Ic size={12} stroke={2.4}/> {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   // What to search: houses, apartment buildings, or the rest of commercial.
   const marketChips = (
     <div className="dh-chip-row" style={{display:"flex", gap:8, overflowX:"auto", padding:2,
@@ -10914,12 +11033,9 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
               <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
                 {(cTotal || commercialShown.length).toLocaleString()} {resMarket === "multifamily" ? "multifamily" : "commercial"} listing{(cTotal || commercialShown.length)===1?"":"s"} in {prettyLoc(submitted)}
               </div>
-              {cTotal > commercialAll.length && (
-                <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2}}>
-                  {commercialAll.length.toLocaleString()} loaded so far
-                </div>
-              )}
             </div>
+            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
+            {viewToggle}
             {resMarket === "commercial" && (
               <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
                 {[["all","All types"],["office","Office"],["industrial","Industrial"],["retail","Retail"]].map(([id,label]) => {
@@ -10934,8 +11050,14 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 })}
               </div>
             )}
+            </div>
           </div>
-          {commercialShown.length === 0 ? (
+          {view === "map" ? (
+            <FinderMap mobile={mobile}
+              items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
+                label: pin$(commercialAsk(l))}))}
+              onOpen={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
+          ) : commercialShown.length === 0 ? (
             <EmptyState
               icon={<I.building size={20}/>}
               title={`No ${resMarket === "multifamily" ? "multifamily" : subtype === "all" ? "commercial" : subtype} listings for “${prettyLoc(submitted)}” right now`}
@@ -10971,7 +11093,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           {cSel && (
             <CommercialDetailModal l={cSel} token={token} onClose={()=>setCSel(null)}
               onUnderwrite={underwriteCommercial} mobile={mobile}
-              apiLookup={apiLookup} rcAuth={rcAuth}/>
+              apiLookup={apiLookup} rcAuth={rcAuth} isAdmin={isAdmin}/>
           )}
         </>
       )
@@ -11003,6 +11125,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             </div>
           </div>
           <div style={{display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center"}}>
+            {viewToggle}
             <StrategySegments value={strategy} onChange={setStrategy} counts={counts}/>
             <div style={{position:"relative", flex:1, minWidth:150, maxWidth: mobile ? "100%" : 200}}>
               <span style={{position:"absolute", left:14, top:"50%", transform:"translateY(-50%)",
@@ -11023,7 +11146,13 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             </div>
           </div>
 
-          {/* Results grid */}
+          {/* Results — grid or map */}
+          {view === "map" ? (
+            <FinderMap mobile={mobile}
+              items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
+              onOpen={id => setSelectedId(id)}/>
+          ) : (
+          <>
           <div style={{display:"grid",
             gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
             {visible.map(({d}) => (
@@ -11042,6 +11171,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 Show more listings
               </button>
             </div>
+          )}
+          </>
           )}
 
           {selectedId && (() => {
