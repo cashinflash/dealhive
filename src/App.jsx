@@ -566,6 +566,12 @@ const $   = n  => "$" + Math.round(n||0).toLocaleString();
 const $mo = n  => { const r = Math.round(n||0); return (r<0?"-$":"$") + Math.abs(r).toLocaleString() + "/mo"; };
 const pct = n  => (isNaN(n)?0:(n||0)).toFixed(2) + "%";
 const cfC = v  => v>0 ? "#059669" : v<0 ? "#dc2626" : "#71717a";
+// Listing copy can arrive with HTML entities baked in; decode before display.
+const deEnt = (s) => String(s || "")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+  .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
 const dU  = d  => { if(!d) return null; return Math.ceil((new Date(d)-new Date())/86400000); };
 const obBadge = p => p.occupied ? {label:"Occupied",bg:"#dcfce7",c:"#166534"} : {label:"Vacant",bg:"#f4f4f5",c:"#71717a"};
 const stStyle = s => s==="Current"?{bg:"#dcfce7",c:"#166534"}:s==="Late"?{bg:"#fee2e2",c:"#991b1b"}:s==="Partial"?{bg:"#ffedd5",c:"#9a3412"}:{bg:"#f4f4f5",c:"#71717a"};
@@ -1021,7 +1027,7 @@ const applyReapi = (prev, rp, rates) => {
   const recUnits   = rp.units || 0;
   const detectedMF = recUnits >= 5 || /apartment/i.test(rp.type || "");
   const seedUnits  = (Array.isArray(prev.units) && prev.units.length) ? prev.units
-    : (recUnits >= 2 ? [{id: "u" + Date.now(), label: "Unit", count: recUnits, rent: rp.rent || 0}] : (prev.units || []));
+    : (recUnits >= 2 ? [{id: "u" + Date.now(), label: "1BR / 1BA", count: recUnits, rent: rp.rent || 0}] : (prev.units || []));
   return {
     ...prev,
     assetClass: detectedMF ? "multifamily" : (prev.assetClass || "residential"),
@@ -10117,7 +10123,24 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
 // Full-screen listing view for a commercial property — the same premium
 // treatment the home deals get: photo up top (tap for the gallery), the
 // asking price, the facts, the story, and the actions.
-function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile}) {
+function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLookup, rcAuth}) {
+  // County records fill what the listing card leaves blank: total beds and
+  // baths and the building square footage. Cached per address, rides free.
+  const [rec, setRec] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!apiLookup || !rcAuth || !rcAuth.token || !l.address || !l.city) return;
+        const rp = await apiLookup(
+          lookupKey("reapi-detail", l.address, l.city, l.state, l.zip),
+          () => reapiFetch(l.address, l.city, l.state, l.zip, rcAuth.token),
+          {count: false, shortCacheIf: r => !reapiHasData(r)});
+        if (alive && reapiHasData(rp)) setRec(rp.property);
+      } catch { /* the listing facts stand on their own */ }
+    })();
+    return () => { alive = false; };
+  }, [l.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const ask  = commercialAsk(l);
   const info = commercialInfo(l);
   const [lightbox, setLightbox] = useState(false);
@@ -10167,12 +10190,24 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile}) {
        overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:640, maxHeight:"92dvh",
        overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
+  // Only facts we actually have make the grid — never a blank tile. County
+  // records supply beds, baths, and building square footage when they know
+  // the parcel; class, spaces, and year built fill any remaining slots.
+  const bSqft = rec ? (rec.sqftBuilding || rec.sqft || 0) : 0;
+  const bedsBaths = rec && (rec.beds || rec.baths)
+    ? [rec.beds ? `${rec.beds} bd` : null, rec.baths ? `${rec.baths} ba` : null].filter(Boolean).join(" · ")
+    : null;
+  const builtYr = (/Built in (\d{4})/i.exec(String(l.buildingInfo || "")) || [])[1] ||
+    (rec && rec.yearBuilt) || null;
   const facts = [
-    ["Type",  l.propertyType || "—", I.building],
-    ["Class", l.buildingClass ? `Class ${l.buildingClass}` : "—", I.tag],
-    ["Size",  l.sizeLabel || "—", I.ruler],
-    ["Spaces", l.spaces || "—", I.home],
-  ];
+    l.propertyType ? ["Type", l.propertyType, I.building] : null,
+    l.sizeLabel ? ["Size", l.sizeLabel, I.ruler] : null,
+    bedsBaths ? ["Bed / Bath", bedsBaths, I.bed] : null,
+    bSqft > 0 ? ["Building SqFt", bSqft.toLocaleString(), I.parcel] : null,
+    l.buildingClass ? ["Class", `Class ${l.buildingClass}`, I.tag] : null,
+    l.spaces ? ["Spaces", l.spaces, I.home] : null,
+    builtYr ? ["Built", builtYr, I.calendar] : null,
+  ].filter(Boolean).slice(0, 4);
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
@@ -10261,7 +10296,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile}) {
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
             <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-              {description}
+              {deEnt(description)}
             </div>
           </div>
         )}
@@ -10679,7 +10714,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           )}
           {cSel && (
             <CommercialDetailModal l={cSel} token={token} onClose={()=>setCSel(null)}
-              onUnderwrite={underwriteCommercial} mobile={mobile}/>
+              onUnderwrite={underwriteCommercial} mobile={mobile}
+              apiLookup={apiLookup} rcAuth={rcAuth}/>
           )}
         </>
       )
@@ -11188,8 +11224,6 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
     </div>
   );
 
-  const valDiff = m.valueAtCap - m.price;
-
   return (
     <div>
       {/* Purchase method — same cash/finance switch as residential */}
@@ -11266,7 +11300,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
             <div key={un.id} style={{display:"grid", gridTemplateColumns:"1fr 58px 100px 30px", gap:8,
               alignItems:"center", padding:"9px 12px", background:"#fff",
               borderTop: i === 0 ? "none" : "1px solid #f1f1f3"}}>
-              {(un.custom || (un.label && !MF_UNIT_TYPES.includes(un.label))) ? (
+              {(un.custom || (un.label && !/^units?$/i.test(un.label) && !MF_UNIT_TYPES.includes(un.label))) ? (
                 <input value={un.label} onChange={e=>patchUnit(un.id, {label:e.target.value})}
                   onBlur={e=>{ if (!e.target.value.trim()) patchUnit(un.id, {custom:false, label:""}); }}
                   placeholder="Describe the unit" style={cell}/>
@@ -11298,27 +11332,26 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
               </button>
             </div>
           ))}
-          <div style={{display:"flex", gap:12, flexWrap:"wrap", alignItems:"center",
-            justifyContent:"space-between", padding:"10px 12px", background:C.bgSubtle,
-            borderTop:"1px solid "+C.border}}>
-            <div style={{display:"flex", gap:14, flexWrap:"wrap"}}>
-              <button onClick={addUnit} style={{display:"inline-flex", alignItems:"center", gap:6,
-                background:"none", border:"none", padding:0, color:C.greenDark,
-                fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-                <I.plus size={13} stroke={2.6}/> Add unit type
-              </button>
-              <button onClick={addCs} style={{display:"inline-flex", alignItems:"center", gap:6,
-                background:"none", border:"none", padding:0, color:C.textSub,
-                fontSize:12.5, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
-                <I.plus size={13} stroke={2.6}/> Add commercial space
-              </button>
-            </div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:8,
+            padding:"10px 12px", background:C.bgSubtle, borderTop:"1px solid "+C.border}}>
+            <button onClick={addUnit} style={{display:"flex", alignItems:"center", justifyContent:"center",
+              gap:6, padding:"10px 8px", borderRadius:C.r2, cursor:"pointer", fontFamily:F,
+              fontSize:12.5, fontWeight:700, background:C.greenSubtle,
+              border:"1px solid "+C.greenBorder, color:C.greenDark}}>
+              <I.plus size={13} stroke={2.6}/> Unit type
+            </button>
+            <button onClick={addCs} style={{display:"flex", alignItems:"center", justifyContent:"center",
+              gap:6, padding:"10px 8px", borderRadius:C.r2, cursor:"pointer", fontFamily:F,
+              fontSize:12.5, fontWeight:700, background:"#fff",
+              border:"1px solid "+C.border, color:C.textSub}}>
+              <I.plus size={13} stroke={2.6}/> Commercial space
+            </button>
             {apiLookup && (
-              <button onClick={()=>setCompsOpen(true)} style={{display:"inline-flex", alignItems:"center",
-                gap:6, padding:"6px 13px", borderRadius:9999, background:"#fff",
-                border:"1px solid "+C.greenBorder, color:C.greenDark,
-                fontSize:12, fontWeight:700, fontFamily:F, cursor:"pointer", boxShadow:C.sh1}}>
-                <I.search size={12} stroke={2.6}/> Market Rents
+              <button onClick={()=>setCompsOpen(true)} style={{gridColumn:"1 / -1", display:"flex",
+                alignItems:"center", justifyContent:"center", gap:7, padding:"10px 8px",
+                borderRadius:C.r2, cursor:"pointer", fontFamily:F, fontSize:12.5, fontWeight:700,
+                background:"#fff", border:"1px solid "+C.greenBorder, color:C.greenDark, boxShadow:C.sh1}}>
+                <I.search size={13} stroke={2.6}/> Check Market Rents
               </button>
             )}
           </div>
@@ -11427,7 +11460,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
         right={
           <div onClick={e => e.stopPropagation()} style={{display:"flex", padding:3,
             background:C.bgSubtle, borderRadius:9999, border:"1px solid "+C.border}}>
-            {[["mo","Monthly"],["yr","Yearly"]].map(([id,label]) => {
+            {[["mo","Mo"],["yr","Yr"]].map(([id,label]) => {
               const active = expPer === id;
               return (
                 <button key={id} onClick={()=>setExpPer(id)}
@@ -11488,7 +11521,7 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
         right={
           <div style={{display:"flex", padding:3, background:C.bgSubtle, borderRadius:9999,
             border:"1px solid "+C.border}}>
-            {[["mo","Monthly"],["yr","Yearly"]].map(([id,label]) => {
+            {[["mo","Mo"],["yr","Yr"]].map(([id,label]) => {
               const active = resPer === id;
               return (
                 <button key={id} onClick={()=>setResPer(id)}
@@ -11595,24 +11628,6 @@ function MultifamilyCalculator({p, set, mobile, startCollapsed = false, apiLooku
                 ))}
               </div>
 
-              <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr 1fr" : "220px 1fr", gap:12, alignItems:"end"}}>
-                <InputField label="Market Cap Rate" val={p.mfMarketCapPct} set={v=>u("mfMarketCapPct",v)} suf="%" mobile={mobile}/>
-                <div style={{background:`linear-gradient(160deg,#fff, ${C.greenSubtle})`, border:"1px solid "+C.greenBorder,
-                  borderRadius:C.r3, padding:"11px 14px", marginBottom:14}}>
-                  <div style={{fontSize:10, color:C.textSub, fontWeight:700, fontFamily:F, letterSpacing:".05em", textTransform:"uppercase"}}>
-                    Value @ {pct(m.marketCapPct)} cap
-                  </div>
-                  <div style={{display:"flex", alignItems:"baseline", gap:8, flexWrap:"wrap"}}>
-                    <span style={{fontSize:19, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.02em",
-                      fontVariantNumeric:"tabular-nums"}}>{$(m.valueAtCap)}</span>
-                    {m.price > 0 && m.valueAtCap > 0 && (
-                      <span style={{fontSize:11.5, fontWeight:700, color: valDiff >= 0 ? "#059669" : "#dc2626", fontFamily:F}}>
-                        {valDiff >= 0 ? $(valDiff)+" above" : $(Math.abs(valDiff))+" below"} your price
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
             </>
           );
         })()}
@@ -11662,9 +11677,9 @@ function MFReportSheet({deal, onClose, mobile}) {
         border:"1px solid "+C.greenBorder, borderRadius:C.r4, padding:"18px 16px",
         textAlign:"center", boxShadow:C.sh2, marginBottom:14}}>
         <div style={{fontSize:10.5, fontWeight:700, color:C.greenDark, fontFamily:F,
-          letterSpacing:".07em", textTransform:"uppercase"}}>Value at {pct(m.marketCapPct)} Cap</div>
+          letterSpacing:".07em", textTransform:"uppercase"}}>Net Operating Income</div>
         <div style={{fontSize:32, fontWeight:800, color:C.text, fontFamily:F,
-          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>{$(m.valueAtCap)}</div>
+          fontVariantNumeric:"tabular-nums", letterSpacing:"-0.03em", marginTop:3}}>{$(m.noi)}<span style={{fontSize:15, color:C.textSub, fontWeight:600}}>/yr</span></div>
         {m.price > 0 && (
           <div style={{display:"inline-flex", alignItems:"center", gap:6, marginTop:6,
             background:"#fff", border:"1px solid "+C.border, borderRadius:9999,
@@ -11767,7 +11782,7 @@ function ListingStory({text, mobile}) {
       <div style={{fontSize:13.5, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap",
         ...(expanded || !long ? {} : {display:"-webkit-box", WebkitLineClamp:3,
           WebkitBoxOrient:"vertical", overflow:"hidden"})}}>
-        {text}
+        {deEnt(text)}
       </div>
       {long && (
         <button onClick={()=>setExpanded(e=>!e)}
