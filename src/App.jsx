@@ -10257,7 +10257,14 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
   const onOpenRef = useRef(onOpen);
   const onViewRef = useRef(onView);
   useEffect(() => { onOpenRef.current = onOpen; onViewRef.current = onView; }, [onOpen, onView]);
+  // On phones a tapped pin raises a full width preview card docked to the
+  // bottom of the map (the LoopNet pattern) instead of a floating popup;
+  // tapping the card opens the listing, the X or the map dismisses it.
+  const [preview, setPreview] = useState(null);
+  const setPreviewRef = useRef(setPreview);
+  useEffect(() => { setPreviewRef.current = setPreview; }, []);
   const key = items.map(i => i.id).join("|");
+  useEffect(() => { setPreview(null); }, [key]);
   useEffect(() => {
     const pts = items.filter(i => i.lat != null && i.lng != null);
     if (!pts.length || !ref.current) return;
@@ -10272,8 +10279,11 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
     const gInit = () => {
       if (cancelled || !ref.current) return;
       const g = window.google.maps;
+      // Cooperative gestures on phones: one finger scrolls the page, two pan
+      // the map, so a tall map can never trap the user mid-scroll.
       const gmap = new g.Map(ref.current, {mapTypeControl:false, streetViewControl:false,
-        fullscreenControl:false, clickableIcons:false, gestureHandling:"greedy",
+        fullscreenControl:false, clickableIcons:false,
+        gestureHandling: mobile ? "cooperative" : "greedy",
         center:{lat: pts[0].lat, lng: pts[0].lng}, zoom:13});
       const bounds = new g.LatLngBounds();
       // One preview card for the whole map, repositioned per tapped pin.
@@ -10294,7 +10304,10 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
       popupOv.onRemove = function() { popupDiv.remove(); };
       popupOv.setMap(gmap);
       overlays.push(popupOv);
-      gmap.addListener("click", () => { popupDiv.style.display = "none"; });
+      gmap.addListener("click", () => {
+        popupDiv.style.display = "none";
+        setPreviewRef.current(null);
+      });
       pts.forEach(it => {
         bounds.extend({lat: it.lat, lng: it.lng});
         const div = document.createElement("div");
@@ -10302,6 +10315,7 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
         div.innerHTML = pillHtml(it.label);
         div.onclick = e => {
           e.stopPropagation();
+          if (mobile && onViewRef.current) { setPreviewRef.current(it); return; }
           if (!mobile && onViewRef.current) {
             popupDiv._id = it.id;
             popupDiv._pos = {lat: it.lat, lng: it.lng};
@@ -10335,6 +10349,7 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
             pillHtml(it.label) + `</div>`});
         const mk = window.L.marker([it.lat, it.lng], {icon}).addTo(lmap);
         mk.on("click", () => {
+          if (mobile && onViewRef.current) { setPreviewRef.current(it); return; }
           if (!mobile && onViewRef.current) {
             window.L.popup({closeButton: false, className: "dh-fpop", offset: [0, -40]})
               .setLatLng([it.lat, it.lng]).setContent(finderPopupHtml(it, false)).openOn(lmap);
@@ -10401,6 +10416,36 @@ function FinderMap({items, mobile, onOpen, onView, height, bare}) {
         WebkitBackdropFilter:"blur(4px)", backdropFilter:"blur(4px)"}}>
         {count} on the map
       </div>
+      {mobile && preview && (
+        <div onClick={() => onView && onView(preview.id)}
+          style={{position:"fixed", left:10, right:10,
+            bottom:"calc(env(safe-area-inset-bottom, 0px) + 92px)", zIndex:300, cursor:"pointer",
+            background:"#fff", border:"1px solid "+C.border, borderRadius:14, overflow:"hidden",
+            boxShadow:"0 14px 34px rgba(9,9,11,.3)", display:"flex", alignItems:"stretch"}}>
+          {preview.photo && (
+            <img src={preview.photo} alt=""
+              style={{width:112, minHeight:96, objectFit:"cover", flexShrink:0, display:"block"}}/>
+          )}
+          <div style={{padding:"11px 12px", minWidth:0, flex:1}}>
+            <div style={{fontWeight:800, fontSize:15.5, color:C.text, fontFamily:F,
+              letterSpacing:"-0.01em"}}>{preview.price || preview.label}</div>
+            <div style={{fontWeight:600, fontSize:12.5, color:C.textSub, fontFamily:F, marginTop:2,
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{preview.address}</div>
+            {preview.sub && (
+              <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:1}}>{preview.sub}</div>
+            )}
+            <div style={{fontSize:11.5, fontWeight:700, color:C.green, fontFamily:F, marginTop:6}}>
+              {preview.type ? `${preview.type} · ` : ""}View Deal →
+            </div>
+          </div>
+          <button onClick={e => { e.stopPropagation(); setPreview(null); }} aria-label="Close"
+            style={{position:"absolute", top:6, right:6, width:26, height:26, borderRadius:"50%",
+              background:"rgba(9,9,11,.45)", border:"none", cursor:"pointer", color:"#fff",
+              display:"flex", alignItems:"center", justifyContent:"center"}}>
+            <I.x size={13} stroke={2.5}/>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -11263,8 +11308,11 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             mobile ? (
               <FinderMap mobile
                 items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
-                  label: pin$(commercialAsk(l))}))}
-                onOpen={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
+                  label: pin$(commercialAsk(l)), photo: l.photo, address: l.address,
+                  sub: [l.city, l.state].filter(Boolean).join(", "),
+                  price: commercialAsk(l) > 0 ? $(commercialAsk(l)) : l.priceText,
+                  type: l.propertyType}))}
+                onView={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
             ) : (
               // The LoopNet-style split, edge to edge on desktop: the map owns
               // the whole left, listings ride a scrollable rail on the right.
@@ -11404,8 +11452,12 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
           {view === "map" ? (
             mobile ? (
               <FinderMap mobile
-                items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
-                onOpen={id => setSelectedId(id)}/>
+                items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng,
+                  label: pin$(d.price), photo: d.photo || null, address: d.address,
+                  sub: [d.city, d.state].filter(Boolean).join(", "),
+                  price: $(d.price),
+                  type: d.beds ? `${d.beds} bd${d.baths ? ` · ${d.baths} ba` : ""}` : "Home"}))}
+                onView={id => setSelectedId(id)}/>
             ) : (
               <div style={{margin:"0 calc(min(0px, (1200px - (100vw - 230px)) / 2) - 32px) -44px", borderTop:"1px solid "+C.border,
                 display:"flex", alignItems:"stretch"}}>
