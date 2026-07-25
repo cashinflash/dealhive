@@ -10234,10 +10234,29 @@ const pin$ = (n) => {
 // and the old OpenStreetMap build as an automatic fallback whenever Google's
 // script can't arrive. Pins call onOpen with the listing id; the parent
 // decides what opening means (modal on mobile, card focus in split view).
-function FinderMap({items, mobile, onOpen, height}) {
+// With onView set, a pin also raises a LoopNet-style preview card right on
+// the map; tapping it opens the full listing.
+const escHtml = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const finderPopupHtml = (it, caret) =>
+  `<div style="width:232px;background:#fff;border:1px solid #e4e4e7;border-radius:14px;` +
+  `overflow:hidden;box-shadow:0 14px 34px rgba(9,9,11,.28);font-family:Inter,-apple-system,sans-serif">` +
+  (it.photo ? `<img src="${escHtml(it.photo)}" alt="" style="width:100%;height:114px;object-fit:cover;display:block"/>` : "") +
+  `<div style="padding:10px 13px 12px">` +
+  `<div style="font-weight:800;font-size:15px;color:#18181b">${escHtml(it.price || it.label)}</div>` +
+  `<div style="font-weight:600;font-size:12.5px;color:#3f3f46;margin-top:2px;` +
+  `white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(it.address || "")}</div>` +
+  (it.sub ? `<div style="font-size:11px;color:#71717a;margin-top:1px">${escHtml(it.sub)}</div>` : "") +
+  `<div style="font-size:11.5px;font-weight:700;color:#E8731C;margin-top:7px">` +
+  `${it.type ? escHtml(it.type) + " · " : ""}View Deal →</div>` +
+  `</div></div>` +
+  (caret ? `<div style="width:10px;height:10px;background:#fff;border-right:1px solid #e4e4e7;` +
+    `border-bottom:1px solid #e4e4e7;transform:rotate(45deg);margin:-6px auto 0"></div>` : "");
+function FinderMap({items, mobile, onOpen, onView, height, bare}) {
   const ref = useRef(null);
   const onOpenRef = useRef(onOpen);
-  useEffect(() => { onOpenRef.current = onOpen; }, [onOpen]);
+  const onViewRef = useRef(onView);
+  useEffect(() => { onOpenRef.current = onOpen; onViewRef.current = onView; }, [onOpen, onView]);
   const key = items.map(i => i.id).join("|");
   useEffect(() => {
     const pts = items.filter(i => i.lat != null && i.lng != null);
@@ -10257,12 +10276,41 @@ function FinderMap({items, mobile, onOpen, height}) {
         fullscreenControl:false, clickableIcons:false, gestureHandling:"greedy",
         center:{lat: pts[0].lat, lng: pts[0].lng}, zoom:13});
       const bounds = new g.LatLngBounds();
+      // One preview card for the whole map, repositioned per tapped pin.
+      const popupDiv = document.createElement("div");
+      popupDiv.style.cssText = "position:absolute;z-index:40;" +
+        "transform:translate(-50%,calc(-100% - 46px));cursor:pointer;display:none";
+      popupDiv.onclick = e => {
+        e.stopPropagation();
+        if (popupDiv._id != null && onViewRef.current) onViewRef.current(popupDiv._id);
+      };
+      const popupOv = new g.OverlayView();
+      popupOv.onAdd = function() { this.getPanes().overlayMouseTarget.appendChild(popupDiv); };
+      popupOv.draw = function() {
+        if (!popupDiv._pos || popupDiv.style.display === "none") return;
+        const p = this.getProjection().fromLatLngToDivPixel(new g.LatLng(popupDiv._pos.lat, popupDiv._pos.lng));
+        if (p) { popupDiv.style.left = p.x + "px"; popupDiv.style.top = p.y + "px"; }
+      };
+      popupOv.onRemove = function() { popupDiv.remove(); };
+      popupOv.setMap(gmap);
+      overlays.push(popupOv);
+      gmap.addListener("click", () => { popupDiv.style.display = "none"; });
       pts.forEach(it => {
         bounds.extend({lat: it.lat, lng: it.lng});
         const div = document.createElement("div");
         div.style.cssText = "position:absolute;transform:translate(-50%,-100%);cursor:pointer";
         div.innerHTML = pillHtml(it.label);
-        div.onclick = e => { e.stopPropagation(); if (onOpenRef.current) onOpenRef.current(it.id); };
+        div.onclick = e => {
+          e.stopPropagation();
+          if (!mobile && onViewRef.current) {
+            popupDiv._id = it.id;
+            popupDiv._pos = {lat: it.lat, lng: it.lng};
+            popupDiv.innerHTML = finderPopupHtml(it, true);
+            popupDiv.style.display = "block";
+            popupOv.draw();
+          }
+          if (onOpenRef.current) onOpenRef.current(it.id);
+        };
         const ov = new g.OverlayView();
         ov.onAdd = function() { this.getPanes().overlayMouseTarget.appendChild(div); };
         ov.draw = function() {
@@ -10286,7 +10334,17 @@ function FinderMap({items, mobile, onOpen, height}) {
           html:`<div style="transform:translate(-50%,-100%);display:inline-block;cursor:pointer">` +
             pillHtml(it.label) + `</div>`});
         const mk = window.L.marker([it.lat, it.lng], {icon}).addTo(lmap);
-        mk.on("click", () => { if (onOpenRef.current) onOpenRef.current(it.id); });
+        mk.on("click", () => {
+          if (!mobile && onViewRef.current) {
+            window.L.popup({closeButton: false, className: "dh-fpop", offset: [0, -40]})
+              .setLatLng([it.lat, it.lng]).setContent(finderPopupHtml(it, false)).openOn(lmap);
+            setTimeout(() => {
+              const el = document.querySelector(".dh-fpop .leaflet-popup-content > div");
+              if (el) el.onclick = () => { if (onViewRef.current) onViewRef.current(it.id); };
+            }, 0);
+          }
+          if (onOpenRef.current) onOpenRef.current(it.id);
+        });
         bounds.push([it.lat, it.lng]);
       });
       if (bounds.length > 1) lmap.fitBounds(bounds, {padding:[44, 44]});
@@ -10334,8 +10392,9 @@ function FinderMap({items, mobile, onOpen, height}) {
   return (
     <div style={{position:"relative", height: height || undefined}}>
       <div ref={ref} style={{height: height || (mobile ? "calc(100dvh - 330px)" : 560), minHeight:380,
-        borderRadius:C.r4, overflow:"hidden", border:"1px solid "+C.border,
-        boxShadow:C.sh2, position:"relative", zIndex:0, isolation:"isolate"}}/>
+        borderRadius: bare ? 0 : C.r4, overflow:"hidden",
+        border: bare ? "none" : "1px solid "+C.border,
+        boxShadow: bare ? "none" : C.sh2, position:"relative", zIndex:0, isolation:"isolate"}}/>
       <div style={{position:"absolute", top:12, right:12, zIndex:2, background:"rgba(255,255,255,.95)",
         border:"1px solid "+C.border, borderRadius:9999, padding:"5px 12px",
         fontSize:11.5, fontWeight:700, color:C.textSub, fontFamily:F, boxShadow:C.sh2,
@@ -11207,14 +11266,19 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                   label: pin$(commercialAsk(l))}))}
                 onOpen={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
             ) : (
-              // The LoopNet-style split: map on the left, listings riding a
-              // scrollable rail on the right. A pin lights up and scrolls to
-              // its card; the card opens the full listing.
-              <div style={{display:"flex", gap:16, alignItems:"stretch"}}>
+              // The LoopNet-style split, edge to edge on desktop: the map owns
+              // the whole left, listings ride a scrollable rail on the right.
+              // A pin raises its preview card on the map and lights up the
+              // rail; the preview or the card opens the full listing.
+              <div style={{margin:"0 calc(min(0px, (1200px - (100vw - 230px)) / 2) - 32px) -44px", borderTop:"1px solid "+C.border,
+                display:"flex", alignItems:"stretch"}}>
                 <div style={{flex:"1 1 auto", minWidth:0}}>
-                  <FinderMap mobile={false} height="calc(100vh - 240px)"
+                  <FinderMap mobile={false} bare height="calc(100vh - 132px)"
                     items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
-                      label: pin$(commercialAsk(l))}))}
+                      label: pin$(commercialAsk(l)), photo: l.photo, address: l.address,
+                      sub: [l.city, l.state].filter(Boolean).join(", "),
+                      price: commercialAsk(l) > 0 ? $(commercialAsk(l)) : l.priceText,
+                      type: l.propertyType}))}
                     onOpen={id => {
                       setMapFocusId(id);
                       const hit = commercialShown.find(x => x.id === id);
@@ -11223,11 +11287,16 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                         const el = document.getElementById("fcard-" + id);
                         if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
                       });
+                    }}
+                    onView={id => {
+                      const hit = commercialShown.find(x => x.id === id);
+                      if (hit) setCSel(hit);
                     }}/>
                 </div>
-                <div style={{width:390, flexShrink:0, height:"calc(100vh - 240px)", minHeight:380,
+                <div style={{width:400, flexShrink:0, height:"calc(100vh - 132px)", minHeight:380,
                   overflowY:"auto", overscrollBehavior:"contain", display:"flex",
-                  flexDirection:"column", gap:14, paddingRight:4, paddingBottom:4, paddingTop:2}}>
+                  flexDirection:"column", gap:14, padding:"14px 18px 18px 14px",
+                  borderLeft:"1px solid "+C.border, background:C.bg}}>
                   {commercialShown.map(l => (
                     <div key={l.id || l.url} id={"fcard-" + l.id}
                       style={{borderRadius:C.r4, flexShrink:0,
@@ -11338,21 +11407,28 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
                 onOpen={id => setSelectedId(id)}/>
             ) : (
-              <div style={{display:"flex", gap:16, alignItems:"stretch"}}>
+              <div style={{margin:"0 calc(min(0px, (1200px - (100vw - 230px)) / 2) - 32px) -44px", borderTop:"1px solid "+C.border,
+                display:"flex", alignItems:"stretch"}}>
                 <div style={{flex:"1 1 auto", minWidth:0}}>
-                  <FinderMap mobile={false} height="calc(100vh - 240px)"
-                    items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
+                  <FinderMap mobile={false} bare height="calc(100vh - 132px)"
+                    items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng,
+                      label: pin$(d.price), photo: d.photo || null, address: d.address,
+                      sub: [d.city, d.state].filter(Boolean).join(", "),
+                      price: $(d.price),
+                      type: d.beds ? `${d.beds} bd${d.baths ? ` · ${d.baths} ba` : ""}` : "Home"}))}
                     onOpen={id => {
                       setMapFocusId(id);
                       requestAnimationFrame(() => {
                         const el = document.getElementById("fcard-" + id);
                         if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
                       });
-                    }}/>
+                    }}
+                    onView={id => setSelectedId(id)}/>
                 </div>
-                <div style={{width:390, flexShrink:0, height:"calc(100vh - 240px)", minHeight:380,
+                <div style={{width:400, flexShrink:0, height:"calc(100vh - 132px)", minHeight:380,
                   overflowY:"auto", overscrollBehavior:"contain", display:"flex",
-                  flexDirection:"column", gap:14, paddingRight:4, paddingBottom:4, paddingTop:2}}>
+                  flexDirection:"column", gap:14, padding:"14px 18px 18px 14px",
+                  borderLeft:"1px solid "+C.border, background:C.bg}}>
                   {filtered.map(({d}) => (
                     <div key={d.id} id={"fcard-" + d.id}
                       style={{borderRadius:C.r4, flexShrink:0,
@@ -14470,6 +14546,22 @@ const NAV_ITEMS = [
   {id:"users",      Icon:I.user,           label:"Users",      adminOnly:true},
   {id:"settings",   Icon:I.settings,       label:"Settings"},
 ];
+// The admin sidebar tells its own story: Deals rides right under Dashboard,
+// and Projects lives inside Properties as a dropdown. Members keep the
+// original order untouched.
+const navItemsFor = (isAdmin) => {
+  if (!isAdmin) return NAV_ITEMS;
+  const by = Object.fromEntries(NAV_ITEMS.map(it => [it.id, it]));
+  return [
+    by.dashboard,
+    by.deals,
+    by.deal,
+    {...by.properties, children: [{...by.projects}]},
+    by.comps,
+    by.users,
+    by.settings,
+  ];
+};
 
 function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
   const rowStyle = (active, child=false) => ({
@@ -14490,7 +14582,7 @@ function DesktopSidebar({page, setPage, daysLeft, userEmail, isAdmin}) {
         <img src="/logo.png" alt="DealHive" style={{display:"block", width:"100%", maxWidth:185, height:"auto", objectFit:"contain"}} />
       </div>
       <div style={{flex:1, padding:"6px 10px", overflowY:"auto"}}>
-        {NAV_ITEMS.filter(item => isAdmin || !item.adminOnly).map(item => {
+        {navItemsFor(isAdmin).filter(item => isAdmin || !item.adminOnly).map(item => {
           const active = page===item.id;
           const kids = (item.children || []).filter(c => isAdmin || !c.adminOnly);
           if (!kids.length) {
@@ -15239,6 +15331,9 @@ export default function App() {
       .dh-tab-row::-webkit-scrollbar{display:none;}
       .dh-chip-row{scrollbar-width:none;}
       .dh-chip-row::-webkit-scrollbar{display:none;}
+      .dh-fpop .leaflet-popup-content-wrapper{background:transparent;box-shadow:none;padding:0;border-radius:14px;}
+      .dh-fpop .leaflet-popup-content{margin:0;line-height:1.35;}
+      .dh-fpop .leaflet-popup-tip-container{display:none;}
       ::-webkit-scrollbar{width:10px;height:10px;}
       ::-webkit-scrollbar-track{background:transparent;}
       ::-webkit-scrollbar-thumb{background:${C.border};border-radius:6px;border:2px solid ${C.bg};}
