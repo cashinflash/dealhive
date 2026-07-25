@@ -6123,6 +6123,8 @@ const proFormaToFeedDeal = pf => ({
   loopnetId:            pf.loopnetId || null,
   loopnetPropertyId:    pf.loopnetPropertyId || null,
   loopnetUrl:           pf.loopnetUrl || null,
+  crexiId:              pf.crexiId || null,
+  crexiUrl:             pf.crexiUrl || null,
   zpid:                 pf.zpid || null,
   zillowUrl:            pf.zillowUrl || null,
   assetClass:           pf.assetClass || "residential",
@@ -6245,6 +6247,8 @@ const dealToProForma = (deal) => {
     loopnetId:            deal.loopnetId || (/^ln\w+$/.test(String(deal.id || "")) ? String(deal.id).slice(2) : null),
     loopnetPropertyId:    deal.loopnetPropertyId || null,
     loopnetUrl:           deal.loopnetUrl || null,
+    crexiId:              deal.crexiId || (/^cx\d+$/.test(String(deal.id || "")) ? "crexi_" + String(deal.id).slice(2) : null),
+    crexiUrl:             deal.crexiUrl || null,
     zpid:                 deal.zpid || null,
     zillowUrl:            deal.zillowUrl || deal.sourceUrl || null,
     assetClass:           deal.assetClass || "residential",
@@ -10225,39 +10229,74 @@ const pin$ = (n) => {
 
 // The Deal Finder's map view: every listing as a tappable price pill on a
 // real map. Tap a pill and the listing opens, exactly like tapping its card.
-function FinderMap({items, mobile, onOpen}) {
+// The finder map: Google tiles (the maps script is already on the page for
+// address autocomplete) with the same orange price pills drawn as overlays,
+// and the old OpenStreetMap build as an automatic fallback whenever Google's
+// script can't arrive. Pins call onOpen with the listing id; the parent
+// decides what opening means (modal on mobile, card focus in split view).
+function FinderMap({items, mobile, onOpen, height}) {
   const ref = useRef(null);
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => { onOpenRef.current = onOpen; }, [onOpen]);
   const key = items.map(i => i.id).join("|");
   useEffect(() => {
     const pts = items.filter(i => i.lat != null && i.lng != null);
     if (!pts.length || !ref.current) return;
-    let map;
-    const init = () => {
-      if (!ref.current || map) return;
-      map = window.L.map(ref.current, {zoomControl:true, attributionControl:false,
+    let lmap = null, cancelled = false, settled = false;
+    const overlays = [];
+    const pillHtml = (label) =>
+      `<div style="background:#fff;border:1.5px solid #E8731C;color:#18181b;` +
+      `font:800 11.5px Inter,-apple-system,sans-serif;padding:4px 10px;border-radius:9999px;` +
+      `box-shadow:0 3px 9px rgba(9,9,11,.3);white-space:nowrap">${label}</div>` +
+      `<div style="width:9px;height:9px;background:#fff;border-right:1.5px solid #E8731C;` +
+      `border-bottom:1.5px solid #E8731C;transform:rotate(45deg);margin:-5px auto 0"></div>`;
+    const gInit = () => {
+      if (cancelled || !ref.current) return;
+      const g = window.google.maps;
+      const gmap = new g.Map(ref.current, {mapTypeControl:false, streetViewControl:false,
+        fullscreenControl:false, clickableIcons:false, gestureHandling:"greedy",
+        center:{lat: pts[0].lat, lng: pts[0].lng}, zoom:13});
+      const bounds = new g.LatLngBounds();
+      pts.forEach(it => {
+        bounds.extend({lat: it.lat, lng: it.lng});
+        const div = document.createElement("div");
+        div.style.cssText = "position:absolute;transform:translate(-50%,-100%);cursor:pointer";
+        div.innerHTML = pillHtml(it.label);
+        div.onclick = e => { e.stopPropagation(); if (onOpenRef.current) onOpenRef.current(it.id); };
+        const ov = new g.OverlayView();
+        ov.onAdd = function() { this.getPanes().overlayMouseTarget.appendChild(div); };
+        ov.draw = function() {
+          const p = this.getProjection().fromLatLngToDivPixel(new g.LatLng(it.lat, it.lng));
+          if (p) { div.style.left = p.x + "px"; div.style.top = p.y + "px"; }
+        };
+        ov.onRemove = function() { div.remove(); };
+        ov.setMap(gmap);
+        overlays.push(ov);
+      });
+      if (pts.length > 1) gmap.fitBounds(bounds, 52);
+    };
+    const lInit = () => {
+      if (cancelled || !ref.current || lmap) return;
+      lmap = window.L.map(ref.current, {zoomControl:true, attributionControl:false,
         scrollWheelZoom:true, dragging:true, touchZoom:true});
-      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(lmap);
       const bounds = [];
       pts.forEach(it => {
         const icon = window.L.divIcon({className:"", iconSize:[0, 0],
           html:`<div style="transform:translate(-50%,-100%);display:inline-block;cursor:pointer">` +
-            `<div style="background:#fff;border:1.5px solid #E8731C;color:#18181b;` +
-            `font:800 11.5px Inter,-apple-system,sans-serif;padding:4px 10px;border-radius:9999px;` +
-            `box-shadow:0 3px 9px rgba(9,9,11,.3);white-space:nowrap">${it.label}</div>` +
-            `<div style="width:9px;height:9px;background:#fff;border-right:1.5px solid #E8731C;` +
-            `border-bottom:1.5px solid #E8731C;transform:rotate(45deg);margin:-5px auto 0"></div></div>`});
-        const mk = window.L.marker([it.lat, it.lng], {icon}).addTo(map);
-        mk.on("click", () => onOpen(it.id));
+            pillHtml(it.label) + `</div>`});
+        const mk = window.L.marker([it.lat, it.lng], {icon}).addTo(lmap);
+        mk.on("click", () => { if (onOpenRef.current) onOpenRef.current(it.id); });
         bounds.push([it.lat, it.lng]);
       });
-      if (bounds.length > 1) map.fitBounds(bounds, {padding:[44, 44]});
-      else map.setView(bounds[0], 13);
+      if (bounds.length > 1) lmap.fitBounds(bounds, {padding:[44, 44]});
+      else lmap.setView(bounds[0], 13);
     };
-    if (window.L) init();
-    else {
+    const leafletBoot = () => {
+      if (window.L) { lInit(); return; }
       const sc = document.createElement("script");
       sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-      sc.onload = init;
+      sc.onload = lInit;
       document.head.appendChild(sc);
       if (!document.querySelector('link[href*="leaflet.min.css"]')) {
         const lk = document.createElement("link");
@@ -10265,8 +10304,21 @@ function FinderMap({items, mobile, onOpen}) {
         lk.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
         document.head.appendChild(lk);
       }
-    }
-    return () => { if (map) map.remove(); };
+    };
+    // Google first; if its script hasn't arrived within a beat, fall back.
+    const t = setTimeout(() => { if (!settled && !cancelled) { settled = true; leafletBoot(); } }, 3500);
+    loadGM().then(() => {
+      if (settled || cancelled) return;
+      settled = true; clearTimeout(t);
+      if (window.google && window.google.maps && window.google.maps.Map) gInit();
+      else leafletBoot();
+    });
+    return () => {
+      cancelled = true; clearTimeout(t);
+      overlays.forEach(o => { try { o.setMap(null); } catch { /* already gone */ } });
+      if (lmap) lmap.remove();
+      if (ref.current) ref.current.innerHTML = "";
+    };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const count = items.filter(i => i.lat != null && i.lng != null).length;
   if (!count) {
@@ -10280,8 +10332,8 @@ function FinderMap({items, mobile, onOpen}) {
     );
   }
   return (
-    <div style={{position:"relative"}}>
-      <div ref={ref} style={{height: mobile ? "calc(100dvh - 330px)" : 560, minHeight:380,
+    <div style={{position:"relative", height: height || undefined}}>
+      <div ref={ref} style={{height: height || (mobile ? "calc(100dvh - 330px)" : 560), minHeight:380,
         borderRadius:C.r4, overflow:"hidden", border:"1px solid "+C.border,
         boxShadow:C.sh2, position:"relative", zIndex:0, isolation:"isolate"}}/>
       <div style={{position:"absolute", top:12, right:12, zIndex:2, background:"rgba(255,255,255,.95)",
@@ -10294,12 +10346,36 @@ function FinderMap({items, mobile, onOpen}) {
   );
 }
 
-// One LoopNet commercial listing — price, type, size, and a straight path into
+// Details warm-up: the first cards of every search (and any card the pointer
+// crosses) pull their full description in the background, so opening the
+// listing is instant instead of a several second wait. One in-flight promise
+// per listing, shared by the cards, the modal, and the map rail.
+const commercialDetailWarm = new Map();
+const prefetchCommercialDetail = (l, token) => {
+  if (!token || !l || !l.id || commercialDetailWarm.has(l.id)) return;
+  if (commercialDetailWarm.size > 80) commercialDetailWarm.clear();
+  commercialDetailWarm.set(l.id, (async () => {
+    try {
+      const r = await fetch(`${FN_BASE}/commercialDetail`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
+        body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url}),
+      });
+      const j = await r.json().catch(() => null);
+      const out = (r.ok && j) ? j : null;
+      if (!out) commercialDetailWarm.delete(l.id);
+      return out;
+    } catch { commercialDetailWarm.delete(l.id); return null; }
+  })());
+};
+
+// One commercial listing — price, type, size, and a straight path into
 // the multifamily underwriter. Tap anywhere on the card for the full listing
 // view; lease listings underwrite too (price starts blank).
-function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
+function CommercialCard({l, mobile, onUnderwrite, onOpen, onWarm}) {
   const ask  = commercialAsk(l);
   const info = commercialInfo(l);
+  const srcName = l.source === "crexi" ? "Crexi" : "LoopNet";
   const chips = [
     l.buildingClass ? `Class ${l.buildingClass}` : null,
     l.sizeLabel || null,
@@ -10307,6 +10383,7 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
   const broker = (Array.isArray(l.brokers) && l.brokers[0]) || null;
   return (
     <Card padding={0} hover onClick={()=>onOpen && onOpen(l)}
+      onMouseEnter={()=>onWarm && onWarm(l)}
       style={{display:"flex", flexDirection:"column", overflow:"hidden", cursor:"pointer"}}>
       <div style={{height:150, background:C.bgSubtle, position:"relative"}}>
         {l.photo ? (
@@ -10366,12 +10443,12 @@ function CommercialCard({l, mobile, onUnderwrite, onOpen}) {
           <div style={{fontSize:12, color:C.textSub, fontFamily:F, marginTop:2,
             overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{info}</div>
         )}
-        {broker && (broker.name || broker.company) && (
-          <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6,
-            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-            Listed by {[broker.name, broker.company].filter(Boolean).join(", ")}
-          </div>
-        )}
+        <div style={{fontSize:11, color:C.textMuted, fontFamily:F, marginTop:6,
+          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+          {broker && (broker.name || broker.company)
+            ? <>Listed by {[broker.name, broker.company].filter(Boolean).join(", ")} · {srcName}</>
+            : <>Listed on {srcName}</>}
+        </div>
         <div style={{display:"flex", gap:8, marginTop:12}}>
           <button onClick={e=>{ e.stopPropagation(); onUnderwrite(l); }}
             {...btnStyle("primary","md", {flex:1, justifyContent:"center"})}>
@@ -10419,18 +10496,18 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
   const [detail, setDetail] = useState(null);
   useEffect(() => {
     let alive = true;
-    (async () => {
-      try {
-        if (!token) return;
-        const r = await fetch(`${FN_BASE}/commercialDetail`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json", Authorization: `Bearer ${token}`},
-          body: JSON.stringify({id: l.id, propertyId: l.propertyId, url: l.url}),
-        });
-        const j = await r.json().catch(() => null);
-        if (alive && r.ok && j && (j.found || j.trace)) setDetail(j);
-      } catch { /* the search snippet stands on its own */ }
-    })();
+    if (!token) return undefined;
+    // The card usually warmed this while the user was still browsing, so the
+    // full story is typically here before the modal finishes opening.
+    prefetchCommercialDetail(l, token);
+    const warm = commercialDetailWarm.get(l.id);
+    if (warm) {
+      warm.then(j => {
+        if (!alive || !j) return;
+        if (j.found || j.trace) setDetail(j);
+        if (isAdmin && j.trace) console.log("detail trace:", j.trace);
+      });
+    }
     return () => { alive = false; };
   }, [l.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Whichever copy is fuller wins; the search feed truncates mid-sentence.
@@ -10457,24 +10534,52 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
        overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, WebkitOverflowScrolling:"touch"}
     : {background:C.card, borderRadius:C.r5, width:"100%", maxWidth:640, maxHeight:"92dvh",
        overflowY:"auto", overscrollBehavior:"contain", boxShadow:C.sh4, border:"1px solid "+C.border};
-  // Only facts we actually have make the grid — never a blank tile. County
-  // records supply beds, baths, and building square footage when they know
-  // the parcel; class, spaces, and year built fill any remaining slots.
-  const bSqft = rec ? (rec.sqftBuilding || rec.sqft || 0) : 0;
+  // Every listing of a kind shows the same tile set, and the grid always
+  // lands even: multifamily reads Type, Units, Building SqFt, Built, and the
+  // rest of commercial reads Type, Building SqFt, Class, Built. Slots fill
+  // from the listing, its building info line, and county records together;
+  // any slot nobody can fill hands its tile to an honest backup fact
+  // (Price/SF, lot size, bed/bath, suite count, source), never a blank cell.
+  const infoStr = String(l.buildingInfo || "");
+  const sizeSF = (() => {
+    const m = /([\d,]{3,})\s*SF\b/i.exec(String(l.sizeLabel || "")) || /([\d,]{3,})\s*SF\b/i.exec(infoStr);
+    return m ? parseInt(m[1].replace(/,/g, ""), 10) || 0 : 0;
+  })();
+  const bSqft = (rec ? (rec.sqftBuilding || rec.sqft || 0) : 0) || sizeSF ||
+    ((typeof l.sqft === "number" && l.sqft > 0) ? l.sqft : 0);
+  const builtYr = (/Built(?: in)? (\d{4})/i.exec(infoStr) || [])[1] ||
+    l.yearBuilt || (rec && rec.yearBuilt) || null;
+  const isMFType = /apartment|multi.?family/i.test(l.propertyType || "");
+  const units = (rec && rec.units) ||
+    ((/(\d+)\s*Unit/i.exec(String(l.sizeLabel || "")) || /(\d+)\s*Unit/i.exec(infoStr) || [])[1]) || null;
   const bedsBaths = rec && (rec.beds || rec.baths)
     ? [rec.beds ? `${rec.beds} bd` : null, rec.baths ? `${rec.baths} ba` : null].filter(Boolean).join(" · ")
-    : null;
-  const builtYr = (/Built in (\d{4})/i.exec(String(l.buildingInfo || "")) || [])[1] ||
-    (rec && rec.yearBuilt) || null;
-  const facts = [
-    l.propertyType ? ["Type", l.propertyType, I.building] : null,
-    l.sizeLabel ? ["Size", l.sizeLabel, I.ruler] : null,
+    : (l.beds ? `${l.beds} bd` : null);
+  const acresLabel = /\bAC\b/i.test(String(l.sizeLabel || "")) ? l.sizeLabel : null;
+  const primary = isMFType
+    ? [["Type", l.propertyType, I.building],
+      units ? ["Units", String(units), I.home] : null,
+      bSqft > 0 ? ["Building SqFt", bSqft.toLocaleString(), I.parcel] : null,
+      builtYr ? ["Built", String(builtYr), I.calendar] : null]
+    : [["Type", l.propertyType || "Commercial", I.building],
+      bSqft > 0 ? ["Building SqFt", bSqft.toLocaleString(), I.parcel] : null,
+      l.buildingClass ? ["Class", `Class ${l.buildingClass}`, I.tag] : null,
+      builtYr ? ["Built", String(builtYr), I.calendar] : null];
+  const backups = [
+    (ask > 0 && units) ? ["Price / Unit", $(Math.round(ask / units)), I.tag] : null,
+    (ask > 0 && bSqft > 0) ? ["Price / SF", $(Math.round(ask / bSqft)), I.tag] : null,
+    acresLabel ? ["Lot Size", acresLabel, I.ruler] : null,
     bedsBaths ? ["Bed / Bath", bedsBaths, I.bed] : null,
-    bSqft > 0 ? ["Building SqFt", bSqft.toLocaleString(), I.parcel] : null,
-    l.buildingClass ? ["Class", `Class ${l.buildingClass}`, I.tag] : null,
     l.spaces ? ["Spaces", l.spaces, I.home] : null,
-    builtYr ? ["Built", builtYr, I.calendar] : null,
-  ].filter(Boolean).slice(0, 4);
+    ["Source", l.source === "crexi" ? "Crexi" : "LoopNet", I.pin],
+  ].filter(Boolean);
+  let facts = primary.filter(Boolean);
+  for (const b of backups) {
+    if (facts.length >= 4) break;
+    if (!facts.some(f => f[0] === b[0])) facts.push(b);
+  }
+  facts = facts.slice(0, 4);
+  if (facts.length === 3) facts = facts.slice(0, 2);
   return (
     <div style={outerStyle} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={innerStyle}>
@@ -10533,7 +10638,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
             letterSpacing:"-0.01em", lineHeight:1.3}}>{l.address}</h2>
           <div style={{fontSize:13, color:C.textSub, fontFamily:F, marginTop:5}}>
             {[l.city, l.state].filter(Boolean).join(", ")}{l.zip ? ` ${l.zip}` : ""}
-            {info ? ` · ${info}` : ""} · LoopNet
+            {info ? ` · ${info}` : ""} · {l.source === "crexi" ? "Crexi" : "LoopNet"}
           </div>
         </div>
 
@@ -10558,23 +10663,13 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
           </div>
         </div>
 
-        {(description || (isAdmin && detail && detail.trace)) && (
+        {description && (
           <div style={{padding: mobile ? "16px 18px" : "20px 24px", borderBottom:"1px solid "+C.border}}>
             <div style={{fontSize:11, fontWeight:700, color:C.textSub, fontFamily:F,
               letterSpacing:".06em", textTransform:"uppercase", marginBottom:8}}>About this listing</div>
-            {description && (
-              <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
-                {deEnt(description)}{looksTruncated(description) ? "…" : ""}
-              </div>
-            )}
-
-            {isAdmin && detail && detail.trace && (
-              <div style={{marginTop:10, fontSize:10.5, color:C.textMuted, fontFamily:"monospace",
-                background:C.bgSubtle, border:"1px dashed "+C.border, borderRadius:C.r2,
-                padding:"8px 10px", lineHeight:1.5, wordBreak:"break-all"}}>
-                admin · {detail.trace}
-              </div>
-            )}
+            <div style={{fontSize:14, color:C.text, fontFamily:F, lineHeight:1.6, whiteSpace:"pre-wrap"}}>
+              {deEnt(description)}{looksTruncated(description) ? "…" : ""}
+            </div>
           </div>
         )}
 
@@ -10606,7 +10701,7 @@ function CommercialDetailModal({l, token, onClose, onUnderwrite, mobile, apiLook
           {l.url && (
             <a href={l.url} target="_blank" rel="noreferrer" style={{textDecoration:"none", display:"block", marginTop:8}}>
               <span {...btnStyle("secondary","lg", {width:"100%", justifyContent:"center"})}>
-                <I.externalLink size={14}/> View on LoopNet
+                <I.externalLink size={14}/> View on {l.source === "crexi" ? "Crexi" : "LoopNet"}
               </span>
             </a>
           )}
@@ -10647,10 +10742,12 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   const [recents, setRecents]     = useState(loadRecentSearches);
   const [recentsOpen, setRecentsOpen] = useState(false);
   const [cTotal, setCTotal]       = useState(0);         // LoopNet's full match count
+  const [cCounts, setCCounts]     = useState(null);      // {loopnet, crexi} totals per source
   const [cPage, setCPage]         = useState(1);
   const [cHasMore, setCHasMore]   = useState(false);
   const [cLoadingMore, setCLoadingMore] = useState(false);
   const [view, setView]           = useState("list");    // list | map
+  const [mapFocusId, setMapFocusId] = useState(null);    // pin tapped in split view
   const inputRef = useRef(null);
   const acRef = useRef(null);         // Google Places Autocomplete instance
   const runSearchRef = useRef(null);  // always points at the latest runSearch
@@ -10698,9 +10795,12 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
         setCount(j.count || (j.items||[]).length);
         setResMarket(mkt);
         setCTotal(commercial ? (j.count || (j.items||[]).length) : 0);
+        setCCounts(commercial ? (j.counts || null) : null);
         setCPage(1);
         setCHasMore(commercial ? !!j.nextPage : false);
+        setMapFocusId(null);
         setRecents(saveRecentSearch(term, mkt));
+        if (j.crexiTrace) console.log("crexi:", j.crexiTrace);
       } else if (j.error === "limit") {
         setResults(null);
         setError({kind:"limit",
@@ -10750,12 +10850,17 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
       if (j.meter) { setMeter(j.meter); saveSearchMeter(j.meter); }
       if (r.ok && Array.isArray(j.items)) {
         setResults(prev => {
-          const seen = new Set((prev || []).map(x => x.id));
-          return [...(prev || []), ...j.items.filter(x => !seen.has(x.id))];
+          // Ids catch same-source repeats; dedupe keys catch the same
+          // building arriving from the other source on a later page.
+          const seen = new Set();
+          (prev || []).forEach(x => { seen.add(x.id); if (x.dedupeKey) seen.add(x.dedupeKey); });
+          return [...(prev || []), ...j.items.filter(x =>
+            !seen.has(x.id) && !(x.dedupeKey && seen.has(x.dedupeKey)))];
         });
         setCPage(pg2 => pg2 + 1);
         setCHasMore(!!j.nextPage);
         setVisN(n => n + 36);
+        if (j.crexiTrace) console.log("crexi:", j.crexiTrace);
       } else {
         setCHasMore(false);
       }
@@ -10767,13 +10872,18 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
   // photos, and the listing description carried over, purchase price prefilled
   // from the asking price whenever the listing names one.
   const underwriteCommercial = l => onAnalyzeDeal({
-    id: "ln" + l.id, address: l.address, streetAddress: l.address,
+    // Crexi ids arrive already namespaced "cx…"; LoopNet ids get their "ln".
+    id: (l.source === "crexi" ? "" : "ln") + l.id, address: l.address, streetAddress: l.address,
     city: l.city, state: l.state, zip: l.zip, lat: l.lat, lng: l.lng,
     type: l.propertyType || "Commercial", price: commercialAsk(l) || 0,
     photos: Array.isArray(l.photos) && l.photos.length ? l.photos : (l.photo ? [l.photo] : []),
     photo: l.photo || null,
-    description: l.description || null, source: "LoopNet",
-    loopnetId: l.id || null, loopnetPropertyId: l.propertyId || null, loopnetUrl: l.url || null,
+    description: l.description || null, source: l.source === "crexi" ? "Crexi" : "LoopNet",
+    loopnetId: l.source === "crexi" ? null : (l.id || null),
+    loopnetPropertyId: l.source === "crexi" ? null : (l.propertyId || null),
+    loopnetUrl: l.source === "crexi" ? null : (l.url || null),
+    crexiId: l.source === "crexi" ? (l.propertyId || null) : null,
+    crexiUrl: l.source === "crexi" ? (l.url || null) : null,
     // Apartments underwrite on the rent roll; everything else commercial. An
     // exact "12,500 SF" size seeds the first suite so the roster starts real.
     assetClass: /apartment|multi.?family/i.test(l.propertyType || "") ? "multifamily" : "commercial",
@@ -10832,12 +10942,19 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     retail:      /storefront|retail|restaurant|store|bank|freestanding/i,
     industrial:  /warehouse|manufactur|industrial|distribution|flex|storage/i,
     shopping:    /shopping|center|mall|strip/i,
+    land:        /\bland\b|acre|parcel|development/i,
   };
   const C_TYPE_LABELS = {multifamily: "multifamily", office: "office",
-    retail: "retail", industrial: "industrial", shopping: "shopping center"};
+    retail: "retail", industrial: "industrial", shopping: "shopping center", land: "land"};
   const commercialAll = resMarket === "homes" ? [] : (results || []);
   const commercialShown = commercialAll.filter(l =>
     subtype === "all" || (C_TYPES[subtype] || /./).test(l.propertyType || ""));
+  // Warm the top cards' full descriptions the moment results land, so the
+  // listing opens instantly instead of waiting on the detail round trip.
+  useEffect(() => {
+    if (resMarket === "homes" || !Array.isArray(results)) return;
+    commercialShown.slice(0, 6).forEach(x => prefetchCommercialDetail(x, token));
+  }, [results, resMarket, subtype]); // eslint-disable-line react-hooks/exhaustive-deps
   const counts = {
     all:     classified.length,
     buyhold: classified.filter(({c})=>c.tags.includes("buyhold")).length,
@@ -11053,9 +11170,12 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             <div style={{minWidth:0}}>
               <div style={{fontSize:15, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.01em"}}>
                 {(() => {
-                  // The full LoopNet total only describes the unfiltered set; a
-                  // type chip counts what's actually loaded and says so while
-                  // more pages remain.
+                  // Two sources with unknown overlap can't honestly sum, so the
+                  // headline names each total. A type chip counts what's
+                  // actually loaded and says so while more pages remain.
+                  if (subtype === "all" && cCounts && cCounts.loopnet > 0 && cCounts.crexi > 0) {
+                    return `${cCounts.loopnet.toLocaleString()} on LoopNet + ${cCounts.crexi.toLocaleString()} on Crexi in ${prettyLoc(submitted)}`;
+                  }
                   const n = subtype === "all" ? (cTotal || commercialShown.length) : commercialShown.length;
                   const noun = subtype === "all" ? "commercial" : C_TYPE_LABELS[subtype] || subtype;
                   return `${n.toLocaleString()} ${noun} listing${n === 1 ? "" : "s"}${subtype !== "all" && cHasMore ? " so far" : ""} in ${prettyLoc(submitted)}`;
@@ -11066,7 +11186,7 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             {viewToggle}
             {resMarket !== "homes" && (
               <div className="dh-chip-row" style={{display:"flex", gap:6, overflowX:"auto", padding:2}}>
-                {[["all","All types"],["multifamily","Multifamily"],["office","Office"],["retail","Retail"],["industrial","Industrial"],["shopping","Shopping Centers"]].map(([id,label]) => {
+                {[["all","All types"],["multifamily","Multifamily"],["office","Office"],["retail","Retail"],["industrial","Industrial"],["shopping","Shopping Centers"],["land","Land"]].map(([id,label]) => {
                   const active = subtype === id;
                   return (
                     <button key={id} onClick={()=>setSubtype(id)}
@@ -11081,10 +11201,46 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
             </div>
           </div>
           {view === "map" ? (
-            <FinderMap mobile={mobile}
-              items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
-                label: pin$(commercialAsk(l))}))}
-              onOpen={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
+            mobile ? (
+              <FinderMap mobile
+                items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
+                  label: pin$(commercialAsk(l))}))}
+                onOpen={id => { const hit = commercialShown.find(x => x.id === id); if (hit) setCSel(hit); }}/>
+            ) : (
+              // The LoopNet-style split: map on the left, listings riding a
+              // scrollable rail on the right. A pin lights up and scrolls to
+              // its card; the card opens the full listing.
+              <div style={{display:"flex", gap:16, alignItems:"stretch"}}>
+                <div style={{flex:"1 1 auto", minWidth:0}}>
+                  <FinderMap mobile={false} height="calc(100vh - 240px)"
+                    items={commercialShown.map(l => ({id: l.id, lat: l.lat, lng: l.lng,
+                      label: pin$(commercialAsk(l))}))}
+                    onOpen={id => {
+                      setMapFocusId(id);
+                      const hit = commercialShown.find(x => x.id === id);
+                      if (hit) prefetchCommercialDetail(hit, token);
+                      requestAnimationFrame(() => {
+                        const el = document.getElementById("fcard-" + id);
+                        if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
+                      });
+                    }}/>
+                </div>
+                <div style={{width:390, flexShrink:0, height:"calc(100vh - 240px)", minHeight:380,
+                  overflowY:"auto", overscrollBehavior:"contain", display:"flex",
+                  flexDirection:"column", gap:14, paddingRight:4, paddingBottom:4, paddingTop:2}}>
+                  {commercialShown.map(l => (
+                    <div key={l.id || l.url} id={"fcard-" + l.id}
+                      style={{borderRadius:C.r4, flexShrink:0,
+                        outline: mapFocusId === l.id ? "2.5px solid "+C.green : "none",
+                        outlineOffset:2}}>
+                      <CommercialCard l={l} mobile={false}
+                        onUnderwrite={underwriteCommercial} onOpen={setCSel}
+                        onWarm={x => prefetchCommercialDetail(x, token)}/>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
           ) : commercialShown.length === 0 ? (
             <EmptyState
               icon={<I.building size={20}/>}
@@ -11097,7 +11253,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
                 gridTemplateColumns: mobile ? "1fr" : isWide ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap:16}}>
                 {commercialShown.slice(0, visN).map(l => (
                   <CommercialCard key={l.id || l.url} l={l} mobile={mobile}
-                    onUnderwrite={underwriteCommercial} onOpen={setCSel}/>
+                    onUnderwrite={underwriteCommercial} onOpen={setCSel}
+                    onWarm={x => prefetchCommercialDetail(x, token)}/>
                 ))}
               </div>
               {(commercialShown.length > visN || cHasMore) && (
@@ -11176,9 +11333,42 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
 
           {/* Results — grid or map */}
           {view === "map" ? (
-            <FinderMap mobile={mobile}
-              items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
-              onOpen={id => setSelectedId(id)}/>
+            mobile ? (
+              <FinderMap mobile
+                items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
+                onOpen={id => setSelectedId(id)}/>
+            ) : (
+              <div style={{display:"flex", gap:16, alignItems:"stretch"}}>
+                <div style={{flex:"1 1 auto", minWidth:0}}>
+                  <FinderMap mobile={false} height="calc(100vh - 240px)"
+                    items={filtered.map(({d}) => ({id: d.id, lat: d.lat, lng: d.lng, label: pin$(d.price)}))}
+                    onOpen={id => {
+                      setMapFocusId(id);
+                      requestAnimationFrame(() => {
+                        const el = document.getElementById("fcard-" + id);
+                        if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
+                      });
+                    }}/>
+                </div>
+                <div style={{width:390, flexShrink:0, height:"calc(100vh - 240px)", minHeight:380,
+                  overflowY:"auto", overscrollBehavior:"contain", display:"flex",
+                  flexDirection:"column", gap:14, paddingRight:4, paddingBottom:4, paddingTop:2}}>
+                  {filtered.map(({d}) => (
+                    <div key={d.id} id={"fcard-" + d.id}
+                      style={{borderRadius:C.r4, flexShrink:0,
+                        outline: mapFocusId === d.id ? "2.5px solid "+C.green : "none",
+                        outlineOffset:2}}>
+                      <DealCard deal={d} isPro alwaysShow showAddress
+                        onAnalyze={() => onAnalyzeDeal(d)}
+                        onSave={() => onSaveDeal(d)}
+                        onUpgrade={onUpgrade}
+                        onOpen={() => setSelectedId(d.id)}
+                        mobile={false}/>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
           ) : (
           <>
           <div style={{display:"grid",
@@ -12750,23 +12940,26 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
   useEffect(() => {
     if (!rcAuth || !rcAuth.token) return;
     const lnId = d.loopnetId || (/^ln\w+$/.test(String(d.id || "")) ? String(d.id).slice(2) : null);
+    const cxId = d.crexiId || (/^cx\d+$/.test(String(d.id || "")) ? "crexi_" + String(d.id).slice(2) : null);
     const zpid = d.zpid || (/^z\d+$/.test(String(d.id || "")) ? String(d.id).slice(1) : null);
     const zUrl = d.zillowUrl || null;
-    const provider = lnId ? "ln" : (zpid || zUrl) ? "z" : null;
+    const provider = lnId ? "ln" : cxId ? "cx" : (zpid || zUrl) ? "z" : null;
     if (!provider) return;
-    const keyId = provider + ":" + (lnId || zpid || zUrl);
+    const keyId = provider + ":" + (lnId || cxId || zpid || zUrl);
     const short = !d.description || d.description.length < 600 || /(…|\.\.\.)\s*$/.test(d.description);
     if (!short || enrichedKeyRef.current === keyId) return;
     enrichedKeyRef.current = keyId;
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`${FN_BASE}/${provider === "ln" ? "commercialDetail" : "homeDetail"}`, {
+        const r = await fetch(`${FN_BASE}/${provider === "z" ? "homeDetail" : "commercialDetail"}`, {
           method: "POST",
           headers: {"Content-Type": "application/json", Authorization: `Bearer ${rcAuth.token}`},
           body: JSON.stringify(provider === "ln"
             ? {id: lnId, propertyId: d.loopnetPropertyId || null, url: d.loopnetUrl || null}
-            : {zpid, url: zUrl}),
+            : provider === "cx"
+              ? {id: String(d.id || ""), propertyId: cxId, url: d.crexiUrl || null}
+              : {zpid, url: zUrl}),
         });
         const j = await r.json().catch(() => null);
         if (!alive || !r.ok || !j) return;
@@ -12783,7 +12976,7 @@ function DealAnalyzer({deals=[], onSave, onSaveToWatchlist, renoRates={light:7,m
       } catch { /* the search snippet stays until the next try */ }
     })();
     return () => { alive = false; };
-  }, [d.id, d.loopnetId, d.zpid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [d.id, d.loopnetId, d.crexiId, d.zpid]); // eslint-disable-line react-hooks/exhaustive-deps
   // Safety net: a full address without specs (manual typing, prefilled saves)
   // pulls after a short pause.
   useEffect(() => {

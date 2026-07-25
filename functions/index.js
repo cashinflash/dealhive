@@ -1387,6 +1387,135 @@ function mapLoopnetListing(r) {
     lng: (typeof r.longitude === "number") ? r.longitude : null,
   };
 }
+// == Crexi (second commercial source) ===========================================
+// Crexi is the number two commercial marketplace, and its free-listing model
+// captures inventory LoopNet's paid placement misses, especially land and
+// small-market deals. Search queries both sources in parallel and merges
+// them per page, deduped by address (or coordinates when a land listing only
+// names an intersection). The details route is documented verbatim from the
+// provider's curl sample; the search route follows the provider's own /v4
+// get_* naming and self-resolves once, remembered in config/crexiSearch.
+const CREXI_HOST = "crexi-api1.p.rapidapi.com";
+const CREXI_SEARCH_PATHS = ["/v4/get_listings_by_city", "/v4/listings_by_city",
+  "/v4/get_properties_by_city", "/v4/get_listings", "/v4/get_city_listings"];
+const CREXI_PARAM_STYLES = [
+  "city={c}&state_code={s}&page_no={p}&per_page=25",
+  "city={c}&state={s}&page_no={p}&per_page=25",
+  "city={c}&state_code={s}&page={p}&limit=25",
+];
+async function crexiSearch(city, state, page, key, trace) {
+  const cfgRef = admin.database().ref("config/crexiSearch");
+  const stored = (await cfgRef.get()).val();
+  const fill = (tpl) => tpl.replace("{c}", encodeURIComponent(city))
+    .replace("{s}", encodeURIComponent(state)).replace("{p}", String(page));
+  const call = async (pathAndQs) => {
+    try {
+      const r = await fetch(`https://${CREXI_HOST}${pathAndQs}`,
+        {headers: {"X-RapidAPI-Key": key, "X-RapidAPI-Host": CREXI_HOST}});
+      const j = await r.json().catch(() => null);
+      return {status: r.status, j};
+    } catch { return {status: 0, j: null}; }
+  };
+  const ok = (j) => j && Array.isArray(j.data);
+  if (typeof stored === "string" && stored) {
+    const got = await call(fill(stored));
+    if (got.status === 200 && ok(got.j)) return got.j;
+    trace.push(`cx stored ${got.status}`);
+  }
+  for (const path of CREXI_SEARCH_PATHS) {
+    let tpl = `${path}?${CREXI_PARAM_STYLES[0]}`;
+    let got = await call(fill(tpl));
+    if (got.status === 404) { trace.push(`cx ${path} 404`); continue; }
+    if (got.status === 403) { trace.push(`cx ${path} 403 not-subscribed`); return null; }
+    if (got.status === 429) { trace.push(`cx ${path} 429 quota`); return null; }
+    // A 400 means the path exists and a parameter name is off; the error
+    // message is kept in the trace and the other spellings get their turn.
+    if (got.status === 400 || got.status === 422) {
+      trace.push(`cx ${path} ${got.status} ${String((got.j && (got.j.message || got.j.detail || got.j.error)) || "").slice(0, 110)}`);
+      for (const st of CREXI_PARAM_STYLES.slice(1)) {
+        tpl = `${path}?${st}`;
+        got = await call(fill(tpl));
+        if (got.status === 200) break;
+      }
+    }
+    if (got.status === 200 && ok(got.j)) {
+      if (tpl !== stored) cfgRef.set(tpl).catch(() => { /* rediscovered next call */ });
+      trace.push(`cx ${path} ok n=${got.j.data.length} total=${got.j.total_result_count != null ? got.j.total_result_count : "?"}`);
+      return got.j;
+    }
+    trace.push(`cx ${path} HTTP ${got.status}`);
+    return null;
+  }
+  trace.push("cx no-route");
+  return null;
+}
+// Property type never rides along in Crexi's search feed, so it is read off
+// the listing name. Land goes first: acreage listings often also name the
+// retail or office use the land allows.
+function crexiType(name, subType) {
+  const s = `${subType || ""} ${name || ""}`;
+  if (/\bland\b|\bacres?\b|\bac\b|parcel|development site/i.test(s)) return "Land";
+  if (/apartment|multi.?family|\b\d+\s*units?\b/i.test(s)) return "Multifamily";
+  if (/medical|office/i.test(s)) return "Office";
+  if (/industrial|warehouse|distribution|manufactur/i.test(s)) return "Industrial";
+  if (/mixed.?use/i.test(s)) return "Mixed Use";
+  if (/retail|storefront|restaurant|shopping/i.test(s)) return "Retail";
+  return "Commercial";
+}
+// A Crexi listing mapped into the exact shape LoopNet listings use, so every
+// card, pin, filter and underwrite path works unchanged. Ids are namespaced
+// "cx" so the two sources can never collide.
+function mapCrexiListing(r) {
+  if (!r || typeof r !== "object") return null;
+  if (r.status && r.status !== "for_sale") return null;
+  const digits = String(r.property_id || "").replace(/\D/g, "");
+  if (!digits) return null;
+  const price = (typeof r.list_price === "number" && r.list_price > 0) ? Math.round(r.list_price) : 0;
+  const photo = (typeof r.property_photo === "string" && /^https?:\/\//.test(r.property_photo) &&
+    !/map-images\.crexi\.com/.test(r.property_photo)) ? r.property_photo : null;
+  const sqft = (typeof r.sqft === "number" && r.sqft > 0) ? Math.round(r.sqft) : 0;
+  const acres = (typeof r.lot_sqft === "number" && r.lot_sqft > 0) ? r.lot_sqft / 43560 : 0;
+  return {
+    id: "cx" + digits,
+    source: "crexi",
+    propertyId: String(r.property_id),
+    url: r.href || null,
+    address: r.address || "",
+    city: r.city || "", state: r.state_code || "", zip: r.postal_code || "",
+    priceText: price ? "$" + price.toLocaleString("en-US") : "Price on request",
+    priceNum: price,
+    propertyType: crexiType(r.p_name, r.sub_type),
+    buildingClass: null, spaces: null,
+    sizeLabel: sqft ? `${sqft.toLocaleString("en-US")} SF` : (acres ? `${acres.toFixed(2)} AC` : null),
+    buildingInfo: null,
+    description: null,
+    searchType: "For Sale",
+    photo,
+    brokers: (r.agent_name || r.office_name)
+      ? [{name: r.agent_name || r.office_name,
+        company: (r.office_name && r.office_name !== r.agent_name) ? r.office_name : null}]
+      : [],
+    lat: (typeof r.lat === "number") ? r.lat : null,
+    lng: (typeof r.lon === "number") ? r.lon : null,
+    beds: (typeof r.beds === "number" && r.beds > 0) ? r.beds : null,
+    yearBuilt: r.year_built || null,
+    listDate: r.list_date || null,
+  };
+}
+// Cross-source identity for one property: street number + first street word +
+// ZIP when the listing has a real address, otherwise coordinates to ~11m
+// (land listings often only name an intersection). A missed match shows a
+// duplicate card; it never hides a distinct property.
+function listingDedupeKey(l) {
+  const m = /^\s*(\d+[\w-]*)\s+(\S+)/.exec(String(l.address || ""));
+  if (m && l.zip) {
+    return `a:${m[1].toLowerCase()}:${m[2].toLowerCase().replace(/[^\w]/g, "")}:${l.zip}`;
+  }
+  if (typeof l.lat === "number" && typeof l.lng === "number") {
+    return `g:${l.lat.toFixed(4)},${l.lng.toFixed(4)}`;
+  }
+  return null;
+}
 exports.searchCommercial = onRequest({
   secrets: [RAPIDAPI_KEY],
   cors: true, region: "us-central1", timeoutSeconds: 30,
@@ -1421,8 +1550,10 @@ exports.searchCommercial = onRequest({
     const cacheRef = admin.database().ref(
       `commercialCache/${listingCacheKey(`${mode}:${query}`, page)}`);
     const cached = (await cacheRef.get()).val();
-    if (cached && cached.ts && (Date.now() - cached.ts) < LISTING_CACHE_TTL_MS && Array.isArray(cached.items)) {
+    // v2 invalidates single-source pages cached before Crexi joined the merge.
+    if (cached && cached.v === 2 && cached.ts && (Date.now() - cached.ts) < LISTING_CACHE_TTL_MS && Array.isArray(cached.items)) {
       res.json({items: cached.items, count: cached.count || cached.items.length,
+        counts: cached.counts || null,
         nextPage: !!cached.nextPage, page, cached: true, meter: meter(used)});
       return;
     }
@@ -1446,6 +1577,16 @@ exports.searchCommercial = onRequest({
         message: "Deal Finder is handling heavy demand right now. Please try again shortly."});
       return;
     }
+
+    // Crexi rides along whenever the query names "City, ST"; ZIP and street
+    // searches stay LoopNet-only (bylocation handles those shapes). Kicked
+    // off before the LoopNet round trip so both providers answer in parallel,
+    // and any Crexi failure simply leaves its half of the merge empty.
+    const cxTrace = [];
+    const cityMatch = /^(.+?),\s*([A-Za-z]{2})$/.exec(query);
+    const cxPromise = (mode === "sale" && cityMatch)
+      ? crexiSearch(cityMatch[1].trim(), cityMatch[2].toUpperCase(), page, key, cxTrace).catch(() => null)
+      : Promise.resolve(null);
 
     const headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": LOOPNET_HOST};
     const base = `https://${LOOPNET_HOST}/search/bylocation?location=${encodeURIComponent(query)}&page=${page}`;
@@ -1510,11 +1651,32 @@ exports.searchCommercial = onRequest({
 
     const items = (out.searchResults || []).map(mapLoopnetListing).filter(Boolean);
     const count = out.total || items.length;
-    await cacheRef.set({ts: Date.now(), items, count, nextPage: !!out.nextPage, query, page, mode});
+    for (const it of items) { it.source = "loopnet"; it.dedupeKey = listingDedupeKey(it); }
+    const cx = await cxPromise;
+    const cxItems = (cx && Array.isArray(cx.data) ? cx.data : []).map(mapCrexiListing).filter(Boolean);
+    for (const it of cxItems) it.dedupeKey = listingDedupeKey(it);
+    // One property, one card: LoopNet's richer record wins a same-page tie,
+    // and the client repeats this guard across pages with the same keys.
+    const merged = [];
+    const byKey = new Set();
+    for (const it of [...items, ...cxItems]) {
+      if (it.dedupeKey && byKey.has(it.dedupeKey)) continue;
+      if (it.dedupeKey) byKey.add(it.dedupeKey);
+      merged.push(it);
+    }
+    const cxPer = cx ? (Number(cx.per_page) || cxItems.length || 25) : 0;
+    const cxPageNo = cx ? (Number(cx.page_no) || page) : 0;
+    const cxTotal = cx ? (Number(cx.total_result_count) || cxItems.length) : 0;
+    const counts = {loopnet: count, crexi: cxTotal};
+    const more = !!out.nextPage || (cx ? cxPageNo * cxPer < cxTotal : false);
+    await cacheRef.set({v: 2, ts: Date.now(), items: merged, count, counts, nextPage: more, query, page, mode});
     await globalRef.transaction((v) => numOr0(v) + 1);
     let newUsed = used;
     if (!isAdmin) { await usageRef.transaction((v) => numOr0(v) + 1); newUsed = used + 1; }
-    res.json({items, count, nextPage: !!out.nextPage, page, cached: false, meter: meter(newUsed)});
+    logger.info("searchCommercial merge", {query, page, ln: items.length, cx: cxItems.length,
+      merged: merged.length, cxTrace});
+    res.json({items: merged, count, counts, nextPage: more, page, cached: false, meter: meter(newUsed),
+      ...(isAdmin && cxTrace.length ? {crexiTrace: cxTrace.join(" | ").slice(0, 600)} : {})});
   } catch (e) {
     logger.error("searchCommercial", {error: e.message});
     res.status(500).json({error: "search failed"});
@@ -1709,6 +1871,28 @@ async function loopnet2SaleDetails(lid, key, trace) {
   trace.push(`p2 no-route (${misses} spellings tried${firstMiss ? `; ${firstMiss}` : ""})`);
   return null;
 }
+// The Crexi details payload keeps the marketing copy in description.text and
+// sometimes repeats a longer cut under details[] as Marketing Description or
+// Investment Highlights; the longest candidate wins. Placeholder map tiles
+// are dropped from the gallery.
+function extractCrexiDetail(d) {
+  if (!d || typeof d !== "object") return {description: null, photos: []};
+  const bare = (s) => String(s).replace(/<[^>]+>/g, "").trim();
+  const cands = [];
+  if (d.description && typeof d.description.text === "string") cands.push(d.description.text);
+  for (const det of (Array.isArray(d.details) ? d.details : [])) {
+    if (det && /marketing description|investment highlights/i.test(String(det.category || "")) &&
+        Array.isArray(det.text)) {
+      cands.push(det.text.filter((x) => typeof x === "string").join("\n\n"));
+    }
+  }
+  const best = cands.filter((x) => x && bare(x)).reduce((a, b) => (bare(b).length > bare(a).length ? b : a), "");
+  const photos = (Array.isArray(d.photos) ? d.photos : [])
+    .map((p) => (p && typeof p === "object" ? p.href : p))
+    .filter((u) => typeof u === "string" && /^https?:\/\//.test(u) && !/map-images\.crexi\.com/.test(u))
+    .slice(0, 30);
+  return {description: best ? cleanListingText(best) : null, photos};
+}
 exports.commercialDetail = onRequest({
   secrets: [RAPIDAPI_KEY],
   cors: true, region: "us-central1", timeoutSeconds: 30,
@@ -1765,7 +1949,22 @@ exports.commercialDetail = onRequest({
     let sawOk = false;
     let sample = "";
     const trace = [];
-    for (const path of attempts) {
+    // Crexi listings carry their own documented details route, so they skip
+    // the LoopNet attempt chain and its second-source fallback entirely.
+    const isCrexi = /^crexi_\d+$/.test(pid) || /^cx\d+$/.test(id) || /crexi\.com/i.test(url);
+    if (isCrexi) {
+      const cxId = /^crexi_\d+$/.test(pid) ? pid : "crexi_" + String(id).replace(/\D/g, "");
+      try {
+        const r = await fetch(
+          `https://${CREXI_HOST}/v4/get_property_details?property_id=${encodeURIComponent(cxId)}`,
+          {headers: {"X-RapidAPI-Key": key, "X-RapidAPI-Host": CREXI_HOST}});
+        const j = r.ok ? await r.json().catch(() => null) : null;
+        if (j) sawOk = true;
+        got = extractCrexiDetail(j && j.data);
+        trace.push(`cx /v4/get_property_details ${r.status} desc=${got.description ? got.description.length : 0} photos=${got.photos.length}`);
+      } catch { trace.push("cx no-response"); }
+    }
+    for (const path of (isCrexi ? [] : attempts)) {
       const j = await tryGet(path);
       if (!j) { trace.push(`${path.split("?")[0]} no-response`); continue; }
       if (j.___status) { trace.push(`${path.split("?")[0]} HTTP ${j.___status}`); continue; }
@@ -1805,7 +2004,7 @@ exports.commercialDetail = onRequest({
     // only the description is allowed to upgrade (photos fill in solely when
     // the primary returned none at all). The listing id is the number at the
     // end of the LoopNet URL, with the raw ids as backups.
-    if (!got.description || got.description.length < 600) {
+    if (!isCrexi && (!got.description || got.description.length < 600)) {
       const lidFromUrl = (String(url).match(/\/(\d{5,})\/?(?:[?#]|$)/) || [])[1] || "";
       const lids = [...new Set([lidFromUrl, id, pid]
         .filter((x) => /^\d{5,}$/.test(String(x || ""))))];
