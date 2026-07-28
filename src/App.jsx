@@ -11122,7 +11122,8 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
       {recentsOpen && recents.length > 0 && !query.trim() && (
         <div style={{position:"absolute", top:"100%", left:8, right:8, marginTop:8, zIndex:60,
           background:C.card, border:"1px solid "+C.border, borderRadius:C.r3,
-          boxShadow:C.sh4, overflow:"hidden", textAlign:"left"}}>
+          boxShadow:C.sh4, overflowY:"auto", overflowX:"hidden", textAlign:"left",
+          maxHeight:"min(340px, 48dvh)", overscrollBehavior:"contain"}}>
           <div style={{padding:"9px 14px 7px", fontSize:10.5, fontWeight:800, color:C.textMuted,
             fontFamily:F, letterSpacing:".06em", textTransform:"uppercase",
             borderBottom:"1px solid "+C.border}}>Recent searches</div>
@@ -11200,13 +11201,18 @@ function DealFinderPage({tier, token, onAnalyzeDeal, onSaveDeal, onUpgrade, mobi
     <div style={{padding: mobile ? "16px 16px 100px" : "28px 32px 44px"}}>
       {heroMode ? (
         // -- Hero (first run): premium, centered, no city chips ---------------
-        <div style={{position:"relative", overflow:"hidden", borderRadius: mobile ? 20 : 28,
+        <div style={{position:"relative", borderRadius: mobile ? 20 : 28,
           border:"1px solid "+C.greenBorder, background:HERO_BG,
           padding: mobile ? "40px 20px 34px" : "76px 32px 64px"}}>
-          <div style={{position:"absolute", top:-150, left:"50%", transform:"translateX(-50%)",
-            width:560, height:380, borderRadius:"50%", pointerEvents:"none",
-            background:"radial-gradient(circle, rgba(232,115,28,.18), transparent 62%)"}}/>
-          <div style={{position:"relative", maxWidth:600, margin:"0 auto", textAlign:"center"}}>
+          {/* The glow clips inside its own layer so the hero itself can stay
+              unclipped and the recent searches dropdown can hang below it. */}
+          <div style={{position:"absolute", inset:0, overflow:"hidden",
+            borderRadius: mobile ? 20 : 28, pointerEvents:"none"}}>
+            <div style={{position:"absolute", top:-150, left:"50%", transform:"translateX(-50%)",
+              width:560, height:380, borderRadius:"50%",
+              background:"radial-gradient(circle, rgba(232,115,28,.18), transparent 62%)"}}/>
+          </div>
+          <div style={{position:"relative", zIndex:1, maxWidth:600, margin:"0 auto", textAlign:"center"}}>
             {meter && meter.limit != null && (
               <div style={{display:"flex", justifyContent:"center", marginBottom:20}}>
                 <SearchMeterPill meter={meter}/>
