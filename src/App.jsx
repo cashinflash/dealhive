@@ -5777,12 +5777,30 @@ function PropertyProjectsTab({p, set, mobile}) {
 }
 
 // -- Expenses tab (per property) -----------------------------------------------
+// An expense can carry an itemized breakdown ("Kitchen" holding cabinets,
+// countertops, flooring, each priced); whenever line items exist the expense
+// amount is their sum, always. The ledger reads grouped by month with
+// subtotals, and the summary splits the total by category.
 function ExpensesTab({p, set, mobile}) {
   const expenses = p.expenses || [];
-  const total = expenses.reduce((s,e)=>s+(Number(e.amount)||0), 0);
+  const itemsSum = (list) => (list || []).reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const amountOf = (e) => (Array.isArray(e.items) && e.items.length) ? itemsSum(e.items) : (Number(e.amount) || 0);
+  const total = expenses.reduce((s, e) => s + amountOf(e), 0);
+  const lineCount = expenses.reduce((s, e) => s + ((Array.isArray(e.items) && e.items.length) || 0), 0);
   const sorted = [...expenses].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const byCat = {};
+  for (const e of expenses) { const c = e.category || "other"; byCat[c] = (byCat[c] || 0) + amountOf(e); }
+  const catSplit = Object.entries(byCat).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
+  const groups = [];
+  for (const e of sorted) {
+    const ym = (e.date || "").slice(0, 7) || "undated";
+    const g = groups[groups.length - 1];
+    if (g && g.ym === ym) g.rows.push(e); else groups.push({ym, rows:[e]});
+  }
+  const monthLabel = (ym) => ym === "undated" ? "No date"
+    : new Date(ym + "-01T00:00:00").toLocaleDateString("en-US", {month:"long", year:"numeric"});
 
-  const blank = () => ({description:"", amount:"", date:todayIso(), category:"other", contractor:""});
+  const blank = () => ({description:"", amount:"", date:todayIso(), category:"other", contractor:"", items:[]});
   const [adding, setAdding] = useState(false);
   const [form, setForm]     = useState(blank);
   const [editId, setEditId] = useState(null);
@@ -5790,11 +5808,18 @@ function ExpensesTab({p, set, mobile}) {
   const uf = (f,v) => setForm(x=>({...x,[f]:v}));
   const ue = (f,v) => setEditForm(x=>({...x,[f]:v}));
 
+  const cleanItems = (list) => (list || [])
+    .map(it => ({id: it.id || "it"+Date.now()+Math.floor(Math.random()*1e4),
+      label: String(it.label || "").trim(), amount: parseFloat(it.amount) || 0}))
+    .filter(it => it.label || it.amount > 0);
+
   const commitAdd = () => {
     if (!form.description.trim()) return;
+    const items = cleanItems(form.items);
     set({...p, expenses:[...expenses, {
       id:"ex"+Date.now(), description:form.description.trim(),
-      amount:parseFloat(form.amount)||0, date:form.date||todayIso(),
+      amount: items.length ? itemsSum(items) : (parseFloat(form.amount)||0),
+      items, date:form.date||todayIso(),
       category:form.category, contractor:form.contractor.trim(),
       createdAt:new Date().toISOString(),
     }]});
@@ -5803,86 +5828,210 @@ function ExpensesTab({p, set, mobile}) {
   const startEdit = (e) => { setEditId(e.id); setEditForm({
     description:e.description||"", amount:String(e.amount||""), date:e.date||todayIso(),
     category:e.category||"other", contractor:e.contractor||"",
+    items:(e.items||[]).map(it=>({id:it.id, label:it.label||"", amount:String(it.amount ?? "")})),
   }); };
   const commitEdit = () => {
+    const items = cleanItems(editForm.items);
     set({...p, expenses:expenses.map(e=>e.id===editId?{
-      ...e, description:editForm.description.trim(), amount:parseFloat(editForm.amount)||0,
-      date:editForm.date, category:editForm.category, contractor:editForm.contractor.trim(),
+      ...e, description:editForm.description.trim(),
+      amount: items.length ? itemsSum(items) : (parseFloat(editForm.amount)||0),
+      items, date:editForm.date, category:editForm.category, contractor:editForm.contractor.trim(),
     }:e)});
     setEditId(null);
   };
   const del = (id) => { set({...p, expenses:expenses.filter(e=>e.id!==id)}); setEditId(null); };
 
   // Plain render-fn (not a component) so inputs don't remount/lose focus on keystroke.
-  const renderExpenseForm = (vals, setV, onSave, onCancel, saveLabel) => (
-    <div>
-      <InputField label="Description" type="text" val={vals.description} set={v=>setV("description",v)} mobile={mobile} />
-      <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"1fr 1fr 1fr", gap:10}}>
-        <InputField label="Amount" val={vals.amount} set={v=>setV("amount",v)} pre="$" mobile={mobile} />
-        <DateField label="Date" value={vals.date} onChange={v=>setV("date",v)} mobile={mobile} />
-        <InputField label="Contractor" type="text" val={vals.contractor} set={v=>setV("contractor",v)} mobile={mobile} />
+  const renderExpenseForm = (vals, setV, onSave, onCancel, saveLabel) => {
+    const items = vals.items || [];
+    const liveSum = items.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+    const setItem = (i,f,v) => setV("items", items.map((it,idx)=>idx===i?{...it,[f]:v}:it));
+    const addItem = () => setV("items", [...items, {id:"it"+Date.now()+items.length, label:"", amount:""}]);
+    const rmItem = (i) => setV("items", items.filter((_,idx)=>idx!==i));
+    return (
+      <div>
+        <InputField label="Description" type="text" val={vals.description} set={v=>setV("description",v)} mobile={mobile} />
+        <div style={{display:"grid", gridTemplateColumns:mobile?"1fr 1fr":"1fr 1fr 1fr", gap:10}}>
+          {items.length ? (
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Amount</label>
+              <div style={{height:42, display:"flex", alignItems:"center", padding:"0 13px",
+                background:C.bgSubtle, border:"1px solid "+C.border, borderRadius:C.r2,
+                fontSize:14.5, fontWeight:700, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                {$(liveSum)}
+              </div>
+              <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, marginTop:4}}>Adds itself up from the line items</div>
+            </div>
+          ) : (
+            <InputField label="Amount" val={vals.amount} set={v=>setV("amount",v)} pre="$" mobile={mobile} />
+          )}
+          <DateField label="Date" value={vals.date} onChange={v=>setV("date",v)} mobile={mobile} />
+          <InputField label="Contractor" type="text" val={vals.contractor} set={v=>setV("contractor",v)} mobile={mobile} />
+        </div>
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Category</label>
+          <TypePicker value={vals.category} onChange={v=>setV("category",v)} />
+        </div>
+        <div style={{marginBottom:14, background:C.bgSubtle, border:"1px solid "+C.border,
+          borderRadius:C.r3, padding:"12px 14px"}}>
+          <div style={{display:"flex", alignItems:"baseline", justifyContent:"space-between", gap:10, flexWrap:"wrap"}}>
+            <label style={{fontSize:13, color:C.text, fontWeight:600, fontFamily:F}}>Line items</label>
+            <span style={{fontSize:11.5, color:C.textMuted, fontFamily:F}}>
+              Break the work into priced pieces and the amount adds itself up.
+            </span>
+          </div>
+          {items.length > 0 && (
+            <div style={{marginTop:10, display:"flex", flexDirection:"column", gap:8}}>
+              {items.map((it, i) => (
+                <div key={it.id} style={{display:"grid", gridTemplateColumns:"1fr 118px 30px", gap:8, alignItems:"center"}}>
+                  <input value={it.label} onChange={ev=>setItem(i,"label",ev.target.value)}
+                    placeholder={i === 0 ? "Cabinets" : i === 1 ? "Countertops" : "What was the work?"}
+                    style={{...iS(mobile), height:38, marginBottom:0, background:C.card}}/>
+                  <div style={{position:"relative"}}>
+                    <span style={{position:"absolute", left:11, top:"50%", transform:"translateY(-50%)",
+                      color:C.textMuted, fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                    <input value={it.amount} onChange={ev=>setItem(i,"amount",ev.target.value)}
+                      inputMode="decimal" placeholder="0"
+                      style={{...iS(mobile), height:38, marginBottom:0, paddingLeft:24, background:C.card,
+                        fontVariantNumeric:"tabular-nums"}}/>
+                  </div>
+                  <button onClick={()=>rmItem(i)} aria-label="Remove line item"
+                    {...btnStyle("ghost","sm",{color:C.textMuted, padding:"5px 5px", justifyContent:"center"})}>
+                    <I.x size={13}/>
+                  </button>
+                </div>
+              ))}
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                borderTop:"1px dashed "+C.border, paddingTop:8, marginTop:2}}>
+                <span style={{fontSize:12, fontWeight:600, color:C.textSub, fontFamily:F}}>
+                  {items.length} line item{items.length===1?"":"s"}
+                </span>
+                <span style={{fontSize:13.5, fontWeight:800, color:C.text, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                  {$(liveSum)}
+                </span>
+              </div>
+            </div>
+          )}
+          <button onClick={addItem} {...btnStyle("secondary","sm",{marginTop:10})}>
+            <I.plus size={13}/> Add line item
+          </button>
+        </div>
+        <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+          <button onClick={onCancel} {...btnStyle("ghost","sm")}>Cancel</button>
+          <button onClick={onSave} disabled={!vals.description.trim()} {...btnStyle("primary","sm")}>{saveLabel}</button>
+        </div>
       </div>
-      <div style={{marginBottom:12}}>
-        <label style={{fontSize:13, color:C.text, fontWeight:500, display:"block", marginBottom:6, fontFamily:F}}>Category</label>
-        <TypePicker value={vals.category} onChange={v=>setV("category",v)} />
-      </div>
-      <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
-        <button onClick={onCancel} {...btnStyle("ghost","sm")}>Cancel</button>
-        <button onClick={onSave} disabled={!vals.description.trim()} {...btnStyle("primary","sm")}>{saveLabel}</button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div>
-      {/* Total */}
-      <Card style={{padding:18, marginBottom:14}}>
-        <div style={{fontSize:12, color:C.textSub, fontWeight:500, fontFamily:F}}>Total expenses</div>
-        <div style={{fontSize:28, fontWeight:700, color:C.text, fontFamily:F, letterSpacing:"-0.025em",
-          fontVariantNumeric:"tabular-nums", marginTop:4}}>{$(total)}</div>
-        <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:4}}>
-          {expenses.length} {expenses.length===1?"item":"items"} logged
+      {/* Summary: the total on the left, where the money went on the right. */}
+      <Card style={{padding:"18px 20px", marginBottom:14}}>
+        <div style={{display:"flex", gap:16, flexWrap:"wrap", alignItems:"center"}}>
+          <div style={{minWidth:150}}>
+            <div style={{fontSize:11, color:C.textSub, fontWeight:700, fontFamily:F,
+              letterSpacing:".06em", textTransform:"uppercase"}}>Total expenses</div>
+            <div style={{fontSize:30, fontWeight:800, color:C.text, fontFamily:F, letterSpacing:"-0.025em",
+              fontVariantNumeric:"tabular-nums", marginTop:4}}>{$(total)}</div>
+            <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:3}}>
+              {expenses.length} expense{expenses.length===1?"":"s"} logged{lineCount > 0 ? ` with ${lineCount} line item${lineCount===1?"":"s"}` : ""}
+            </div>
+          </div>
+          {catSplit.length > 0 && (
+            <div style={{display:"flex", gap:8, flexWrap:"wrap", flex:1,
+              justifyContent: mobile ? "flex-start" : "flex-end"}}>
+              {catSplit.map(([c, v]) => {
+                const t = TYPE_PALETTE[c] || TYPE_PALETTE.other;
+                return (
+                  <span key={c} style={{display:"inline-flex", alignItems:"center", gap:7,
+                    background:t.bg, border:"1px solid "+t.border, borderRadius:9999,
+                    padding:"5px 12px", fontFamily:F}}>
+                    <span style={{width:7, height:7, borderRadius:"50%", background:t.color}}/>
+                    <span style={{fontSize:12, fontWeight:700, color:t.color}}>{t.label}</span>
+                    <span style={{fontSize:12, fontWeight:800, color:C.text, fontVariantNumeric:"tabular-nums"}}>{$(v)}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       </Card>
 
-      {/* List */}
+      {/* Ledger, grouped by month with subtotals. */}
       {sorted.length === 0 ? (
         <EmptyState icon={<I.chart size={20}/>} title="No expenses yet"
           body="Log expenses here, or hit “Add as expense” on any follow-up in the Projects tab." />
       ) : (
-        <Card padding={0} style={{marginBottom:14}}>
-          {sorted.map((e,i) => {
-            const t = TYPE_PALETTE[e.category] || TYPE_PALETTE.other;
-            const editing = editId === e.id;
-            return (
-              <div key={e.id} style={{borderTop: i? "1px solid "+C.bgSubtle : "none", padding:editing?"14px 16px":"0"}}>
-                {editing ? (
-                  renderExpenseForm(editForm, ue, commitEdit, ()=>setEditId(null), "Save")
-                ) : (
-                  <div onClick={()=>startEdit(e)}
-                    style={{display:"flex", alignItems:"center", gap:12, padding:"12px 16px", cursor:"pointer"}}>
-                    <div style={{minWidth:0, flex:1}}>
-                      <div style={{fontSize:14, fontWeight:500, color:C.text, fontFamily:F, letterSpacing:"-0.005em",
-                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{e.description}</div>
-                      <div style={{display:"flex", gap:8, alignItems:"center", marginTop:5, flexWrap:"wrap"}}>
-                        <TypePill type={e.category||"other"} />
-                        <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
-                          {e.date ? new Date(e.date+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}
-                        </span>
-                        {e.contractor && <span style={{fontSize:12, color:C.textMuted, fontFamily:F}}>· {e.contractor}</span>}
-                        {e.fromFollowup && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>· from follow-up</span>}
-                      </div>
-                    </div>
-                    <div style={{fontSize:15, fontWeight:600, color:"#3f3f46", fontFamily:F, fontVariantNumeric:"tabular-nums", flexShrink:0}}>
-                      {$(e.amount)}
-                    </div>
-                    <button onClick={ev=>{ev.stopPropagation(); del(e.id);}} aria-label="Delete expense"
-                      {...btnStyle("ghost","sm", {color:C.textMuted, padding:"5px 6px"})}><I.trash size={14}/></button>
-                  </div>
-                )}
+        <Card padding={0} style={{marginBottom:14, overflow:"hidden"}}>
+          {groups.map((g) => (
+            <div key={g.ym}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+                padding:"8px 16px", background:C.bgSubtle, borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:11, fontWeight:800, letterSpacing:".06em", textTransform:"uppercase",
+                  color:C.textSub, fontFamily:F}}>{monthLabel(g.ym)}</span>
+                <span style={{fontSize:12, fontWeight:700, color:C.textSub, fontFamily:F,
+                  fontVariantNumeric:"tabular-nums"}}>{$(g.rows.reduce((s,e)=>s+amountOf(e),0))}</span>
               </div>
-            );
-          })}
+              {g.rows.map((e) => {
+                const t = TYPE_PALETTE[e.category] || TYPE_PALETTE.other;
+                const editing = editId === e.id;
+                return (
+                  <div key={e.id} style={{borderBottom:"1px solid "+C.bgSubtle}}>
+                    {editing ? (
+                      <div style={{padding:"14px 16px"}}>
+                        {renderExpenseForm(editForm, ue, commitEdit, ()=>setEditId(null), "Save")}
+                      </div>
+                    ) : (
+                      <div onClick={()=>startEdit(e)}
+                        style={{display:"flex", alignItems:"flex-start", gap:12,
+                          padding:"13px 16px 13px 13px", cursor:"pointer",
+                          borderLeft:"3px solid "+t.color}}>
+                        <div style={{minWidth:0, flex:1}}>
+                          <div style={{fontSize:14.5, fontWeight:600, color:C.text, fontFamily:F,
+                            letterSpacing:"-0.005em", overflow:"hidden", textOverflow:"ellipsis",
+                            whiteSpace:"nowrap"}}>{e.description}</div>
+                          <div style={{display:"flex", gap:8, alignItems:"center", marginTop:5, flexWrap:"wrap"}}>
+                            <TypePill type={e.category||"other"} />
+                            <span style={{fontSize:12, color:C.textMuted, fontFamily:F, fontVariantNumeric:"tabular-nums"}}>
+                              {e.date ? new Date(e.date+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}
+                            </span>
+                            {e.contractor && <span style={{fontSize:12, color:C.textMuted, fontFamily:F}}>· {e.contractor}</span>}
+                            {e.fromFollowup && <span style={{fontSize:11, color:C.textMuted, fontFamily:F}}>· from follow-up</span>}
+                          </div>
+                          {Array.isArray(e.items) && e.items.length > 0 && (
+                            <div style={{marginTop:9, background:C.bgSubtle, border:"1px solid "+C.border,
+                              borderRadius:C.r2, padding:"7px 12px", maxWidth:430}}>
+                              {e.items.map((it) => (
+                                <div key={it.id} style={{display:"flex", justifyContent:"space-between", gap:12,
+                                  padding:"3px 0", fontSize:12.5, fontFamily:F}}>
+                                  <span style={{color:C.textSub, minWidth:0, overflow:"hidden",
+                                    textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{it.label}</span>
+                                  <span style={{color:C.text, fontWeight:600, flexShrink:0,
+                                    fontVariantNumeric:"tabular-nums"}}>{$(Number(it.amount)||0)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{textAlign:"right", flexShrink:0}}>
+                          <div style={{fontSize:15.5, fontWeight:700, color:C.text, fontFamily:F,
+                            fontVariantNumeric:"tabular-nums"}}>{$(amountOf(e))}</div>
+                          {Array.isArray(e.items) && e.items.length > 0 && (
+                            <div style={{fontSize:10.5, color:C.textMuted, fontFamily:F, marginTop:2}}>
+                              {e.items.length} line item{e.items.length===1?"":"s"}
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={ev=>{ev.stopPropagation(); del(e.id);}} aria-label="Delete expense"
+                          {...btnStyle("ghost","sm", {color:C.textMuted, padding:"5px 6px"})}><I.trash size={14}/></button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </Card>
       )}
 
