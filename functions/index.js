@@ -16,6 +16,7 @@
 //   firebase functions:secrets:set MANUAL_TRIGGER_SECRET   (for /pullDealsNow)
 //   firebase functions:secrets:set ENDATO_AP_NAME          (skip trace, optional)
 //   firebase functions:secrets:set ENDATO_AP_PASSWORD      (skip trace, optional)
+//   firebase functions:secrets:set ANTHROPIC_API_KEY       (invoice reading, optional)
 //
 // Manual trigger for testing the pipeline without waiting for the cron:
 //   curl "https://<region>-darallc.cloudfunctions.net/pullDealsNow?secret=XXXX"
@@ -26,6 +27,7 @@ const {defineSecret} = require("firebase-functions/params");
 const {logger}       = require("firebase-functions/v2");
 const functionsV1    = require("firebase-functions/v1"); // auth onCreate trigger (welcome email)
 const admin          = require("firebase-admin");
+const {Anthropic}    = require("@anthropic-ai/sdk"); // invoice reading
 
 admin.initializeApp();
 
@@ -3320,3 +3322,183 @@ exports.stripeWebhook = onRequest(
       res.status(500).send("error"); // non-2xx => Stripe retries, which is what we want
     }
   });
+
+// -- Invoice reading (Expenses tab) ---------------------------------------------
+// Reads a contractor's invoice, photo or PDF, with Claude and returns its line
+// items exactly as printed. The app never saves what comes back on its own: it
+// lays every line beside the invoice for the user to confirm. This side keeps
+// that review short and the numbers honest: structured output gives every field
+// its own slot, the lines are checked against the invoice's own printed total,
+// and when they disagree the invoice is read once more, from scratch, with the
+// difference spelled out. Admin-only (it's paid per call) and capped per day.
+//   firebase functions:secrets:set ANTHROPIC_API_KEY
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const INVOICE_MODEL     = "claude-opus-5-5";
+const INVOICE_DAILY_CAP = 60;
+const INVOICE_MAX_B64   = 12 * 1024 * 1024; // base64 chars, ~9 MB of file
+const INVOICE_TYPES     = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
+
+const orNull = (schema) => ({anyOf: [schema, {type: "null"}]});
+const INVOICE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["is_invoice", "vendor", "invoice_number", "invoice_date", "lines", "subtotal", "tax",
+    "discount", "total", "amount_already_paid", "balance_due", "notes"],
+  properties: {
+    is_invoice: {type: "boolean"},
+    vendor: orNull({type: "string"}),
+    invoice_number: orNull({type: "string"}),
+    invoice_date: orNull({type: "string", format: "date"}),
+    lines: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["description", "quantity", "unit_price", "amount", "kind", "unsure", "unsure_reason"],
+        properties: {
+          description: {type: "string"},
+          quantity: orNull({type: "number"}),
+          unit_price: orNull({type: "number"}),
+          amount: {type: "number"},
+          kind: {type: "string", enum: ["work", "material", "fee", "discount"]},
+          unsure: {type: "boolean"},
+          unsure_reason: orNull({type: "string"}),
+        },
+      },
+    },
+    subtotal: orNull({type: "number"}),
+    tax: orNull({type: "number"}),
+    discount: orNull({type: "number"}),
+    total: orNull({type: "number"}),
+    amount_already_paid: orNull({type: "number"}),
+    balance_due: orNull({type: "number"}),
+    notes: orNull({type: "string"}),
+  },
+};
+
+const INVOICE_SYSTEM = "You transcribe contractors' invoices for a landlord's bookkeeping. Accuracy matters "
+  + "more than anything else: a person checks every line you return against the invoice, and a misread digit "
+  + "means paying the wrong amount.";
+
+const INVOICE_RULES = `Read this invoice and return its itemized charges exactly as printed.
+
+- One entry in "lines" per priced row of the itemized list, in the order printed. Don't merge rows, split rows or add rows. A row with no price of its own (a heading, a note) is left out.
+- "description": the row's text as written, abbreviations kept, nothing corrected. Join a description that wraps onto a second line with a space.
+- "amount": the row's line total as printed. If only quantity and unit price are printed, multiply them. Discounts and credits are negative.
+- "quantity" and "unit_price": as printed, or null when the row doesn't show them.
+- Copy digits exactly. Watch for 1 vs 7, 3 vs 8, 5 vs 6, 0 vs 8, dropped or misplaced decimal points, and thousands separators.
+- "kind": work (labor or a job), material, fee (trip charge, permit, disposal, delivery) or discount.
+- Charges printed in the totals area other than tax and a discount (delivery, trip charge, card fee) also go in "lines", as kind fee, after the itemized rows.
+- "unsure": true when any part of the row is hard to read (handwriting, blur, glare, cut off, crossed out or written over), with what is unclear in "unsure_reason". Otherwise false and null.
+- Totals area: "subtotal", "tax", "discount" (only a discount printed in the totals area, as a positive number), "total", "amount_already_paid" (deposits or payments the invoice shows as received) and "balance_due". Null for anything not printed; never compute a total that isn't printed.
+- "invoice_date" as YYYY-MM-DD when printed, else null. "vendor": the contractor or company that issued the invoice.
+- If this isn't an invoice, estimate, receipt or bill with priced items, set "is_invoice" to false and return no lines.
+- "notes": a sentence or two about anything the person checking should look at (the invoice's own math doesn't add up, a page is cut off, an amount is ambiguous), or null.`;
+
+const cents = (n) => Math.round((Number(n) || 0) * 100);
+
+// Do the lines add up to what the invoice says? Against the printed total
+// (lines + tax - discount) when there is one, else against the subtotal.
+function invoiceCheck(r) {
+  const lines = (r.lines || []).reduce((s, l) => s + cents(l.amount), 0);
+  let got, expected, against;
+  if (r.total != null) {
+    against = "total"; expected = cents(r.total); got = lines + cents(r.tax) - cents(r.discount);
+  } else if (r.subtotal != null) {
+    against = "subtotal"; expected = cents(r.subtotal); got = lines;
+  } else {
+    return {ok: null, against: null, linesSum: lines / 100, expected: null, diff: 0};
+  }
+  return {ok: got === expected, against, linesSum: lines / 100, expected: expected / 100, diff: (got - expected) / 100};
+}
+
+function invoiceRetryNote(first, check) {
+  const extras = [cents(first.tax) && `plus tax $${(cents(first.tax) / 100).toFixed(2)}`,
+    cents(first.discount) && `minus a discount of $${(cents(first.discount) / 100).toFixed(2)}`].filter(Boolean);
+  return `A first reading of this invoice gave the result below. Its line amounts add up to $${check.linesSum.toFixed(2)}`
+    + (check.against === "total" && extras.length ? ` (${extras.join(", ")})` : "")
+    + `, but the invoice's printed ${check.against} is $${check.expected.toFixed(2)}, a difference of $${Math.abs(check.diff).toFixed(2)}.`
+    + " Read the invoice again from the start, row by row and digit by digit, and return the corrected reading."
+    + " Look especially for a misread digit or decimal point, a missed or duplicated row, a credit, or a charge printed"
+    + " below the subtotal. If the invoice's own printed numbers really don't add up, keep them exactly as printed and"
+    + ` say so in "notes".\n\nFirst reading:\n${JSON.stringify(first)}`;
+}
+
+async function readInvoiceOnce(client, file, retry) {
+  const resp = await client.beta.messages.create({
+    model: INVOICE_MODEL,
+    max_tokens: 16000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    system: INVOICE_SYSTEM,
+    output_config: {effort: "high", format: {type: "json_schema", schema: INVOICE_SCHEMA}},
+    messages: [{role: "user", content: [file, {type: "text",
+      text: retry ? `${INVOICE_RULES}\n\n${invoiceRetryNote(retry.reading, retry.check)}` : INVOICE_RULES}]}],
+  });
+  const text = resp.stop_reason === "end_turn" ? resp.content.find(b => b.type === "text") : null;
+  if (!text) throw Object.assign(new Error(`stopped: ${resp.stop_reason}`), {code: "unreadable"});
+  try { return JSON.parse(text.text); } catch { throw Object.assign(new Error("bad json"), {code: "unreadable"}); }
+}
+
+async function isPortfolioAdmin(user) {
+  if (user.email === "harut@ymail.com") return true;
+  return (await admin.database().ref(`users/${user.uid}/data/role`).get()).val() === "admin";
+}
+
+exports.readInvoice = onRequest({
+  secrets: [ANTHROPIC_API_KEY], cors: true, region: "us-central1", timeoutSeconds: 300, memory: "512MiB",
+}, async (req, res) => {
+  try {
+    if (req.method !== "POST") { res.status(405).json({error: "POST only"}); return; }
+    const user = await verifyUser(req);
+    if (!user) { res.status(401).json({error: "auth"}); return; }
+    if (!(await isPortfolioAdmin(user))) { res.status(403).json({error: "admin"}); return; }
+    const key = ANTHROPIC_API_KEY.value();
+    if (!key || key === "unset") { res.status(503).json({error: "setup"}); return; }
+
+    const {data, mediaType} = req.body || {};
+    if (typeof data !== "string" || !data || !INVOICE_TYPES.includes(mediaType)) { res.status(400).json({error: "file"}); return; }
+    if (data.length > INVOICE_MAX_B64) { res.status(413).json({error: "size"}); return; }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const tx = await admin.database().ref(`invoiceUsage/${user.uid}/${day}`).transaction(v => (v || 0) + 1);
+    if ((tx.snapshot.val() || 0) > INVOICE_DAILY_CAP) { res.status(429).json({error: "cap"}); return; }
+
+    const client = new Anthropic({apiKey: key});
+    const file = mediaType === "application/pdf"
+      ? {type: "document", source: {type: "base64", media_type: mediaType, data}}
+      : {type: "image", source: {type: "base64", media_type: mediaType, data}};
+
+    let reading = await readInvoiceOnce(client, file, null);
+    if (!reading.is_invoice) { res.status(422).json({error: "not_invoice", notes: reading.notes || null}); return; }
+    let check = invoiceCheck(reading), passes = 1;
+    if (check.ok === false) {
+      const second = await readInvoiceOnce(client, file, {reading, check});
+      const check2 = invoiceCheck(second);
+      passes = 2;
+      if (second.is_invoice && (check2.ok || Math.abs(check2.diff) <= Math.abs(check.diff))) { reading = second; check = check2; }
+    }
+
+    res.json({
+      vendor: reading.vendor, invoiceNumber: reading.invoice_number, invoiceDate: reading.invoice_date,
+      lines: (reading.lines || []).map(l => ({
+        description: l.description, quantity: l.quantity, unitPrice: l.unit_price, amount: l.amount, kind: l.kind,
+        unsure: !!l.unsure, unsureReason: l.unsure_reason || null,
+        // Quantity × unit price that doesn't make the printed line total.
+        mathOff: l.quantity != null && l.unit_price != null && Math.abs(cents(l.quantity * l.unit_price) - cents(l.amount)) > 1,
+      })),
+      subtotal: reading.subtotal, tax: reading.tax, discount: reading.discount, total: reading.total,
+      alreadyPaid: reading.amount_already_paid, balanceDue: reading.balance_due, notes: reading.notes || null,
+      check, passes,
+    });
+  } catch (e) {
+    if (e && e.code === "unreadable") { res.status(422).json({error: "unreadable"}); return; }
+    if (e instanceof Anthropic.RateLimitError) { res.status(429).json({error: "busy"}); return; }
+    if (e instanceof Anthropic.APIError) {
+      logger.error("readInvoice: API error", {status: e.status, message: e.message});
+      res.status(502).json({error: "api"}); return;
+    }
+    logger.error("readInvoice", {error: e && e.message});
+    res.status(500).json({error: "server"});
+  }
+});

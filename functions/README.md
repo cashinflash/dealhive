@@ -109,6 +109,24 @@ developer API of Enformion). To plug in your account:
    Each attempted lookup can consume one search from the Endato plan, and `n`
    is capped at 25 per run.
 
+## Invoice reading (Claude) — one-time key setup
+
+"Scan an invoice" on a property's Expenses tab sends the photo or PDF to the
+`readInvoice` function, which reads it with Claude (`claude-opus-5-5`). Until a
+key is set, the app shows "Invoice reading isn't switched on yet".
+
+1. Sign in at https://console.anthropic.com → **API Keys** → **Create Key**,
+   and copy it. Add a payment method under **Billing** if the account has none.
+2. → https://github.com/cashinflash/dealhive/settings/secrets/actions
+   → **New repository secret**: name `ANTHROPIC_API_KEY`, value the key.
+3. Re-run the deploy workflow (step 5 above) so the key reaches Secret Manager.
+
+Each invoice costs roughly 5 to 20 cents (a second, closer read happens only
+when the lines don't add up to the invoice total). Reading is admin-only and
+capped at 60 invoices per account per day; the cap is `INVOICE_DAILY_CAP` in
+`index.js`. Saved invoice files live in the Realtime DB under
+`invoiceFiles/{uid}`, readable only by that account.
+
 ## Tuning daily pull volume
 
 Defaults are tuned for "Conservative ~200 deals/day":
