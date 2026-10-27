@@ -1219,6 +1219,7 @@ const I = {
   messageSquare:p => <IconSvg {...p} d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>,
   download:    p => <IconSvg {...p} d={<g><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></g>}/>,
   undo:        p => <IconSvg {...p} d={<g><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></g>}/>,
+  paperclip:   p => <IconSvg {...p} d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>,
   dots:        p => <IconSvg {...p} d={<g><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></g>}/>,
 };
 
@@ -3769,7 +3770,7 @@ function MyProperties({properties, onSelect, onAdd, onDelete, mobile}) {
 }
 
 // -- Property Detail -----------------------------------------------------------
-function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile, apiLookup, rentcastKey, rcAuth}) {
+function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobile, apiLookup, rentcastKey, rcAuth, getSession}) {
   const [tab, setTab] = useState("overview");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState("");
@@ -3910,7 +3911,7 @@ function PropertyDetail({prop, onBack, onChange, onDelete, llcs, renoRates, mobi
         {tab==="calculator" && <Calculator p={prop} set={onChange} renoRates={renoRates} mobile={mobile} apiLookup={apiLookup} rentcastKey={rentcastKey} rcAuth={rcAuth} stickyTop="calc(env(safe-area-inset-top, 0px) + 166px)" />}
         {tab==="tenant"     && <TenantSection p={prop} set={onChange} mobile={mobile} />}
         {tab==="projects"   && <PropertyProjectsTab p={prop} set={onChange} mobile={mobile} />}
-        {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} />}
+        {tab==="expenses"   && <ExpensesTab p={prop} set={onChange} mobile={mobile} getSession={getSession} />}
         {tab==="notes"      && (
           <SectionBlock title="Notes" color={C.sidebar} icon={I.edit}>
             <textarea value={prop.notes||""} onChange={e=>u("notes",e.target.value)}
@@ -5818,8 +5819,12 @@ const EX_CSS = `
 .dh-ex-lift{transition:border-color .15s,box-shadow .15s,transform .15s}
 .dh-ex-lift:hover{border-color:${C.borderHover};box-shadow:${C.sh3};transform:translateY(-1px)}
 @keyframes dhExIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes dhExFade{from{opacity:0}to{opacity:1}}
+@keyframes dhExPop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.dh-ex-fade{animation:dhExFade .16s ease-out}
+.dh-ex-pop{animation:dhExPop .2s cubic-bezier(.21,1.02,.73,1)}
 .dh-ex-in{animation:dhExIn .18s ease-out}
-@media (prefers-reduced-motion: reduce){.dh-ex-in{animation:none}}
+@media (prefers-reduced-motion: reduce){.dh-ex-in,.dh-ex-fade,.dh-ex-pop{animation:none}}
 @media (max-width:767px){input.dh-ex-amt{font-size:24px!important}}
 `;
 
@@ -5983,50 +5988,60 @@ function ExMeter({label, value, pct, color}) {
 }
 
 // A "⋯" (or labeled) button whose menu floats above everything in fixed
-// position, so the card it sits in never clips it.
+// position, so the card it sits in never clips it. The menu stays pinned to its
+// button while the page scrolls (a tap mid-scroll must not close it the moment
+// it opens) and opens upward when the button sits low on the screen.
+const exMenuPlace = (el) => {
+  const r = el.getBoundingClientRect();
+  const right = Math.max(8, window.innerWidth - r.right);
+  return r.bottom + 280 > window.innerHeight && r.top > 280
+    ? {bottom: window.innerHeight - r.top + 6, right} : {top: r.bottom + 6, right};
+};
 function ExMenu({items, label, mobile}) {
+  const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btn = useRef(null);
   useEffect(() => {
-    if (!pos) return;
-    const close = () => setPos(null);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
-  }, [pos]);
+    if (!open) return;
+    const place = () => { if (btn.current) setPos(exMenuPlace(btn.current)); };
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => { window.removeEventListener("scroll", place, true); window.removeEventListener("resize", place); };
+  }, [open]);
+  const close = () => setOpen(false);
   const toggle = (ev) => {
     ev.stopPropagation();
-    if (pos) { setPos(null); return; }
-    const r = btn.current.getBoundingClientRect();
-    setPos({top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right)});
+    if (open) { close(); return; }
+    setPos(exMenuPlace(btn.current));
+    setOpen(true);
   };
   return (
     <>
       {label ? (
-        <button ref={btn} onClick={toggle} aria-haspopup="menu" aria-expanded={!!pos} aria-label={label}
+        <button ref={btn} onClick={toggle} aria-haspopup="menu" aria-expanded={open} aria-label={label}
           {...btnStyle("primary", "sm", {height:32, padding: mobile ? "0 10px" : "0 13px", flexShrink:0,
             boxShadow:"0 4px 12px -4px rgba(232,115,28,.55)"})}>
           <I.plus size={14} stroke={2.4}/>{mobile ? null : label}
         </button>
       ) : (
-        <button ref={btn} onClick={toggle} aria-haspopup="menu" aria-expanded={!!pos} aria-label="More actions"
+        <button ref={btn} onClick={toggle} aria-haspopup="menu" aria-expanded={open} aria-label="More actions"
           className="dh-ex-icon-btn"
           style={{width:32, height:32, borderRadius:9, flexShrink:0, cursor:"pointer", color:C.textSub,
-            border:"1px solid " + (pos ? C.borderHover : "transparent"), background: pos ? C.card : "transparent",
+            border:"1px solid " + (open ? C.borderHover : "transparent"), background: open ? C.card : "transparent",
             display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
           <I.dots size={17}/>
         </button>
       )}
-      {pos && (
+      {open && pos && (
         <>
-          <div onClick={ev => { ev.stopPropagation(); setPos(null); }} style={{position:"fixed", inset:0, zIndex:940}}/>
+          <div onClick={ev => { ev.stopPropagation(); close(); }} style={{position:"fixed", inset:0, zIndex:940}}/>
           <div role="menu" className="dh-ex-in" onClick={ev => ev.stopPropagation()}
-            style={{position:"fixed", top:pos.top, right:pos.right, zIndex:941, minWidth:220, padding:5,
+            style={{position:"fixed", ...pos, zIndex:941, minWidth:220, padding:5,
               background:C.card, border:"1px solid " + C.border, borderRadius:12,
               boxShadow:"0 18px 40px -12px rgba(15,23,42,.28), 0 4px 10px -4px rgba(15,23,42,.08)"}}>
             {items.filter(Boolean).map(it => (
               <button key={it.label} role="menuitem" className="dh-ex-menu-item"
-                onClick={() => { setPos(null); it.onClick(); }}
+                onClick={() => { close(); it.onClick(); }}
                 style={{display:"flex", alignItems:"center", gap:11, width:"100%", padding:"9px 11px", border:"none",
                   background:"transparent", borderRadius:8, cursor:"pointer", fontFamily:F, textAlign:"left",
                   color: it.danger ? C.redDark : C.text}}>
@@ -6626,7 +6641,9 @@ function ExFormCard({title, sub, icon, children, mobile}) {
 // A contractor job: the invoice, line by line. The header says what's left
 // and how far along the work and the payments are; Pay puts any amount toward
 // the whole job. Jobs that are done and paid up start folded.
-function ExJobCard({job, lines, mobile, showAdd, autoFocusAdd, onPatchJob, onPatchLine, onPayLines, onDeleteJob}) {
+function ExJobCard({job, lines, mobile, showAdd, autoFocusAdd, onPatchJob, onPatchLine, onPayLines, onDeleteJob,
+  onScan, onOpenInvoice}) {
+  const invoices = exArr(job.invoices);
   const items = exItems(job);
   const total  = exTotal(job);
   const paid   = exRound(items.reduce((s, it) => s + exPaid(it), 0));
@@ -6717,6 +6734,7 @@ function ExJobCard({job, lines, mobile, showAdd, autoFocusAdd, onPatchJob, onPat
             {!mobile && payBtn}
             <ExMenu items={[
               left > 0 && {label:"Pay toward this job", hint:"Any amount, split across tasks", icon:I.dollar, onClick:startPay},
+              {label:"Add lines from an invoice", hint:"Scan a photo or PDF", icon:I.camera, onClick:onScan},
               {label:"Edit job details", icon:I.edit, onClick:() => { setEditing(true); setPaying(false); setOpen(true); }},
               {label: open ? "Fold up" : "Unfold", icon:I.chevronDown, onClick:() => setOpen(o => !o)},
               {label:"Delete job", hint:"You can undo right after", icon:I.trash, danger:true, onClick:onDeleteJob},
@@ -6742,6 +6760,21 @@ function ExJobCard({job, lines, mobile, showAdd, autoFocusAdd, onPatchJob, onPat
               padding:"3px 10px", fontFamily:F}}>
               <span style={{width:6, height:6, borderRadius:"50%", background:C.amber}}/>
               {exMoney(dueNow)} due now for finished work
+            </div>
+          )}
+          {invoices.length > 0 && (
+            <div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:12}}>
+              {invoices.map(inv => (
+                <button key={inv.id} onClick={ev => { ev.stopPropagation(); onOpenInvoice(inv); }} className="dh-ex-chip"
+                  title="Open the invoice"
+                  style={{display:"inline-flex", alignItems:"center", gap:6, height:28, padding:"0 11px", borderRadius:9999,
+                    border:"1px solid " + C.border, background:C.card, color:C.textSub, cursor:"pointer", fontFamily:F,
+                    fontSize:12, fontWeight:650, boxShadow:C.sh1}}>
+                  <I.paperclip size={12} stroke={2.2}/>
+                  {inv.number ? `Invoice #${inv.number}` : "Invoice"}
+                  {inv.date && <span style={{color:C.textMuted, fontWeight:500}}>· {exShortDate(inv.date)}</span>}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -6777,10 +6810,11 @@ function ExJobCard({job, lines, mobile, showAdd, autoFocusAdd, onPatchJob, onPat
               fontFamily:F, borderTop: paying ? "none" : undefined}}>
               <span style={{width:34, height:34, borderRadius:10, background:C.bgSubtle, color:C.textMuted, flexShrink:0,
                 display:"inline-flex", alignItems:"center", justifyContent:"center"}}><I.receipt size={16}/></span>
-              <span style={{fontSize:13, color:C.textSub, lineHeight:1.5}}>
-                Write the invoice line by line below. Each task gets its own price, and you can pay any amount
-                toward it, a deposit now and the rest when it's done.
+              <span style={{flex:1, fontSize:13, color:C.textSub, lineHeight:1.5}}>
+                Write the invoice line by line below, or scan it and the lines fill in. Each task gets its own price,
+                and you can pay any amount toward it.
               </span>
+              <button onClick={onScan} {...btnStyle("secondary", "sm", {flexShrink:0})}><I.camera size={13}/> Scan invoice</button>
             </div>
           )}
           {showAdd && <ExAddTask onAdd={addItem} mobile={mobile} autoFocus={autoFocusAdd}/>}
@@ -7059,7 +7093,558 @@ function ExPaymentLog({entries, mobile}) {
   );
 }
 
-function ExStart({mobile, onJob, onBill}) {
+// -- Invoice scanning ------------------------------------------------------------
+// A contractor's invoice, photo or PDF, is read on the server (readInvoice) and
+// comes back as lines with prices plus the invoice's own totals. Nothing is
+// saved until the user has compared the lines with the invoice and confirmed.
+// The file itself is kept per account at invoiceFiles/{uid}/{id}, outside the
+// main data blob so it isn't re-sent on every save; jobs keep a small summary
+// of each invoice (number, date, total) that opens it again.
+const READ_INVOICE_URL = FN_BASE + "/readInvoice";
+const EX_INVOICE_MAX_PDF = 6 * 1024 * 1024;
+const exDataUrl = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.onerror = () => reject(new Error("Couldn't read that file."));
+  r.readAsDataURL(blob);
+});
+// Photos are re-encoded as JPEG at the reader's full resolution (2576px on the
+// long edge); PDFs go as they are.
+const exPrepInvoice = async (f) => {
+  if (f.type === "application/pdf" || /\.pdf$/i.test(f.name || "")) {
+    if (f.size > EX_INVOICE_MAX_PDF) throw new Error("That PDF is over 6 MB. Try a smaller scan, or a photo of each page.");
+    const dataUrl = await exDataUrl(f);
+    return {name: f.name || "invoice.pdf", type: "application/pdf", size: f.size, dataUrl,
+      data: dataUrl.split(",")[1], url: URL.createObjectURL(f)};
+  }
+  if (f.type && !f.type.startsWith("image/")) throw new Error("Pick a photo or a PDF of the invoice.");
+  let blob;
+  try { blob = await compressImage(f, 2576, 0.9); }
+  catch { throw new Error("Couldn't open that photo. If it's an iPhone HEIC photo, try a screenshot of it or a PDF."); }
+  const dataUrl = await exDataUrl(blob);
+  return {name: (f.name || "invoice").replace(/\.[^.]+$/, "") + ".jpg", type: "image/jpeg", size: blob.size, dataUrl,
+    data: dataUrl.split(",")[1], url: dataUrl};
+};
+const exReadInvoice = async (getSession, file) => {
+  const u = getSession ? await getSession() : null;
+  if (!u || !u.idToken) throw Object.assign(new Error("auth"), {code: "auth"});
+  let r;
+  try {
+    r = await fetch(READ_INVOICE_URL, {method: "POST",
+      headers: {"Content-Type": "application/json", Authorization: "Bearer " + u.idToken},
+      body: JSON.stringify({data: file.data, mediaType: file.type})});
+  } catch { throw Object.assign(new Error("network"), {code: "network"}); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(d.error || "server"), {code: d.error || (r.status === 404 ? "network" : "server"), notes: d.notes});
+  return d;
+};
+const exScanError = (e) => ({
+  setup:       ["Invoice reading isn't switched on yet", "It needs a Claude API key added to the app's server settings. Once that's in, scanning works right away.", false],
+  admin:       ["Invoice reading is for admin accounts", "Sign in with your admin account to scan invoices.", false],
+  auth:        ["Please sign in again", "Your session expired. Sign out and back in, then scan again.", false],
+  cap:         ["That's today's limit", "You can scan up to 60 invoices a day. It resets tomorrow.", false],
+  busy:        ["The reader is busy", "Too many requests right now. Give it a minute and try again.", true],
+  size:        ["That file is too large", "Try a smaller PDF, or a photo of the invoice.", false],
+  not_invoice: ["That doesn't look like an invoice", e.notes || "Pick a photo or PDF of the contractor's invoice.", false],
+  unreadable:  ["Couldn't read this one clearly", "Try a sharper photo: lay the invoice flat, use good light, and keep the whole page in the frame. A PDF from the contractor works best.", true],
+  network:     ["Couldn't reach the invoice reader", "Check your connection. If the feature was just set up, it may still be deploying.", true],
+}[e.code] || ["Something went wrong reading the invoice", "Try again in a moment.", true]);
+const exStoreInvoice = async (getSession, id, file, meta) => {
+  const u = getSession ? await getSession() : null;
+  if (!u || !u.localId) throw new Error("auth");
+  const r = await fetch(`${FB_DB_URL}/invoiceFiles/${u.localId}/${id}.json?auth=${u.idToken}`, {method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name: file.name, type: file.type, size: file.size, dataUrl: file.dataUrl, uploadedAt: exNowIso(), ...meta})});
+  if (!r.ok) throw new Error("store");
+};
+const exLoadInvoice = async (getSession, id) => {
+  const u = getSession ? await getSession() : null;
+  if (!u || !u.localId) throw new Error("auth");
+  const r = await fetch(`${FB_DB_URL}/invoiceFiles/${u.localId}/${id}.json?auth=${u.idToken}`);
+  const d = r.ok ? await r.json() : null;
+  if (!d || !d.dataUrl) throw new Error("missing");
+  return d;
+};
+
+// Full-screen on a phone, a large centered panel on a computer. Escape closes.
+function ExModal({onClose, mobile, label, children}) {
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
+  useEffect(() => {
+    lockBodyScroll();
+    const onKey = (e) => { if (e.key === "Escape") closeRef.current(); };
+    window.addEventListener("keydown", onKey);
+    return () => { unlockBodyScroll(); window.removeEventListener("keydown", onKey); };
+  }, []);
+  return (
+    <div role="dialog" aria-modal="true" aria-label={label} className="dh-ex-fade"
+      onClick={() => closeRef.current()}
+      style={{position:"fixed", inset:0, zIndex:960, background:"rgba(15,23,42,.55)",
+        backdropFilter:"blur(3px)", WebkitBackdropFilter:"blur(3px)", display:"flex",
+        alignItems: mobile ? "stretch" : "center", justifyContent:"center", padding: mobile ? 0 : 24}}>
+      <div onClick={e => e.stopPropagation()} className="dh-ex-pop"
+        style={{background:C.card, width:"100%", maxWidth: mobile ? "none" : 1180,
+          height: mobile ? "100%" : "min(880px, calc(100vh - 48px))", borderRadius: mobile ? 0 : 18,
+          boxShadow:"0 40px 80px -24px rgba(15,23,42,.5)", display:"flex", flexDirection:"column", overflow:"hidden",
+          paddingTop: mobile ? "env(safe-area-inset-top, 0px)" : 0}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ExModalHead({title, sub, onClose, mobile}) {
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:12, padding: mobile ? "12px 14px" : "16px 22px",
+      borderBottom:"1px solid " + C.border, flexShrink:0}}>
+      <span style={{width:36, height:36, borderRadius:10, flexShrink:0, display:"inline-flex", alignItems:"center",
+        justifyContent:"center", color:"#fff", background:`linear-gradient(150deg, ${C.green}, ${C.greenDark})`,
+        boxShadow:"0 6px 14px -6px rgba(232,115,28,.7)"}}><I.camera size={17} stroke={2.1}/></span>
+      <div style={{flex:1, minWidth:0, fontFamily:F}}>
+        <div style={{fontSize: mobile ? 15.5 : 17, fontWeight:750, color:C.text, letterSpacing:"-0.015em"}}>{title}</div>
+        {sub && <div style={{fontSize:12.5, color:C.textSub, marginTop:1, overflow:"hidden", textOverflow:"ellipsis",
+          whiteSpace:"nowrap"}}>{sub}</div>}
+      </div>
+      <button onClick={onClose} aria-label="Close" className="dh-ex-icon-btn"
+        style={{width:36, height:36, borderRadius:10, border:"1px solid " + C.border, background:C.card, cursor:"pointer",
+          color:C.textSub, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0}}>
+        <I.x size={16}/>
+      </button>
+    </div>
+  );
+}
+
+// The invoice itself: a photo you can tap to zoom, or the PDF.
+function ExInvoicePreview({file, mobile}) {
+  const [zoom, setZoom] = useState(false);
+  const [shown, setShown] = useState(!mobile);
+  if (!file) return (
+    <div style={{height:"100%", minHeight:160, display:"flex", alignItems:"center", justifyContent:"center"}}>
+      <HexLoader label="Opening the file…"/>
+    </div>
+  );
+  const isPdf = file.type === "application/pdf";
+  if (mobile) return (
+    <div style={{...EX_PANEL, overflow:"hidden"}}>
+      <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px"}}>
+        <span style={{width:30, height:30, borderRadius:8, background:isPdf ? C.redSubtle : C.bgSubtle, flexShrink:0,
+          color: isPdf ? C.redDark : C.textSub, display:"inline-flex", alignItems:"center", justifyContent:"center",
+          fontSize:9, fontWeight:800, fontFamily:F}}>{isPdf ? "PDF" : <I.camera size={14}/>}</span>
+        <span style={{flex:1, minWidth:0, fontSize:13, fontWeight:650, color:C.text, fontFamily:F, overflow:"hidden",
+          textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{file.name}</span>
+        {isPdf ? (
+          <a href={file.url} target="_blank" rel="noreferrer" {...btnStyle("secondary", "sm")}>Open <I.externalLink size={11}/></a>
+        ) : (
+          <button onClick={() => setShown(s => !s)} {...btnStyle("secondary", "sm")}>{shown ? "Hide" : "Show"}</button>
+        )}
+      </div>
+      {!isPdf && shown && (
+        <a href={file.url} target="_blank" rel="noreferrer" style={{display:"block", borderTop:"1px solid " + C.border}}>
+          <img src={file.url} alt="The invoice" style={{display:"block", width:"100%", maxHeight:380, objectFit:"contain",
+            background:"#f8f8f9"}}/>
+        </a>
+      )}
+    </div>
+  );
+  if (isPdf) return (
+    <iframe title="The invoice" src={file.url}
+      style={{width:"100%", height:"100%", border:"1px solid " + C.border, borderRadius:12, background:"#fff"}}/>
+  );
+  return (
+    <div onClick={() => setZoom(z => !z)} title={zoom ? "Click to fit" : "Click to zoom in"}
+      style={{height:"100%", overflow:"auto", borderRadius:12, border:"1px solid " + C.border, background:"#f3f4f6",
+        cursor: zoom ? "zoom-out" : "zoom-in"}}>
+      <img src={file.url} alt="The invoice"
+        style={{display:"block", width: zoom ? "200%" : "100%", height: zoom ? "auto" : "100%",
+          objectFit: zoom ? "initial" : "contain", maxWidth:"none"}}/>
+    </div>
+  );
+}
+
+// What was read from the invoice, ready to correct. Confirming asks for
+// attention exactly where it's needed: each line the reader flagged has to be
+// looked at, and if the lines don't add up to the invoice's own total the user
+// has to say they've compared them anyway.
+function ExReviewForm({scan, jobs, mobile, onCancel, onConfirm}) {
+  const {result, target} = scan;
+  const lowered = (s) => String(s || "").trim().toLowerCase();
+  const vendorJob = !target && result.vendor
+    ? jobs.find(j => lowered(j.contractor) && lowered(j.contractor) === lowered(result.vendor)) : null;
+  const [rows, setRows] = useState(() => [
+    ...(result.lines || []).map((l, i) => ({id: "r" + i, include: true, description: l.description || "",
+      amount: String(exRound(l.amount)), quantity: l.quantity, unitPrice: l.unitPrice,
+      flag: l.unsure ? `Hard to read${l.unsureReason ? ": " + l.unsureReason : ""}`
+        : l.mathOff ? `${l.quantity} × ${exMoney(l.unitPrice)} doesn't make ${exMoney(l.amount)}` : null,
+      seen: false})),
+    ...(exRound(result.tax) > 0 ? [{id: "tax", include: true, description: "Sales tax", amount: String(exRound(result.tax)),
+      kind: "tax", flag: null, seen: true}] : []),
+    ...(exRound(result.discount) > 0 ? [{id: "disc", include: true, description: "Discount",
+      amount: String(-exRound(result.discount)), kind: "discount", flag: null, seen: true}] : []),
+  ]);
+  const [dest, setDest]       = useState(target || (vendorJob ? vendorJob.id : "new"));
+  const [jobName, setJobName] = useState(() => result.invoiceNumber ? `Invoice #${result.invoiceNumber}`
+    : result.vendor ? `${result.vendor} invoice` : "Contractor invoice");
+  const [vendor, setVendor]   = useState(result.vendor || "");
+  const [invNo, setInvNo]     = useState(result.invoiceNumber || "");
+  const [invDate, setInvDate] = useState(result.invoiceDate || todayIso());
+  const [done, setDone]       = useState(false);
+  const [paidToo, setPaidToo] = useState(false);
+  const [ack, setAck]         = useState(false);
+  const [saving, setSaving]   = useState(false);
+
+  const setRow = (id, patch) => setRows(rs => rs.map(r => r.id === id ? {...r, ...patch} : r));
+  const toCents = (v) => Math.round(exParse(v) * 100);
+  // The invoice's own arithmetic, on every row as currently corrected (the
+  // include boxes only choose what gets added, not what the invoice says).
+  const allC = rows.reduce((s, r) => s + toCents(r.amount), 0);
+  const itemC = rows.filter(r => !r.kind).reduce((s, r) => s + toCents(r.amount), 0);
+  const check = result.total != null ? {expected: exRound(result.total), got: allC / 100, against: "total"}
+    : result.subtotal != null ? {expected: exRound(result.subtotal), got: itemC / 100, against: "subtotal"} : null;
+  const ok = check ? Math.round(check.got * 100) === Math.round(check.expected * 100) : null;
+  const diff = check ? exRound(check.got - check.expected) : 0;
+  const picked = rows.filter(r => r.include);
+  const pickedSum = exRound(picked.reduce((s, r) => s + exParse(r.amount), 0));
+  const unseen = rows.filter(r => r.flag && !r.seen).length;
+  const blocked = saving || !picked.length || unseen > 0 || (ok === false && !ack) || (dest === "new" && !jobName.trim());
+  const paid = exRound(result.alreadyPaid);
+
+  const confirm = async () => {
+    if (blocked) return;
+    setSaving(true);
+    await onConfirm({dest, jobName: jobName.trim(), vendor: vendor.trim(), invNo: invNo.trim(), invDate, done,
+      paidToo: paidToo && paid > 0, paid, total: check ? check.expected : pickedSum,
+      lines: picked.map(r => ({label: r.description.trim() || "Untitled", amount: exParse(r.amount)}))});
+    setSaving(false);
+  };
+
+  const field = (label, el, grow) => (
+    <div style={{minWidth:0, flex: grow ? 1 : undefined}}>
+      <label style={EX_LABEL}>{label}</label>{el}
+    </div>
+  );
+  const banner = ok === true ? [C.cashPos, "#ecfdf5", "#a7f3d0", <I.check size={16} stroke={3}/>,
+      `The lines add up to the invoice ${check.against}, ${exMoney(check.expected)}`,
+      scan.result.passes > 1 ? "It took a second, closer read to get there, so give the lines a careful look." : "Still give each line a quick look against the invoice."]
+    : ok === false ? [C.redDark, C.redSubtle, C.redBorder, <I.alert size={16} stroke={2.4}/>,
+      `The lines add up to ${exMoney(check.got)}, but the invoice says ${exMoney(check.expected)}`,
+      `That's ${exMoney(Math.abs(diff))} ${diff > 0 ? "over" : "short"}. Fix any amount that doesn't match the invoice and this turns green. If the invoice itself doesn't add up, you can still add the lines once you've checked them.`]
+    : [C.amberDark, C.amberSubtle, C.amberBorder, <I.alert size={16} stroke={2.4}/>,
+      "This invoice has no printed total to check against",
+      "Compare each line with the invoice before adding it."];
+
+  return (
+    <div style={{display:"flex", flexDirection:"column", minHeight:0, height:"100%"}}>
+      <div style={{flex:1, overflow:"auto", padding: mobile ? "14px 14px 18px" : "18px 22px 22px"}}>
+        <div style={{display:"flex", gap:12, alignItems:"flex-start", padding:"13px 14px", borderRadius:12,
+          background:banner[1], border:"1px solid " + banner[2], fontFamily:F, marginBottom:14}}>
+          <span style={{color:banner[0], display:"inline-flex", marginTop:1}}>{banner[3]}</span>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:14, fontWeight:750, color:banner[0], fontVariantNumeric:"tabular-nums"}}>{banner[4]}</div>
+            <div style={{fontSize:12.5, color:C.textSub, marginTop:3, lineHeight:1.5}}>{banner[5]}</div>
+          </div>
+        </div>
+        {(unseen > 0 || result.notes) && (
+          <div style={{display:"flex", flexDirection:"column", gap:6, marginBottom:14, fontFamily:F, fontSize:12.5}}>
+            {unseen > 0 && (
+              <div style={{display:"flex", gap:8, alignItems:"center", color:C.amberDark, fontWeight:650}}>
+                <span style={{width:7, height:7, borderRadius:"50%", background:C.amber, flexShrink:0}}/>
+                {unseen} highlighted line{unseen === 1 ? "" : "s"} to look at. Fix it, or tap "Looks right".
+              </div>
+            )}
+            {result.notes && (
+              <div style={{display:"flex", gap:8, alignItems:"flex-start", color:C.textSub, lineHeight:1.5}}>
+                <I.messageSquare size={13} style={{flexShrink:0, marginTop:2}}/> <span>Reader's note: {result.notes}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{...EX_PANEL, padding: mobile ? 12 : "14px 16px", marginBottom:14}}>
+          <div style={{...EX_KICKER, color:C.text, marginBottom:10}}>Where it goes</div>
+          {!target && jobs.length > 0 && (
+            <div style={{display:"flex", padding:3, background:C.bgSubtle, border:"1px solid " + C.border, borderRadius:10,
+              marginBottom:12, width: mobile ? "100%" : "fit-content"}}>
+              {[["new", "New job"], ["existing", "Add to a job"]].map(([k, label]) => {
+                const active = k === "new" ? dest === "new" : dest !== "new";
+                return (
+                  <button key={k} type="button" aria-pressed={active}
+                    onClick={() => setDest(k === "new" ? "new" : (vendorJob ? vendorJob.id : jobs[0].id))}
+                    style={{flex: mobile ? 1 : "0 0 auto", padding:"7px 14px", borderRadius:8, border:"none", cursor:"pointer",
+                      background: active ? C.card : "transparent", color: active ? C.text : C.textSub, fontFamily:F,
+                      fontWeight: active ? 700 : 550, fontSize:12.5, boxShadow: active ? C.sh2 : "none"}}>{label}</button>
+                );
+              })}
+            </div>
+          )}
+          <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:10}}>
+            {dest === "new" ? (
+              <>
+                <div style={{gridColumn: mobile ? "span 2" : "auto", minWidth:0}}>
+                  {field("Job name", <input value={jobName} onChange={e => setJobName(e.target.value)} style={iS(mobile)}/>)}
+                </div>
+                <div style={{gridColumn: mobile ? "span 2" : "auto", minWidth:0}}>
+                  {field("Contractor", <input value={vendor} onChange={e => setVendor(e.target.value)} list="dh-ex-contractors"
+                    placeholder="Who sent it?" style={iS(mobile)}/>)}
+                </div>
+              </>
+            ) : (
+              <div style={{gridColumn:"span 2", minWidth:0}}>
+                {field("Job", target ? (
+                  <div style={{...iS(mobile), background:C.bgSubtle, fontWeight:650}}>
+                    {(jobs.find(j => j.id === target) || {}).description || "This job"}
+                  </div>
+                ) : (
+                  <select value={dest} onChange={e => setDest(e.target.value)} style={iS(mobile)}>
+                    {jobs.map(j => <option key={j.id} value={j.id}>
+                      {(j.description || "Untitled job") + (j.contractor ? ` · ${j.contractor}` : "")}</option>)}
+                  </select>
+                ))}
+              </div>
+            )}
+            {field("Invoice #", <input value={invNo} onChange={e => setInvNo(e.target.value)} placeholder="Optional" style={iS(mobile)}/>)}
+            {field("Date", <input type="date" value={invDate} onChange={e => setInvDate(e.target.value)} style={iS(mobile)}/>)}
+          </div>
+          {vendorJob && !target && dest === vendorJob.id && (
+            <div style={{fontSize:12, color:C.textMuted, fontFamily:F, marginTop:8}}>
+              Matched to {vendorJob.contractor}'s job. Switch to "New job" if this is separate work.
+            </div>
+          )}
+        </div>
+
+        <div style={{...EX_PANEL, overflow:"hidden", marginBottom:14}}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:10,
+            padding: mobile ? "12px 12px 8px" : "13px 16px 9px"}}>
+            <span style={{...EX_KICKER, color:C.text}}>Lines from the invoice · {rows.length}</span>
+            <span style={{fontSize:12, color:C.textMuted, fontFamily:F, whiteSpace:"nowrap"}}>
+              {mobile ? "Untick to skip" : "Untick anything you don't want added"}
+            </span>
+          </div>
+          {rows.map((r) => {
+            const hot = r.flag && !r.seen;
+            return (
+              <div key={r.id} style={{borderTop:"1px solid " + C.bgSubtle, padding: mobile ? "10px 12px" : "10px 16px",
+                background: hot ? C.amberSubtle : r.include ? C.card : C.bg, transition:"background .15s"}}>
+                <div style={{display:"grid", alignItems:"center", gap: mobile ? 8 : 10,
+                  gridTemplateColumns: mobile ? "22px minmax(0,1fr) 30px" : "22px minmax(0,1fr) 140px 30px"}}>
+                  <input type="checkbox" checked={r.include} onChange={e => setRow(r.id, {include: e.target.checked})}
+                    aria-label="Add this line" style={{width:18, height:18, accentColor:C.green, cursor:"pointer", margin:0}}/>
+                  <input value={r.description} aria-label="Line description"
+                    onChange={e => setRow(r.id, {description: e.target.value, seen: true})}
+                    style={{...iS(mobile), padding: mobile ? "9px 11px" : "7px 10px", fontWeight:600,
+                      background: hot ? C.card : undefined, opacity: r.include ? 1 : .55}}/>
+                  {!mobile && (
+                    <div style={{position:"relative"}}>
+                      <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textMuted,
+                        fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                      <input value={r.amount} inputMode="decimal" aria-label="Line amount"
+                        onChange={e => setRow(r.id, {amount: e.target.value, seen: true})}
+                        style={{...iS(false), padding:"7px 10px 7px 22px", textAlign:"right", fontWeight:700,
+                          fontVariantNumeric:"tabular-nums", opacity: r.include ? 1 : .55}}/>
+                    </div>
+                  )}
+                  <button onClick={() => setRows(rs => rs.filter(x => x.id !== r.id))} aria-label="Remove line"
+                    className="dh-ex-icon-btn" style={{width:30, height:30, borderRadius:8, border:"none", background:"transparent",
+                      color:C.textMuted, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
+                    <I.x size={14}/>
+                  </button>
+                </div>
+                {(mobile || r.flag || (r.quantity != null && r.unitPrice != null)) && (
+                  <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginTop:6,
+                    paddingLeft: mobile ? 30 : 32, fontFamily:F, fontSize:12}}>
+                    {r.quantity != null && r.unitPrice != null && (
+                      <span style={{color:C.textMuted, fontVariantNumeric:"tabular-nums"}}>{r.quantity} × {exMoney(r.unitPrice)}</span>
+                    )}
+                    {r.flag && (
+                      <span style={{display:"inline-flex", alignItems:"center", gap:5, fontWeight:650,
+                        color: r.seen ? C.textMuted : C.amberDark}}>
+                        <I.alert size={12} stroke={2.4}/> {r.flag}
+                      </span>
+                    )}
+                    {hot && (
+                      <button onClick={() => setRow(r.id, {seen: true})} className="dh-ex-soft"
+                        style={{height:26, padding:"0 10px", borderRadius:9999, border:"1px solid " + C.greenBorder,
+                          background:C.card, color:C.greenDark, fontSize:12, fontWeight:700, fontFamily:F, cursor:"pointer"}}>
+                        Looks right
+                      </button>
+                    )}
+                    {mobile && (
+                      <div style={{position:"relative", marginLeft:"auto", width:128}}>
+                        <span style={{position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:C.textMuted,
+                          fontSize:13, fontFamily:F, pointerEvents:"none"}}>$</span>
+                        <input value={r.amount} inputMode="decimal" aria-label="Line amount"
+                          onChange={e => setRow(r.id, {amount: e.target.value, seen: true})}
+                          style={{...iS(true), padding:"8px 10px 8px 22px", textAlign:"right", fontWeight:700,
+                            fontVariantNumeric:"tabular-nums", opacity: r.include ? 1 : .55}}/>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button onClick={() => setRows(rs => [...rs, {id: exId("r"), include: true, description: "", amount: "", flag: null, seen: true}])}
+            className="dh-ex-row" style={{width:"100%", border:"none", borderTop:"1px dashed " + C.border, background:"transparent",
+              padding: mobile ? "11px 12px" : "11px 16px", textAlign:"left", cursor:"pointer", fontFamily:F, fontSize:13,
+              fontWeight:650, color:C.textSub, display:"flex", alignItems:"center", gap:8}}>
+            <I.plus size={13} stroke={2.4}/> Add a line the reader missed
+          </button>
+        </div>
+
+        <div style={{display:"flex", flexDirection:"column", gap:10, fontFamily:F}}>
+          <label style={{display:"flex", gap:10, alignItems:"center", fontSize:13, color:C.text, cursor:"pointer"}}>
+            <input type="checkbox" checked={done} onChange={e => setDone(e.target.checked)}
+              style={{width:18, height:18, accentColor:C.green, margin:0}}/>
+            This work is already finished <span style={{color:C.textMuted}}>(marks the lines done)</span>
+          </label>
+          {paid > 0 && (
+            <label style={{display:"flex", gap:10, alignItems:"center", fontSize:13, color:C.text, cursor:"pointer"}}>
+              <input type="checkbox" checked={paidToo} onChange={e => setPaidToo(e.target.checked)}
+                style={{width:18, height:18, accentColor:C.green, margin:0}}/>
+              Also record the <b style={{fontWeight:700}}>{exMoney(paid)}</b> the invoice shows as already paid
+            </label>
+          )}
+        </div>
+      </div>
+
+      <div style={{flexShrink:0, borderTop:"1px solid " + C.border, background:C.bg,
+        padding: mobile ? "10px 14px calc(10px + env(safe-area-inset-bottom, 0px))" : "12px 22px"}}>
+        {ok === false && (
+          <label style={{display:"flex", gap:10, alignItems:"flex-start", fontSize:12.5, color:C.text, fontFamily:F,
+            cursor:"pointer", marginBottom:10, lineHeight:1.45}}>
+            <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)}
+              style={{width:18, height:18, accentColor:C.green, margin:0, flexShrink:0}}/>
+            I've compared every line with the invoice and these numbers are right
+          </label>
+        )}
+        <div style={{display:"flex", alignItems:"center", gap:10}}>
+          <div style={{flex:1, minWidth:0, fontFamily:F}}>
+            <div style={{fontSize: mobile ? 16 : 18, fontWeight:800, color:C.text, fontVariantNumeric:"tabular-nums",
+              letterSpacing:"-0.02em"}}>{exMoney(pickedSum)}</div>
+            <div style={{fontSize:12, color:C.textMuted}}>{picked.length} of {rows.length} lines</div>
+          </div>
+          {!mobile && <button onClick={onCancel} {...btnStyle("ghost", "md")}>Cancel</button>}
+          <button onClick={confirm} disabled={blocked}
+            {...btnStyle("primary", mobile ? "lg" : "md", {padding: mobile ? "0 16px" : "8px 16px",
+              boxShadow: blocked ? "none" : "0 6px 14px -6px rgba(232,115,28,.7)"})}>
+            <I.check size={14} stroke={2.6}/>
+            {saving ? "Adding…" : unseen > 0 ? `Check ${unseen} line${unseen === 1 ? "" : "s"} first`
+              : `Add ${picked.length} line${picked.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Reading → review (or a clear error with a way forward), beside the invoice.
+function ExScanModal({scan, jobs, mobile, onClose, onRetry, onManual, onConfirm}) {
+  const reading = scan.phase === "reading";
+  const err = scan.phase === "error" ? scan.error : null;
+  const body = reading ? (
+    <div style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
+      padding:24, textAlign:"center", fontFamily:F}}>
+      <HexLoader label={scan.file ? "Reading every line and checking the math…" : "Getting the file ready…"}/>
+      <div style={{fontSize:12.5, color:C.textMuted, maxWidth:320, lineHeight:1.5}}>
+        This usually takes 15 to 45 seconds. Nothing is added until you check it.
+      </div>
+      <div style={{width:"100%", maxWidth:420, marginTop:18, display:"flex", flexDirection:"column", gap:8}}>
+        {[0.92, 0.78, 0.85, 0.6].map((w, i) => (
+          <div key={i} className="dh-pulse" style={{display:"flex", gap:10, alignItems:"center"}}>
+            <span style={{width:16, height:16, borderRadius:5, background:C.bgSubtle}}/>
+            <span style={{height:12, borderRadius:6, background:C.bgSubtle, width:`${w * 70}%`}}/>
+            <span style={{height:12, borderRadius:6, background:C.bgSubtle, width:"18%", marginLeft:"auto"}}/>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : err ? (
+    <div style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      padding:24, textAlign:"center", fontFamily:F}}>
+      <span style={{width:48, height:48, borderRadius:14, background:C.amberSubtle, color:C.amber, display:"inline-flex",
+        alignItems:"center", justifyContent:"center", marginBottom:14}}><I.alert size={22}/></span>
+      <div style={{fontSize:16.5, fontWeight:750, color:C.text}}>{err[0]}</div>
+      <div style={{fontSize:13.5, color:C.textSub, marginTop:6, maxWidth:400, lineHeight:1.55}}>{err[1]}</div>
+      <div style={{display:"flex", gap:8, marginTop:18, flexWrap:"wrap", justifyContent:"center"}}>
+        {err[2] && scan.file && <button onClick={onRetry} {...btnStyle("primary", "md")}><I.cycle size={14}/> Try again</button>}
+        <button onClick={onManual} {...btnStyle("secondary", "md")}><I.edit size={14}/> Type it in instead</button>
+      </div>
+    </div>
+  ) : (
+    <ExReviewForm key={scan.id} scan={scan} jobs={jobs} mobile={mobile} onCancel={onClose} onConfirm={onConfirm}/>
+  );
+  const sub = reading ? "Reading the invoice" : err ? "Couldn't finish" : "Check the lines against the invoice before adding them";
+  return (
+    <ExModal onClose={onClose} mobile={mobile} label="Scan an invoice">
+      <ExModalHead mobile={mobile} onClose={onClose} title={scan.target ? "Add lines from an invoice" : "Scan an invoice"} sub={sub}/>
+      {mobile ? (
+        <div style={{flex:1, minHeight:0, display:"flex", flexDirection:"column", overflow: scan.phase === "review" ? "hidden" : "auto"}}>
+          <div style={{padding:"12px 14px 0", flexShrink:0}}><ExInvoicePreview file={scan.file} mobile/></div>
+          {body}
+        </div>
+      ) : (
+        <div style={{flex:1, minHeight:0, display:"grid", gridTemplateColumns:"minmax(0,0.95fr) minmax(0,1.05fr)"}}>
+          <div style={{padding:16, background:C.bg, borderRight:"1px solid " + C.border, minHeight:0}}>
+            <ExInvoicePreview file={scan.file}/>
+          </div>
+          <div style={{minHeight:0, display:"flex", flexDirection:"column"}}>{body}</div>
+        </div>
+      )}
+    </ExModal>
+  );
+}
+
+// A saved invoice, opened again from its job.
+function ExInvoiceViewer({invoice, getSession, mobile, onClose}) {
+  const [file, setFile] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true, url = null;
+    exLoadInvoice(getSession, invoice.id).then(d => {
+      if (!alive) return;
+      if (d.type === "application/pdf") {
+        const bin = atob(d.dataUrl.split(",")[1]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], {type: "application/pdf"}));
+        setFile({...d, url});
+      } else setFile({...d, url: d.dataUrl});
+    }).catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); };
+  }, [invoice.id, getSession]);
+  const facts = [invoice.vendor, invoice.date && exShortDate(invoice.date), invoice.total != null && exMoney(invoice.total)]
+    .filter(Boolean).join(" · ");
+  return (
+    <ExModal onClose={onClose} mobile={mobile} label="Invoice">
+      <ExModalHead mobile={mobile} onClose={onClose} title={invoice.number ? `Invoice #${invoice.number}` : "Invoice"} sub={facts}/>
+      <div style={{flex:1, minHeight:0, padding: mobile ? 12 : 18, background:C.bg, display:"flex", flexDirection:"column", gap:12}}>
+        {failed ? (
+          <div style={{margin:"auto", textAlign:"center", fontFamily:F, color:C.textSub, fontSize:13.5, maxWidth:340, lineHeight:1.55}}>
+            Couldn't open this invoice. Check your connection and try again.
+          </div>
+        ) : !file ? (
+          <div style={{margin:"auto"}}><HexLoader label="Opening the invoice…"/></div>
+        ) : (
+          <>
+            <div style={{flex:1, minHeight:0}}>
+              {file.type === "application/pdf" && mobile ? (
+                <div style={{height:"100%", display:"flex", alignItems:"center", justifyContent:"center"}}>
+                  <a href={file.url} target="_blank" rel="noreferrer" {...btnStyle("primary", "lg")}>Open the PDF <I.externalLink size={13}/></a>
+                </div>
+              ) : <ExInvoicePreview file={file}/>}
+            </div>
+            <div style={{display:"flex", justifyContent:"flex-end", gap:8, flexShrink:0}}>
+              <a href={file.dataUrl} download={file.name || "invoice"} {...btnStyle("secondary", "md")}>
+                <I.download size={14}/> Download
+              </a>
+            </div>
+          </>
+        )}
+      </div>
+    </ExModal>
+  );
+}
+
+function ExStart({mobile, onJob, onBill, onScan}) {
   const tile = (icon, grad, title, body, cta, onClick) => (
     <button onClick={onClick} className="dh-ex-lift"
       style={{textAlign:"left", cursor:"pointer", fontFamily:F, background:C.card, border:"1px solid " + C.border,
@@ -7081,7 +7666,9 @@ function ExStart({mobile, onJob, onBill}) {
           Write the contractor's invoice line by line, pay any amount as the work gets done, and always know what's still owed.
         </div>
       </div>
-      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap:12}}>
+      <div style={{display:"grid", gridTemplateColumns: mobile ? "1fr" : "repeat(3, minmax(0,1fr))", gap:12}}>
+        {tile(I.camera, `linear-gradient(150deg, #0f766e, #134e4a)`, "Scan an invoice",
+          "Snap the contractor's invoice or upload the PDF. Every line fills in with its price for you to check.", "Scan one", onScan)}
         {tile(I.hammer, `linear-gradient(150deg, ${C.green}, ${C.greenDark})`, "Contractor job",
           "A task at a time, each with its price. Pay a deposit, the rest, or any amount toward it.", "Start a job", onJob)}
         {tile(I.receipt, `linear-gradient(150deg, #2b3a4d, ${C.sidebar})`, "One-off expense",
@@ -7091,13 +7678,16 @@ function ExStart({mobile, onJob, onBill}) {
   );
 }
 
-function ExpensesTab({p, set, mobile}) {
+function ExpensesTab({p, set, mobile, getSession}) {
   const expenses = p.expenses || [];
   const [view, setView]         = useState("all");   // all | owed | log
   const [who, setWho]           = useState("");      // contractor filter, "" = everyone
   const [adding, setAdding]     = useState(null);    // null | "job" | "bill"
   const [freshJob, setFreshJob] = useState(null);    // just created: focus its add-task line
   const [undo, setUndo]         = useState(null);
+  const [scan, setScan]         = useState(null);    // an invoice being read or reviewed
+  const [viewing, setViewing]   = useState(null);    // a saved invoice being looked at
+  const fileRef = useRef(null), scanTarget = useRef(null), scanSeq = useRef(0);
   useEffect(() => {
     if (!undo) return;
     const t = setTimeout(() => setUndo(null), 7000);
@@ -7147,6 +7737,70 @@ function ExpensesTab({p, set, mobile}) {
       const n = {...x, kind: "job", payTracked: true, items: [...exItems(x), task]};
       return {...n, amount: exTotal(n)};
     }), `Moved into “${job.description || "job"}”`);
+  };
+  // Invoice scanning. Each read carries a sequence number so a closed or
+  // retried scan can never land a stale result.
+  const pickInvoice = (target) => {
+    scanTarget.current = target || null;
+    if (fileRef.current) { fileRef.current.value = ""; fileRef.current.click(); }
+  };
+  const settleScan = (id, patch) => { if (scanSeq.current === id) setScan(s => s && s.id === id ? {...s, ...patch} : s); };
+  const runRead = async (id, file) => {
+    try { settleScan(id, {phase: "review", result: await exReadInvoice(getSession, file)}); }
+    catch (e) { settleScan(id, {phase: "error", error: exScanError(e)}); }
+  };
+  const onPicked = async (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    const id = ++scanSeq.current;
+    setScan({id, target: scanTarget.current, phase: "reading", file: null});
+    let file;
+    try { file = await exPrepInvoice(f); }
+    catch (e) { settleScan(id, {phase: "error", error: ["Couldn't open that file", e.message, false]}); return; }
+    settleScan(id, {file});
+    runRead(id, file);
+  };
+  const retryScan = () => {
+    const id = ++scanSeq.current;
+    setScan(s => ({...s, id, phase: "reading", error: null}));
+    runRead(id, scan.file);
+  };
+  const closeScan = () => {
+    scanSeq.current++;
+    if (scan && scan.file && String(scan.file.url).startsWith("blob:")) URL.revokeObjectURL(scan.file.url);
+    setScan(null);
+  };
+  const confirmScan = async (v) => {
+    const file = scan && scan.file;
+    if (!file) return;
+    const fileId = exId("inv");
+    let stored = true;
+    try { await exStoreInvoice(getSession, fileId, file, {propertyId: p.id, number: v.invNo, date: v.invDate, vendor: v.vendor}); }
+    catch { stored = false; }
+    let items = v.lines.map(l => ({id: exId("it"), label: l.label, amount: exRound(l.amount), done: v.done,
+      ...(stored ? {invoiceId: fileId} : {})}));
+    if (v.paidToo) {
+      const {splits} = exAllocate(items, v.paid);
+      const batch = splits.length > 1 ? exId("bt") : null;
+      const by = new Map(splits.map(x => [x.lid, x.amount]));
+      items = items.map(it => by.has(it.id) ? {...it, payments: [{id: exId("pm"), amount: by.get(it.id),
+        date: v.invDate || todayIso(), method: "", note: "Paid per invoice", ...(batch ? {batch} : {})}]} : it);
+    }
+    const summary = stored ? [{id: fileId, name: file.name, type: file.type, size: file.size, number: v.invNo,
+      date: v.invDate, vendor: v.vendor, total: v.total, uploadedAt: exNowIso()}] : [];
+    const msg = `Added ${items.length} line${items.length === 1 ? "" : "s"} from ${v.invNo ? "invoice #" + v.invNo : "the invoice"}`
+      + (stored ? "" : " (the file itself couldn't be saved)");
+    if (v.dest === "new") {
+      const job = {id: exId("ex"), kind: "job", description: v.jobName, contractor: v.vendor, date: v.invDate || todayIso(),
+        category: "repair", items, invoices: summary, payTracked: true, createdAt: exNowIso()};
+      commit([...expenses, {...job, amount: exTotal(job)}], msg);
+      if (who && who !== v.vendor) setWho("");
+    } else {
+      patchExpense(v.dest, e => ({...e, contractor: e.contractor || v.vendor, items: [...exItems(e), ...items],
+        invoices: [...exArr(e.invoices), ...summary]}), msg);
+    }
+    setView("all");
+    closeScan();
   };
   const createJob = (v) => {
     const id = exId("ex");
@@ -7264,9 +7918,11 @@ function ExpensesTab({p, set, mobile}) {
       onPatchJob={(fn, msg) => patchExpense(job.id, fn, msg)}
       onPatchLine={(lid, patch, msg) => patchTask(job.id, lid, patch, msg)}
       onPayLines={(splits, meta, msg) => payLines(job.id, splits, meta, msg)}
-      onDeleteJob={() => deleteExpense(job)}/>
+      onDeleteJob={() => deleteExpense(job)}
+      onScan={() => pickInvoice(job.id)} onOpenInvoice={setViewing}/>
   );
   const newMenu = [
+    {label:"Scan an invoice", hint:"Photo or PDF, lines filled in for you", icon:I.camera, onClick:() => pickInvoice(null)},
     {label:"Contractor job", hint:"An invoice, line by line", icon:I.hammer, onClick:() => { setAdding("job"); setView("all"); }},
     {label:"One-off expense", hint:"Materials, permits, bills", icon:I.receipt, onClick:() => { setAdding("bill"); setView("all"); }},
   ];
@@ -7275,6 +7931,14 @@ function ExpensesTab({p, set, mobile}) {
     <div>
       <style>{EX_CSS}</style>
       <datalist id="dh-ex-contractors">{allContractors.map(c => <option key={c} value={c}/>)}</datalist>
+      <input ref={fileRef} type="file" accept="image/*,application/pdf" onChange={onPicked} style={{display:"none"}}
+        aria-hidden="true" tabIndex={-1}/>
+      {scan && (
+        <ExScanModal scan={scan} jobs={allJobs} mobile={mobile} onClose={closeScan} onRetry={retryScan}
+          onConfirm={confirmScan}
+          onManual={() => { const t = scan.target; closeScan(); if (!t) { setAdding("job"); setView("all"); } }}/>
+      )}
+      {viewing && <ExInvoiceViewer invoice={viewing} getSession={getSession} mobile={mobile} onClose={() => setViewing(null)}/>}
 
       {legacyLines > 0 && (
         <div className="dh-ex-in" style={{...EX_PANEL, display:"flex", gap:13, alignItems:"flex-start",
@@ -7304,7 +7968,8 @@ function ExpensesTab({p, set, mobile}) {
       )}
 
       {expenses.length === 0 ? (
-        adding ? null : <ExStart mobile={mobile} onJob={() => setAdding("job")} onBill={() => setAdding("bill")}/>
+        adding ? null : <ExStart mobile={mobile} onJob={() => setAdding("job")} onBill={() => setAdding("bill")}
+          onScan={() => pickInvoice(null)}/>
       ) : (
         <>
           <ExHero total={total} paid={paid} owed={owed} dueNow={dueNow} later={later} nPays={log.length} mobile={mobile}/>
@@ -17269,6 +17934,8 @@ export default function App() {
     // Auth for property-data calls: personal key when present (legacy),
     // else the session token for the server proxy — every signed-in user.
     rcAuth: {key: data.rentcastKey || "", token: user.idToken},
+    // A fresh session (token + uid) for token-gated calls such as invoice reading.
+    getSession: async () => (await refreshSession()) || userRef.current,
     // The admin account always gets the full Pro experience in the calculator
     // and everywhere else — never a free-gated view, regardless of billing tier.
     tier: isAdmin ? "pro" : (data.tier || "free"),

@@ -47,6 +47,16 @@
     "revealUsage": {
       ".read":  false,
       ".write": false
+    },
+    "invoiceFiles": {
+      "$uid": {
+        ".read":  "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
+    "invoiceUsage": {
+      ".read":  false,
+      ".write": false
     }
   }
 }

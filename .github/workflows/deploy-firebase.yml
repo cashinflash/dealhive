@@ -14,6 +14,7 @@
 #   RAPIDAPI_KEY              — optional: RapidAPI key for the listing search
 #   REALESTATEAPI_KEY         — optional: RealEstateAPI key (property data + skip trace)
 #   RESEND_API_KEY            — optional: Resend key for transactional emails
+#   ANTHROPIC_API_KEY         — optional: Claude API key for reading contractor invoices
 #
 # See functions/README.md for the click-by-click on generating each secret.
 
@@ -82,6 +83,7 @@ jobs:
           RAPID_KEY:     ${{ secrets.RAPIDAPI_KEY }}
           REAPI_KEY:     ${{ secrets.REALESTATEAPI_KEY }}
           RESEND_KEY:    ${{ secrets.RESEND_API_KEY }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           for var in APIFY_KEY RENTCAST_KEY MANUAL_SECRET; do
             if [ -z "${!var}" ]; then
@@ -99,6 +101,7 @@ jobs:
           printf '%s' "${RAPID_KEY:-unset}"   | firebase functions:secrets:set RAPIDAPI_KEY       --data-file=- --project darallc --force
           printf '%s' "${REAPI_KEY:-unset}"   | firebase functions:secrets:set REALESTATEAPI_KEY  --data-file=- --project darallc --force
           printf '%s' "${RESEND_KEY:-unset}"  | firebase functions:secrets:set RESEND_API_KEY     --data-file=- --project darallc --force
+          printf '%s' "${ANTHROPIC_KEY:-unset}" | firebase functions:secrets:set ANTHROPIC_API_KEY --data-file=- --project darallc --force
 
       - name: Deploy DB rules + functions
         run: firebase deploy --only database,functions --project darallc --force --non-interactive
